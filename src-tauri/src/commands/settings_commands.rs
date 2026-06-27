@@ -1,0 +1,26 @@
+use crate::models::{AppError, AppSettings, Language};
+use crate::services::AppState;
+use tauri::State;
+
+#[tauri::command]
+pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError> {
+    let service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+
+    Ok(service.get())
+}
+
+#[tauri::command]
+pub fn set_language(
+    state: State<'_, AppState>,
+    language: Language,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+
+    Ok(service.set_language(language))
+}

@@ -1,0 +1,117 @@
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+
+void i18n.use(initReactI18next).init({
+  lng: "zh-CN",
+  fallbackLng: "zh-CN",
+  interpolation: {
+    escapeValue: false,
+  },
+  resources: {
+    "zh-CN": {
+      translation: {
+        nav: {
+          main: "主导航",
+          sessions: "Sessions",
+          settings: "设置",
+        },
+        sessions: {
+          title: "SESSIONS",
+          new: "新建 Session",
+          edit: "编辑",
+          delete: "删除",
+          search: "搜索 sessions...",
+          terminalPlaceholder: "输入命令...",
+          files: "文件",
+          details: "详情",
+          permissions: "权限",
+          preview: "预览",
+          name: "名称",
+          size: "大小",
+          modified: "修改时间",
+          host: "主机",
+          username: "用户",
+          group: "分组",
+          port: "端口",
+          tags: "标签",
+          save: "保存",
+          cancel: "取消",
+          createTitle: "新建 Session",
+          editTitle: "编辑 Session",
+          confirmDelete: "确认删除当前 session？",
+          noSession: "暂无 Session",
+          cpu: "CPU",
+          memory: "内存",
+          disk: "磁盘",
+          uptime: "运行时间",
+          services: "服务",
+          path: "路径",
+          owner: "Owner",
+        },
+        settings: {
+          title: "设置",
+          language: "语言",
+          chinese: "中文",
+          english: "English",
+        },
+        errors: {
+          unknown: "未知错误",
+        },
+      },
+    },
+    "en-US": {
+      translation: {
+        nav: {
+          main: "Main navigation",
+          sessions: "Sessions",
+          settings: "Settings",
+        },
+        sessions: {
+          title: "SESSIONS",
+          new: "New Session",
+          edit: "Edit",
+          delete: "Delete",
+          search: "Search sessions...",
+          terminalPlaceholder: "Type a command...",
+          files: "Files",
+          details: "Details",
+          permissions: "Permissions",
+          preview: "Preview",
+          name: "Name",
+          size: "Size",
+          modified: "Modified",
+          host: "Host",
+          username: "User",
+          group: "Group",
+          port: "Port",
+          tags: "Tags",
+          save: "Save",
+          cancel: "Cancel",
+          createTitle: "New Session",
+          editTitle: "Edit Session",
+          confirmDelete: "Delete current session?",
+          noSession: "No Session",
+          cpu: "CPU",
+          memory: "Memory",
+          disk: "Disk",
+          uptime: "Uptime",
+          services: "Services",
+          path: "Path",
+          owner: "Owner",
+        },
+        settings: {
+          title: "Settings",
+          language: "Language",
+          chinese: "中文",
+          english: "English",
+        },
+        errors: {
+          unknown: "Unknown error",
+        },
+      },
+    },
+  },
+});
+
+export default i18n;
+
