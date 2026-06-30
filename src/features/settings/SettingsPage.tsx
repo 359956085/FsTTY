@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Globe2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
+import { resolveApiError } from "../../shared/api/errors";
 import type { AppSettings, Language } from "../../shared/api/types";
 
 interface SettingsPageProps {
@@ -19,7 +20,7 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
       const nextSettings = await api.setLanguage(language);
       onChange(nextSettings);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : t("errors.unknown"));
+      setError(resolveApiError(nextError, t("errors.unknown")));
     }
   }
 
@@ -60,4 +61,3 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
     </section>
   );
 }
-

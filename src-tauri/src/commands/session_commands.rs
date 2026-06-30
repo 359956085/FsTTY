@@ -2,15 +2,15 @@ use crate::models::{
     AppError, CreateSessionPayload, DeviceStatus, FileEntry, Session, SessionConnection,
     SessionGroup, UpdateSessionPayload,
 };
-use crate::services::AppState;
+use crate::services::{AppState, SessionService};
+use std::sync::MutexGuard;
 use tauri::State;
+
+const DEFAULT_REMOTE_PATH: &str = "/var/www/app";
 
 #[tauri::command]
 pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionGroup>, AppError> {
-    let service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let service = lock_session_service(&state)?;
 
     Ok(service.list_groups())
 }
@@ -22,10 +22,7 @@ pub fn create_session(
 ) -> Result<Session, AppError> {
     validate_create_payload(&payload)?;
 
-    let mut service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let mut service = lock_session_service(&state)?;
 
     Ok(service.create(payload))
 }
@@ -37,10 +34,7 @@ pub fn update_session(
 ) -> Result<Session, AppError> {
     validate_update_payload(&payload)?;
 
-    let mut service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let mut service = lock_session_service(&state)?;
 
     service.update(payload)
 }
@@ -49,10 +43,7 @@ pub fn update_session(
 pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), AppError> {
     validate_id(&session_id)?;
 
-    let mut service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let mut service = lock_session_service(&state)?;
 
     service.delete(&session_id)
 }
@@ -64,10 +55,7 @@ pub fn open_session(
 ) -> Result<SessionConnection, AppError> {
     validate_id(&session_id)?;
 
-    let service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let service = lock_session_service(&state)?;
 
     service.open(&session_id)
 }
@@ -80,11 +68,8 @@ pub fn list_remote_files(
 ) -> Result<Vec<FileEntry>, AppError> {
     validate_id(&session_id)?;
 
-    let safe_path = sanitize_remote_path(path.as_deref().unwrap_or("/var/www/app"))?;
-    let session_service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let safe_path = sanitize_remote_path(path.as_deref().unwrap_or(DEFAULT_REMOTE_PATH))?;
+    let session_service = lock_session_service(&state)?;
 
     // 文件服务必须先确认 session 存在，避免后续真实 SFTP 时访问未知目标。
     session_service.find(&session_id)?;
@@ -98,13 +83,19 @@ pub fn get_device_status(
 ) -> Result<DeviceStatus, AppError> {
     validate_id(&session_id)?;
 
-    let session_service = state
-        .session_service
-        .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))?;
+    let session_service = lock_session_service(&state)?;
     let session = session_service.find(&session_id)?;
 
     Ok(state.device_service.status(session))
+}
+
+fn lock_session_service<'a>(
+    state: &'a State<'_, AppState>,
+) -> Result<MutexGuard<'a, SessionService>, AppError> {
+    state
+        .session_service
+        .lock()
+        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))
 }
 
 fn validate_create_payload(payload: &CreateSessionPayload) -> Result<(), AppError> {

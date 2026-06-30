@@ -4,9 +4,10 @@ import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { api } from "./shared/api/client";
+import { resolveApiError } from "./shared/api/errors";
 import type { AppSettings } from "./shared/api/types";
 
-import appIcon from "./assets/app-icon.png";
+import appIcon from "./assets/brand-icon.png";
 
 type AppView = "sessions" | "settings";
 
@@ -24,9 +25,9 @@ export function App() {
         void i18n.changeLanguage(nextSettings.language);
       })
       .catch((error: unknown) => {
-        setLoadError(resolveErrorMessage(error));
+        setLoadError(resolveApiError(error, t("errors.unknown")));
       });
-  }, [i18n]);
+  }, [i18n, t]);
 
   const navItems = useMemo(
     () => [
@@ -78,16 +79,3 @@ export function App() {
     </div>
   );
 }
-
-function resolveErrorMessage(error: unknown) {
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (error && typeof error === "object" && "message" in error) {
-    return String((error as { message: string }).message);
-  }
-
-  return "未知错误";
-}
-

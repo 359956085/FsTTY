@@ -32,28 +32,32 @@ export function SessionFormDialog({ mode, onClose, onSave, session }: SessionFor
   );
 
   function handleSubmit() {
+    const normalizedName = name.trim();
+    const normalizedHost = host.trim();
     const normalizedPort = Number(port);
+    const normalizedUsername = username.trim();
+    const normalizedGroup = group.trim();
     const tagList = tags
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
 
-    if (!name.trim() || !host.trim() || !username.trim()) {
-      setError("名称、主机、用户不能为空");
+    if (!normalizedName || !normalizedHost || !normalizedUsername) {
+      setError(t("sessions.validationRequired"));
       return;
     }
 
     if (!Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) {
-      setError("端口必须在 1 到 65535 之间");
+      setError(t("sessions.validationPort"));
       return;
     }
 
     const payload = {
-      name,
-      host,
+      name: normalizedName,
+      host: normalizedHost,
       port: normalizedPort,
-      username,
-      group,
+      username: normalizedUsername,
+      group: normalizedGroup,
       tags: tagList,
     };
 
@@ -114,4 +118,3 @@ export function SessionFormDialog({ mode, onClose, onSave, session }: SessionFor
     </div>
   );
 }
-

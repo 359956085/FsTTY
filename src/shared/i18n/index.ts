@@ -20,9 +20,14 @@ void i18n.use(initReactI18next).init({
           new: "新建 Session",
           edit: "编辑",
           delete: "删除",
+          refresh: "刷新",
+          close: "关闭",
+          loading: "加载中...",
           search: "搜索 sessions...",
           terminalPlaceholder: "输入命令...",
           files: "文件",
+          file: "文件",
+          folder: "文件夹",
           details: "详情",
           permissions: "权限",
           preview: "预览",
@@ -46,7 +51,10 @@ void i18n.use(initReactI18next).init({
           uptime: "运行时间",
           services: "服务",
           path: "路径",
-          owner: "Owner",
+          owner: "所有者",
+          os: "系统",
+          validationRequired: "名称、主机、用户不能为空",
+          validationPort: "端口必须在 1 到 65535 之间",
         },
         settings: {
           title: "设置",
@@ -71,9 +79,14 @@ void i18n.use(initReactI18next).init({
           new: "New Session",
           edit: "Edit",
           delete: "Delete",
+          refresh: "Refresh",
+          close: "Close",
+          loading: "Loading...",
           search: "Search sessions...",
           terminalPlaceholder: "Type a command...",
           files: "Files",
+          file: "File",
+          folder: "Folder",
           details: "Details",
           permissions: "Permissions",
           preview: "Preview",
@@ -98,6 +111,9 @@ void i18n.use(initReactI18next).init({
           services: "Services",
           path: "Path",
           owner: "Owner",
+          os: "OS",
+          validationRequired: "Name, host, and user are required",
+          validationPort: "Port must be between 1 and 65535",
         },
         settings: {
           title: "Settings",
@@ -114,4 +130,3 @@ void i18n.use(initReactI18next).init({
 });
 
 export default i18n;
-

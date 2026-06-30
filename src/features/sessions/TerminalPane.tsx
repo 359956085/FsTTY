@@ -11,6 +11,9 @@ interface TerminalPaneProps {
 export function TerminalPane({ connection }: TerminalPaneProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const latestConnectionRef = useRef<SessionConnection | null>(connection);
+  const commandRef = useRef("");
 
   useEffect(() => {
     const container = containerRef.current;
@@ -38,34 +41,33 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
       },
     });
     const fitAddon = new FitAddon();
-    let command = "";
 
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     fitAddon.fit();
-
-    for (const line of connection?.terminalOutput ?? []) {
-      terminal.writeln(line);
-    }
+    terminalRef.current = terminal;
+    latestConnectionRef.current = connection;
 
     terminal.onData((data) => {
+      const activeConnection = latestConnectionRef.current;
+
       if (data === "\r") {
         terminal.writeln("");
-        terminal.writeln(`command mocked: ${command}`);
-        terminal.write(`${connection?.session.username ?? "user"}@${connection?.session.name ?? "fstty"}:~$ `);
-        command = "";
+        terminal.writeln(`模拟命令: ${commandRef.current}`);
+        terminal.write(`${activeConnection?.session.username ?? "user"}@${activeConnection?.session.name ?? "fstty"}:~$ `);
+        commandRef.current = "";
         return;
       }
 
       if (data === "\u007f") {
-        if (command.length > 0) {
-          command = command.slice(0, -1);
+        if (commandRef.current.length > 0) {
+          commandRef.current = commandRef.current.slice(0, -1);
           terminal.write("\b \b");
         }
         return;
       }
 
-      command += data;
+      commandRef.current += data;
       terminal.write(data);
     });
 
@@ -77,8 +79,22 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
 
     return () => {
       observer.disconnect();
+      terminalRef.current = null;
       terminal.dispose();
     };
+  }, []);
+
+  useEffect(() => {
+    latestConnectionRef.current = connection;
+    commandRef.current = "";
+    const terminal = terminalRef.current;
+
+    if (!terminal) {
+      return;
+    }
+
+    terminal.reset();
+    writeConnectionOutput(terminal, connection);
   }, [connection]);
 
   return (
@@ -89,3 +105,8 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
   );
 }
 
+function writeConnectionOutput(terminal: Terminal, connection: SessionConnection | null) {
+  for (const line of connection?.terminalOutput ?? []) {
+    terminal.writeln(line);
+  }
+}

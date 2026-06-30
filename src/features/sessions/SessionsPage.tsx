@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCcw, Trash2, Pencil } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil, Plus, RefreshCcw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
+import { resolveApiError } from "../../shared/api/errors";
 import type {
   CreateSessionPayload,
   DeviceStatus,
@@ -15,6 +16,7 @@ import { Button } from "../../shared/ui/Button";
 import { SessionList } from "./SessionList";
 import { SessionFormDialog } from "./SessionFormDialog";
 import { Workspace } from "./Workspace";
+import { DEFAULT_REMOTE_PATH } from "./constants";
 
 type DialogState =
   | { mode: "create"; session?: undefined }
@@ -31,6 +33,8 @@ export function SessionsPage() {
   const [query, setQuery] = useState("");
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const activeRequestId = useRef(0);
 
   const sessions = useMemo(
     () => groups.flatMap((group) => group.sessions),
@@ -44,39 +48,72 @@ export function SessionsPage() {
 
   const loadSessions = useCallback(async () => {
     const nextGroups = await api.listSessions();
+    const nextSessions = nextGroups.flatMap((group) => group.sessions);
+
     setGroups(nextGroups);
+    setActiveSessionId((current) => {
+      if (current && nextSessions.some((session) => session.id === current)) {
+        return current;
+      }
 
-    const firstSession = nextGroups.flatMap((group) => group.sessions)[0];
-    setActiveSessionId((current) => current ?? firstSession?.id ?? null);
+      return nextSessions[0]?.id ?? null;
+    });
   }, []);
 
-  const loadSessionData = useCallback(async (sessionId: string) => {
-    const [nextConnection, nextFiles, nextDeviceStatus] = await Promise.all([
-      api.openSession(sessionId),
-      api.listRemoteFiles(sessionId, "/var/www/app"),
-      api.getDeviceStatus(sessionId),
-    ]);
+  const loadSessionData = useCallback(
+    async (sessionId: string) => {
+      const requestId = activeRequestId.current + 1;
+      activeRequestId.current = requestId;
+      setLoading(true);
+      setError(null);
 
-    setConnection(nextConnection);
-    setFiles(nextFiles);
-    setDeviceStatus(nextDeviceStatus);
-  }, []);
+      try {
+        const [nextConnection, nextFiles, nextDeviceStatus] = await Promise.all([
+          api.openSession(sessionId),
+          api.listRemoteFiles(sessionId, DEFAULT_REMOTE_PATH),
+          api.getDeviceStatus(sessionId),
+        ]);
+
+        if (requestId !== activeRequestId.current) {
+          return;
+        }
+
+        setConnection(nextConnection);
+        setFiles(nextFiles);
+        setDeviceStatus(nextDeviceStatus);
+      } catch (nextError) {
+        if (requestId !== activeRequestId.current) {
+          return;
+        }
+
+        setError(resolveApiError(nextError, t("errors.unknown")));
+      } finally {
+        if (requestId === activeRequestId.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [t],
+  );
 
   useEffect(() => {
     loadSessions().catch((nextError: unknown) => {
-      setError(resolveError(nextError, t("errors.unknown")));
+      setError(resolveApiError(nextError, t("errors.unknown")));
     });
   }, [loadSessions, t]);
 
   useEffect(() => {
     if (!activeSessionId) {
+      activeRequestId.current += 1;
+      setConnection(null);
+      setFiles([]);
+      setDeviceStatus(null);
+      setLoading(false);
       return;
     }
 
-    loadSessionData(activeSessionId).catch((nextError: unknown) => {
-      setError(resolveError(nextError, t("errors.unknown")));
-    });
-  }, [activeSessionId, loadSessionData, t]);
+    void loadSessionData(activeSessionId);
+  }, [activeSessionId, loadSessionData]);
 
   async function handleSave(payload: CreateSessionPayload | UpdateSessionPayload) {
     setError(null);
@@ -99,12 +136,15 @@ export function SessionsPage() {
       return;
     }
 
+    const activeIndex = sessions.findIndex((session) => session.id === activeSession.id);
+    const nextSession = sessions[activeIndex + 1] ?? sessions[activeIndex - 1] ?? null;
+
     setError(null);
     await api.deleteSession(activeSession.id);
     setConnection(null);
     setFiles([]);
     setDeviceStatus(null);
-    setActiveSessionId(null);
+    setActiveSessionId(nextSession?.id ?? null);
     await loadSessions();
   }
 
@@ -130,10 +170,19 @@ export function SessionsPage() {
             ) : null}
           </div>
           <div className="toolbar-actions">
-            <Button icon={<RefreshCcw size={16} />} onClick={() => activeSessionId && void loadSessionData(activeSessionId)} variant="ghost">
+            <Button
+              icon={<RefreshCcw size={16} />}
+              onClick={() => activeSessionId && void loadSessionData(activeSessionId)}
+              variant="ghost"
+            >
               {t("sessions.refresh")}
             </Button>
-            <Button disabled={!activeSession} icon={<Pencil size={16} />} onClick={() => activeSession && setDialogState({ mode: "edit", session: activeSession })} variant="ghost">
+            <Button
+              disabled={!activeSession}
+              icon={<Pencil size={16} />}
+              onClick={() => activeSession && setDialogState({ mode: "edit", session: activeSession })}
+              variant="ghost"
+            >
               {t("sessions.edit")}
             </Button>
             <Button disabled={!activeSession} icon={<Trash2 size={16} />} onClick={() => void handleDelete()} variant="danger">
@@ -146,6 +195,7 @@ export function SessionsPage() {
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
+        {loading ? <div className="loading-banner">{t("sessions.loading")}</div> : null}
 
         <Workspace
           connection={connection}
@@ -164,7 +214,7 @@ export function SessionsPage() {
           onClose={() => setDialogState(null)}
           onSave={(payload) =>
             handleSave(payload).catch((nextError: unknown) => {
-              setError(resolveError(nextError, t("errors.unknown")));
+              setError(resolveApiError(nextError, t("errors.unknown")));
             })
           }
         />
@@ -172,16 +222,3 @@ export function SessionsPage() {
     </section>
   );
 }
-
-function resolveError(error: unknown, fallback: string) {
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (error && typeof error === "object" && "message" in error) {
-    return String((error as { message: string }).message);
-  }
-
-  return fallback;
-}
-
