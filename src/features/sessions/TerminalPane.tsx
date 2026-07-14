@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { SessionConnection } from "../../shared/api/types";
 
@@ -8,7 +7,6 @@ interface TerminalPaneProps {
 }
 
 export function TerminalPane({ connection }: TerminalPaneProps) {
-  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const latestConnectionRef = useRef<SessionConnection | null>(connection);
@@ -41,9 +39,9 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
         cursorBlink: true,
         fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
         fontSize: 13,
-        lineHeight: 1.45,
+        lineHeight: 1.38,
         theme: {
-          background: "#071017",
+          background: "#09131c",
           foreground: "#c9d3dd",
           cursor: "#f5f7fb",
           black: "#0b1118",
@@ -120,13 +118,19 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
   return (
     <div className="terminal-wrap">
       <div className="terminal-body" ref={containerRef} />
-      <div className="terminal-input-hint">{t("sessions.terminalPlaceholder")}</div>
     </div>
   );
 }
 
 function writeConnectionOutput(terminal: XTerm, connection: SessionConnection | null) {
-  for (const line of connection?.terminalOutput ?? []) {
+  const lines = connection?.terminalOutput ?? [];
+
+  lines.forEach((line, index) => {
+    if (index === lines.length - 1) {
+      terminal.write(line);
+      return;
+    }
+
     terminal.writeln(line);
-  }
+  });
 }

@@ -1,4 +1,5 @@
-import { Activity, Cpu, HardDrive, MemoryStick } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, MonitorCog } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { DeviceStatus } from "../../shared/api/types";
 
@@ -9,62 +10,64 @@ interface DeviceStatusPanelProps {
 export function DeviceStatusPanel({ status }: DeviceStatusPanelProps) {
   const { t } = useTranslation();
 
-  if (!status) {
-    return null;
-  }
-
   return (
     <section className="status-panel">
       <header className="panel-title">
-        <h2>{status.ip}</h2>
-        <span>{status.username}</span>
+        <h2>{t("sessions.deviceStatus")}</h2>
       </header>
 
-      <div className="status-metrics">
-        <Metric icon={<Cpu size={17} />} label={t("sessions.cpu")} value={status.cpuPercent} />
-        <Metric icon={<MemoryStick size={17} />} label={t("sessions.memory")} value={status.memoryPercent} />
-        <Metric icon={<HardDrive size={17} />} label={t("sessions.disk")} value={status.diskPercent} />
-      </div>
-
-      <dl className="details-list compact">
-        <dt>{t("sessions.os")}</dt>
-        <dd>{status.os}</dd>
-        <dt>{t("sessions.uptime")}</dt>
-        <dd>{status.uptime}</dd>
-      </dl>
-
-      <div className="service-list">
-        {status.services.map((service) => (
-          <div className="service-row" key={service.name}>
-            <Activity size={15} />
-            <span>{service.name}</span>
-            <strong>{service.state}</strong>
-            <em>{service.port}</em>
+      {status ? (
+        <div className="device-metrics">
+          <MetricRow
+            detail={t("sessions.cores", { count: status.cpuCores })}
+            icon={<Cpu size={18} />}
+            label={t("sessions.cpu")}
+            percent={status.cpuPercent}
+            value={`${status.cpuPercent}%`}
+          />
+          <MetricRow
+            detail={`${status.memoryUsedGb} / ${status.memoryTotalGb} GB`}
+            icon={<MemoryStick size={18} />}
+            label={t("sessions.memory")}
+            percent={status.memoryPercent}
+            value={`${status.memoryPercent}%`}
+          />
+          <MetricRow
+            detail={`${status.diskUsedGb} / ${status.diskTotalGb} GB`}
+            icon={<HardDrive size={18} />}
+            label={t("sessions.disk")}
+            percent={status.diskPercent}
+            value={`${status.diskPercent}%`}
+          />
+          <div className="device-row device-os-row">
+            <MonitorCog size={18} />
+            <span>{t("sessions.os")}</span>
+            <strong>{status.os} ({t("sessions.bit64")})</strong>
           </div>
-        ))}
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-interface MetricProps {
-  icon: React.ReactNode;
+interface MetricRowProps {
+  icon: ReactNode;
   label: string;
-  value: number;
+  percent: number;
+  value: string;
+  detail: string;
 }
 
-function Metric({ icon, label, value }: MetricProps) {
+function MetricRow({ detail, icon, label, percent, value }: MetricRowProps) {
   return (
-    <div className="metric">
-      <div>
-        {icon}
-        <span>{label}</span>
-      </div>
-      <strong>{value}%</strong>
+    <div className="device-row">
+      {icon}
+      <span>{label}</span>
       <span className="metric-track">
-        <span style={{ width: `${value}%` }} />
+        <span style={{ width: `${percent}%` }} />
       </span>
+      <strong>{value}</strong>
+      <em>{detail}</em>
     </div>
   );
 }
-

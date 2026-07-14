@@ -2,7 +2,6 @@ use crate::models::{
     AppError, CreateSessionPayload, Session, SessionConnection, SessionGroup, SessionStatus,
     UpdateSessionPayload,
 };
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub struct SessionService {
@@ -19,19 +18,20 @@ impl Default for SessionService {
 
 impl SessionService {
     pub fn list_groups(&self) -> Vec<SessionGroup> {
-        let mut groups = BTreeMap::<String, Vec<Session>>::new();
+        let mut groups = Vec::<SessionGroup>::new();
 
         for session in &self.sessions {
-            groups
-                .entry(session.group.clone())
-                .or_default()
-                .push(session.clone());
+            if let Some(group) = groups.iter_mut().find(|group| group.name == session.group) {
+                group.sessions.push(session.clone());
+            } else {
+                groups.push(SessionGroup {
+                    name: session.group.clone(),
+                    sessions: vec![session.clone()],
+                });
+            }
         }
 
         groups
-            .into_iter()
-            .map(|(name, sessions)| SessionGroup { name, sessions })
-            .collect()
     }
 
     pub fn create(&mut self, payload: CreateSessionPayload) -> Session {
@@ -113,94 +113,96 @@ fn normalize_group(group: &str) -> String {
     let trimmed = group.trim();
 
     if trimmed.is_empty() {
-        "Development".to_owned()
+        "开发环境".to_owned()
     } else {
         trimmed.to_owned()
     }
 }
 
 fn seed_sessions() -> Vec<Session> {
-    let mut sessions = vec![
+    vec![
         mock_session(
-            "prod-api-01",
-            "prod-api-01",
-            "10.0.1.10",
-            "ubuntu",
-            "Production",
-            vec!["ubuntu"],
-            22,
-        ),
-        mock_session(
-            "prod-db-01",
-            "prod-db-01",
-            "10.0.1.20",
-            "postgres",
-            "Production",
-            vec!["postgres"],
+            "prod-web-01",
+            "Prod-Web-01",
+            "10.0.0.11",
+            "root",
+            "生产环境",
+            vec!["web"],
             18,
         ),
         mock_session(
-            "prod-web-01",
-            "prod-web-01",
-            "10.0.1.30",
+            "prod-db-01",
+            "Prod-DB-01",
+            "10.0.0.12",
+            "rrag",
+            "生产环境",
+            vec!["postgres"],
+            21,
+        ),
+        mock_session(
+            "prod-cache-01",
+            "Prod-Cache-01",
+            "10.0.0.13",
+            "root",
+            "生产环境",
+            vec!["redis"],
+            16,
+        ),
+        mock_session(
+            "test-web-01",
+            "Test-Web-01",
+            "10.0.1.21",
             "ubuntu",
-            "Production",
-            vec!["ubuntu"],
-            32,
+            "测试环境",
+            vec!["web"],
+            25,
         ),
         mock_session(
-            "staging-db",
-            "staging-db",
-            "10.0.2.15",
-            "devuser",
-            "Development",
-            vec!["postgres"],
-            24,
-        ),
-        mock_session(
-            "staging-api",
-            "staging-api",
-            "10.0.2.16",
-            "devuser",
-            "Development",
+            "test-api-01",
+            "Test-API-01",
+            "10.0.1.22",
+            "ubuntu",
+            "测试环境",
             vec!["api"],
-            27,
+            29,
         ),
         mock_session(
-            "dev-box",
-            "dev-box",
-            "10.0.2.50",
-            "devuser",
-            "Development",
+            "dev-01",
+            "Dev-01",
+            "10.0.2.31",
+            "developer",
+            "开发环境",
             vec!["tooling"],
-            45,
+            35,
         ),
         mock_session(
-            "test-api",
-            "test-api",
-            "10.0.3.10",
-            "tester",
-            "Testing",
-            vec!["api"],
-            31,
+            "dev-02",
+            "Dev-02",
+            "10.0.2.32",
+            "developer",
+            "开发环境",
+            vec!["tooling"],
+            38,
         ),
         mock_session(
-            "test-db",
-            "test-db",
-            "10.0.3.11",
-            "tester",
-            "Testing",
-            vec!["postgres"],
-            41,
+            "aws-ec2",
+            "AWS-EC2",
+            "3.22.10.8",
+            "ec2-user",
+            "云服务器",
+            vec!["aws"],
+            52,
         ),
-    ];
-
-    if let Some(session) = sessions.iter_mut().find(|session| session.id == "test-db") {
-        session.status = SessionStatus::Offline;
-        session.latency_ms = None;
-    }
-
-    sessions
+        mock_session(
+            "aliyun-ecs",
+            "Aliyun-ECS",
+            "47.100.1.25",
+            "root",
+            "云服务器",
+            vec!["aliyun"],
+            48,
+        ),
+    ]
 }
 
 fn mock_session(
@@ -227,31 +229,52 @@ fn mock_session(
 }
 
 fn terminal_output(session: &Session) -> Vec<String> {
+    let prompt = format!(
+        "{}@{}:~{}",
+        session.username,
+        session.id,
+        if session.username == "root" { "#" } else { "$" }
+    );
+
     vec![
-        format!(
-            "Welcome to {} (GNU/Linux 5.15.0-103-generic x86_64)",
-            session.os
-        ),
-        "* Documentation:  https://help.ubuntu.com".to_owned(),
-        "* Management:     https://landscape.canonical.com".to_owned(),
-        "* Support:        https://ubuntu.com/pro".to_owned(),
+        "Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 5.15.0-101-generic x86_64)".to_owned(),
         String::new(),
-        "Last login: May 23 09:14:32 2024 from 10.0.2.100".to_owned(),
-        format!("{}@{}:~$ whoami", session.username, session.name),
-        session.username.clone(),
-        format!("{}@{}:~$ hostname -I", session.username, session.name),
-        format!("{} fe80::215:5dff:febd:abcd", session.host),
-        format!("{}@{}:~$ uptime", session.username, session.name),
-        "09:42:11 up 17 days, 2 users, load average: 0.15, 0.19, 0.23".to_owned(),
-        format!(
-            "{}@{}:~$ docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'",
-            session.username, session.name
-        ),
-        "NAMES          STATUS       PORTS".to_owned(),
-        "postgres-db    Up 17 days   0.0.0.0:5432->5432/tcp".to_owned(),
-        "redis-cache    Up 17 days   0.0.0.0:6379->6379/tcp".to_owned(),
-        "nginx-proxy    Up 17 days   0.0.0.0:80->80/tcp".to_owned(),
+        " * Documentation:  https://help.ubuntu.com".to_owned(),
+        " * Management:     https://landscape.canonical.com".to_owned(),
+        " * Support:        https://ubuntu.com/advantage".to_owned(),
         String::new(),
-        format!("{}@{}:~$ ", session.username, session.name),
+        "System information as of Fri May 17 14:23:18 CST 2024".to_owned(),
+        String::new(),
+        "  System load:  0.08              Processes:             124".to_owned(),
+        "  Usage of /:   23.1% of 39.05GB  Users logged in:       1".to_owned(),
+        format!(
+            "  Memory usage: 28%              IPv4 address for eth0: {}",
+            session.host
+        ),
+        "  Swap usage:   0%".to_owned(),
+        String::new(),
+        "0 updates can be applied immediately.".to_owned(),
+        String::new(),
+        "Last login: Fri May 17 13:58:41 2024 from 10.0.0.5".to_owned(),
+        format!("\u{1b}[32m{prompt}\u{1b}[0m ls -lah"),
+        "total 80K".to_owned(),
+        "drwx------  7 root root 4.0K May 17 14:21 .".to_owned(),
+        "drwxr-xr-x 23 root root 4.0K Apr 12 09:15 ..".to_owned(),
+        "-rw-------  1 root root 3.1K Apr 10 03:31 .bash_history".to_owned(),
+        "-rw-r--r--  1 root root 3.1K Apr  9 10:21 .bashrc".to_owned(),
+        "drwx------  3 root root 4.0K Mar 14 15:22 \u{1b}[36m.cache\u{1b}[0m".to_owned(),
+        "drwxr-xr-x  3 root root 4.0K Mar 14 15:22 \u{1b}[36m.config\u{1b}[0m".to_owned(),
+        "-rw-r--r--  1 root root 1.6K Apr  9 10:21 .profile".to_owned(),
+        "drwx------  2 root root 4.0K Apr 11 11:08 \u{1b}[36m.ssh\u{1b}[0m".to_owned(),
+        "-rw-r--r--  1 root root   33 Apr  9 10:21 .vimrc".to_owned(),
+        "drwxr-xr-x  5 root root 4.0K Apr 25 16:45 \u{1b}[36mwww\u{1b}[0m".to_owned(),
+        format!("\u{1b}[32m{prompt}\u{1b}[0m df -hT"),
+        "Filesystem     Type      Size  Used Avail Use% Mounted on".to_owned(),
+        "/dev/vda1      ext4       40G  9.1G   29G  24% /".to_owned(),
+        "tmpfs          tmpfs     2.0G     0  2.0G   0% /dev/shm".to_owned(),
+        "tmpfs          tmpfs     793M  1.4M  792M   1% /run".to_owned(),
+        "tmpfs          tmpfs     5.0M     0  5.0M   0% /run/lock".to_owned(),
+        "/dev/vda15     vfat      105M  6.1M   99M   6% /boot/efi".to_owned(),
+        format!("\u{1b}[32m{prompt}\u{1b}[0m "),
     ]
 }

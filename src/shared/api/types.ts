@@ -58,8 +58,13 @@ export interface DeviceStatus {
   os: string;
   uptime: string;
   cpuPercent: number;
+  cpuCores: number;
   memoryPercent: number;
+  memoryUsedGb: number;
+  memoryTotalGb: number;
   diskPercent: number;
+  diskUsedGb: number;
+  diskTotalGb: number;
   services: ServiceStatus[];
 }
 
@@ -68,4 +73,3 @@ export interface ServiceStatus {
   state: string;
   port: number;
 }
-

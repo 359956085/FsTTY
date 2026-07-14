@@ -25,22 +25,25 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
   }
 
   return (
-    <section className="settings-page">
+    <section aria-labelledby="settings-title" className="settings-page">
       <header className="page-header">
-        <div>
-          <h1>{t("settings.title")}</h1>
-          <p>{t("settings.language")}</p>
-        </div>
+        <h1 id="settings-title">{t("settings.title")}</h1>
+        <p>{t("settings.language")}</p>
       </header>
 
-      <div className="settings-panel">
+      <section aria-labelledby="language-setting-title" className="settings-panel">
         <div className="settings-row">
-          <div className="settings-row-title">
-            <Globe2 size={18} />
+          <h2 className="settings-row-title" id="language-setting-title">
+            <Globe2 aria-hidden="true" size={18} />
             <span>{t("settings.language")}</span>
-          </div>
-          <div className="segmented-control">
+          </h2>
+          <div
+            aria-label={t("settings.language")}
+            className="segmented-control"
+            role="group"
+          >
             <button
+              aria-pressed={settings.language === "zh-CN"}
               className={settings.language === "zh-CN" ? "segment segment-active" : "segment"}
               onClick={() => void handleLanguageChange("zh-CN")}
               type="button"
@@ -48,6 +51,7 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
               {t("settings.chinese")}
             </button>
             <button
+              aria-pressed={settings.language === "en-US"}
               className={settings.language === "en-US" ? "segment segment-active" : "segment"}
               onClick={() => void handleLanguageChange("en-US")}
               type="button"
@@ -57,7 +61,7 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
           </div>
         </div>
         {error ? <div className="form-error">{error}</div> : null}
-      </div>
+      </section>
     </section>
   );
 }

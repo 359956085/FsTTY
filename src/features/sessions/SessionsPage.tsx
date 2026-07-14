@@ -1,102 +1,151 @@
-import { Pencil, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Button } from "../../shared/ui/Button";
+import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
 import { SessionList } from "./SessionList";
-import { Workspace } from "./Workspace";
+import { usePaneLayout } from "./usePaneLayout";
 import { useSessionsPageState } from "./useSessionsPageState";
+import { Workspace } from "./Workspace";
+import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
 
 export function SessionsPage() {
   const { t } = useTranslation();
   const {
     activeSession,
     activeSessionId,
+    closeSessionTab,
+    collapsedGroupNames,
     connection,
+    currentPath,
     deleteActiveSession,
     deviceStatus,
     dialogState,
     error,
+    favoriteSessionIds,
     files,
+    filesLoading,
+    filter,
     groups,
     loading,
+    openPath,
+    openSessions,
     query,
     refreshActiveSession,
+    refreshFiles,
+    refreshSessions,
     saveSession,
-    sessions,
-    setActiveSessionId,
+    selectSession,
     setDialogState,
+    setFilter,
     setQuery,
+    toggleFavorite,
+    toggleGroup,
   } = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
     errorFallback: t("errors.unknown"),
   });
+  const {
+    adjustResize,
+    beginResize,
+    layout,
+    rootRef,
+    toggleLeftCollapsed,
+    toggleRightCollapsed,
+  } = usePaneLayout();
 
   return (
-    <section className="sessions-page">
-      <SessionList
-        activeSessionId={activeSessionId}
-        groups={groups}
-        query={query}
-        onQueryChange={setQuery}
-        onSelect={setActiveSessionId}
-        onCreate={() => setDialogState({ mode: "create" })}
+    <div
+      className={layout.leftCollapsed ? "sessions-page left-collapsed" : "sessions-page"}
+      ref={rootRef}
+    >
+      {layout.leftCollapsed ? (
+        <aside className="collapsed-rail collapsed-rail-left">
+          <button
+            aria-label={t("sessions.expand")}
+            onClick={toggleLeftCollapsed}
+            type="button"
+          >
+            <ChevronRight size={20} />
+          </button>
+        </aside>
+      ) : (
+        <SessionList
+          activeSessionId={activeSessionId}
+          collapsedGroupNames={collapsedGroupNames}
+          favoriteSessionIds={favoriteSessionIds}
+          filter={filter}
+          groups={groups}
+          query={query}
+          onCollapse={toggleLeftCollapsed}
+          onCreate={() => setDialogState({ mode: "create" })}
+          onDelete={() => void deleteActiveSession()}
+          onEdit={() =>
+            activeSession && setDialogState({ mode: "edit", session: activeSession })
+          }
+          onFilterChange={setFilter}
+          onQueryChange={setQuery}
+          onRefresh={() => {
+            void refreshSessions();
+            void refreshActiveSession();
+          }}
+          onSelect={selectSession}
+          onToggleFavorite={toggleFavorite}
+          onToggleGroup={toggleGroup}
+        />
+      )}
+
+      <ResizeHandle
+        ariaLabel={t("sessions.resizeLeft")}
+        disabled={layout.leftCollapsed}
+        onKeyboardResize={(direction) => adjustResize("left", direction)}
+        onPointerDown={(event) => beginResize("left", event)}
+        orientation="vertical"
+        valueMax={WORKSPACE_LAYOUT_LIMITS.leftWidth.max}
+        valueMin={WORKSPACE_LAYOUT_LIMITS.leftWidth.min}
+        valueNow={layout.leftWidth}
       />
 
-      <section className="session-content">
-        <header className="workspace-toolbar">
-          <div>
-            <h1>{activeSession?.name ?? t("sessions.noSession")}</h1>
-            {activeSession ? (
-              <p>
-                {activeSession.host} · {activeSession.username} · {activeSession.os}
-              </p>
-            ) : null}
-          </div>
-          <div className="toolbar-actions">
-            <Button
-              disabled={!activeSessionId || loading}
-              icon={<RefreshCcw size={16} />}
-              onClick={() => void refreshActiveSession()}
-              variant="ghost"
-            >
-              {t("sessions.refresh")}
-            </Button>
-            <Button
-              disabled={!activeSession}
-              icon={<Pencil size={16} />}
-              onClick={() =>
-                activeSession && setDialogState({ mode: "edit", session: activeSession })
-              }
-              variant="ghost"
-            >
-              {t("sessions.edit")}
-            </Button>
-            <Button
-              disabled={!activeSession}
-              icon={<Trash2 size={16} />}
-              onClick={() => void deleteActiveSession()}
-              variant="danger"
-            >
-              {t("sessions.delete")}
-            </Button>
-            <Button icon={<Plus size={16} />} onClick={() => setDialogState({ mode: "create" })}>
-              {t("sessions.new")}
-            </Button>
-          </div>
-        </header>
-
-        {error ? <div className="error-banner">{error}</div> : null}
-        {loading ? <div className="loading-banner">{t("sessions.loading")}</div> : null}
-
-        <Workspace
-          connection={connection}
-          deviceStatus={deviceStatus}
-          files={files}
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={setActiveSessionId}
-        />
-      </section>
+      <Workspace
+        activeSessionId={activeSessionId}
+        connection={connection}
+        currentPath={currentPath}
+        deviceStatus={deviceStatus}
+        error={error}
+        files={files}
+        filesLoading={filesLoading}
+        loading={loading}
+        openSessions={openSessions}
+        rightCollapsed={layout.rightCollapsed}
+        rightResizeHandle={
+          <ResizeHandle
+            ariaLabel={t("sessions.resizeRight")}
+            disabled={layout.rightCollapsed}
+            onKeyboardResize={(direction) => adjustResize("right", direction)}
+            onPointerDown={(event) => beginResize("right", event)}
+            orientation="vertical"
+            valueMax={WORKSPACE_LAYOUT_LIMITS.rightWidth.max}
+            valueMin={WORKSPACE_LAYOUT_LIMITS.rightWidth.min}
+            valueNow={layout.rightWidth}
+          />
+        }
+        verticalResizeHandle={
+          <ResizeHandle
+            ariaLabel={t("sessions.resizeFiles")}
+            onKeyboardResize={(direction) => adjustResize("files", direction)}
+            onPointerDown={(event) => beginResize("files", event)}
+            orientation="horizontal"
+            valueMax={WORKSPACE_LAYOUT_LIMITS.fileRatio.max}
+            valueMin={WORKSPACE_LAYOUT_LIMITS.fileRatio.min}
+            valueNow={layout.fileRatio}
+          />
+        }
+        onCloseSession={closeSessionTab}
+        onCreateSession={() => setDialogState({ mode: "create" })}
+        onOpenPath={openPath}
+        onRefreshFiles={refreshFiles}
+        onSelectSession={selectSession}
+        onToggleRight={toggleRightCollapsed}
+      />
 
       {dialogState ? (
         <SessionFormDialog
@@ -106,6 +155,6 @@ export function SessionsPage() {
           onSave={(payload) => void saveSession(payload)}
         />
       ) : null}
-    </section>
+    </div>
   );
 }

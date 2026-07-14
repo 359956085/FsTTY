@@ -6,7 +6,7 @@ use crate::services::{AppState, SessionService};
 use std::sync::MutexGuard;
 use tauri::State;
 
-const DEFAULT_REMOTE_PATH: &str = "/var/www/app";
+const DEFAULT_REMOTE_PATH: &str = "/www/html";
 
 #[tauri::command]
 pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionGroup>, AppError> {

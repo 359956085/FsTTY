@@ -9,8 +9,13 @@ pub struct DeviceStatus {
     pub os: String,
     pub uptime: String,
     pub cpu_percent: u8,
+    pub cpu_cores: u8,
     pub memory_percent: u8,
+    pub memory_used_gb: f32,
+    pub memory_total_gb: f32,
     pub disk_percent: u8,
+    pub disk_used_gb: f32,
+    pub disk_total_gb: f32,
     pub services: Vec<ServiceStatus>,
 }
 

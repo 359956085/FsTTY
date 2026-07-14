@@ -33,6 +33,8 @@ pub struct SessionConnection {
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
     Online,
+    // 设计稿默认数据全部在线，但状态契约仍需支持离线筛选。
+    #[allow(dead_code)]
     Offline,
 }
 

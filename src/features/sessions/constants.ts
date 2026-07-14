@@ -1,1 +1,1 @@
-export const DEFAULT_REMOTE_PATH = "/var/www/app";
+export const DEFAULT_REMOTE_PATH = "/www/html";

@@ -22,7 +22,7 @@ export function SessionFormDialog({ mode, onClose, onSave, session }: SessionFor
   const [host, setHost] = useState(session?.host ?? "");
   const [port, setPort] = useState(String(session?.port ?? 22));
   const [username, setUsername] = useState(session?.username ?? "");
-  const [group, setGroup] = useState(session?.group ?? "Development");
+  const [group, setGroup] = useState(session?.group ?? "开发环境");
   const [tags, setTags] = useState(session?.tags.join(", ") ?? "");
   const [error, setError] = useState<string | null>(null);
 
