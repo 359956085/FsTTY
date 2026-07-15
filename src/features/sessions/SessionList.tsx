@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { SessionGroup } from "../../shared/api/types";
+import type { ConnectionState, SessionGroup } from "../../shared/api/types";
 import { TextInput } from "../../shared/ui/TextInput";
 
 export type SessionFilter = "all" | "online" | "offline" | "favorites";
@@ -25,6 +25,7 @@ interface SessionListProps {
   filter: SessionFilter;
   favoriteSessionIds: readonly string[];
   collapsedGroupNames: readonly string[];
+  connectionStates: Readonly<Record<string, ConnectionState>>;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: SessionFilter) => void;
   onSelect: (sessionId: string) => void;
@@ -40,6 +41,7 @@ interface SessionListProps {
 export function SessionList({
   activeSessionId,
   collapsedGroupNames,
+  connectionStates,
   favoriteSessionIds,
   filter,
   groups,
@@ -77,13 +79,13 @@ export function SessionList({
             filter === "all" ||
             (filter === "favorites"
               ? favoriteIds.has(session.id)
-              : session.status === filter);
+              : (connectionStates[session.id] === "connected" ? "online" : "offline") === filter);
 
           return matchesQuery && matchesFilter;
         }),
       }))
       .filter((group) => group.sessions.length > 0);
-  }, [favoriteIds, filter, groups, query]);
+  }, [connectionStates, favoriteIds, filter, groups, query]);
 
   const filterOptions: Array<{ value: SessionFilter; label: string }> = [
     { value: "all", label: t("sessions.filterAll") },
@@ -181,7 +183,13 @@ export function SessionList({
                         onClick={() => onSelect(session.id)}
                         type="button"
                       >
-                        <span className={`status-dot status-${session.status}`} />
+                        <span
+                          className={`status-dot status-${
+                            connectionStates[session.id] === "connected"
+                              ? "online"
+                              : "offline"
+                          }`}
+                        />
                         <span className="session-item-main">
                           <span className="session-name">{session.name}</span>
                           <span className="session-meta">

@@ -2,60 +2,76 @@ import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-  DeviceStatus,
+  ConnectionState,
   FileEntry,
   Session,
-  SessionConnection,
+  SshConnection,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
 import { FilesPane } from "./FilesPane";
 import { TerminalPane } from "./TerminalPane";
+import type { SessionRuntime } from "./useSessionConnections";
 
 interface WorkspaceProps {
   activeSessionId: string | null;
-  connection: SessionConnection | null;
-  currentPath: string;
-  deviceStatus: DeviceStatus | null;
+  activeRuntime: SessionRuntime;
+  connectionStates: Readonly<Record<string, ConnectionState>>;
   error: string | null;
-  files: FileEntry[];
-  filesLoading: boolean;
   loading: boolean;
   openSessions: Session[];
   rightCollapsed: boolean;
   rightResizeHandle: ReactNode;
+  runtimes: Readonly<Record<string, SessionRuntime>>;
   verticalResizeHandle: ReactNode;
+  visible: boolean;
+  onCancelTransfer: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
+  onConnected: (sessionId: string, connection: SshConnection) => void;
   onCreateSession: () => void;
-  onOpenPath: (path: string) => void;
-  onRefreshFiles: () => void;
+  onDownload: (sessionId: string, file: FileEntry) => void;
+  onOpenPath: (sessionId: string, path: string) => void;
+  onRefreshFiles: (sessionId: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onTerminalState: (
+    sessionId: string,
+    state: ConnectionState,
+    error?: string | null,
+  ) => void;
   onToggleRight: () => void;
+  onUpload: (sessionId: string) => void;
 }
 
 export function Workspace({
+  activeRuntime,
   activeSessionId,
-  connection,
-  currentPath,
-  deviceStatus,
+  connectionStates,
   error,
-  files,
-  filesLoading,
   loading,
+  onCancelTransfer,
   onCloseSession,
+  onConnected,
   onCreateSession,
+  onDownload,
   onOpenPath,
   onRefreshFiles,
   onSelectSession,
+  onTerminalState,
   onToggleRight,
+  onUpload,
   openSessions,
   rightCollapsed,
   rightResizeHandle,
+  runtimes,
   verticalResizeHandle,
+  visible,
 }: WorkspaceProps) {
   const { t } = useTranslation();
+  const activeError = activeRuntime.error ?? error;
 
   return (
-    <section className={rightCollapsed ? "workspace-grid right-collapsed" : "workspace-grid"}>
+    <section
+      className={rightCollapsed ? "workspace-grid right-collapsed" : "workspace-grid"}
+    >
       <div className="session-tabs">
         {openSessions.map((session) => (
           <div
@@ -67,7 +83,11 @@ export function Workspace({
             key={session.id}
           >
             <button onClick={() => onSelectSession(session.id)} type="button">
-              <span className={`status-dot status-${session.status}`} />
+              <span
+                className={`status-dot status-${
+                  connectionStates[session.id] === "connected" ? "online" : "offline"
+                }`}
+              />
               <span>{session.name}</span>
             </button>
             <button
@@ -92,11 +112,37 @@ export function Workspace({
 
       <section className="terminal-panel">
         <div className="terminal-stage">
-          {error ? <div className="workspace-notice error-banner">{error}</div> : null}
+          {activeError ? (
+            <div className="workspace-notice error-banner">{activeError}</div>
+          ) : null}
           {loading ? (
             <div className="workspace-notice loading-banner">{t("sessions.loading")}</div>
           ) : null}
-          <TerminalPane connection={connection} />
+          {openSessions.map((session) => {
+            const runtime = runtimes[session.id];
+            return (
+              <div
+                className={
+                  activeSessionId === session.id
+                    ? "terminal-session terminal-session-active"
+                    : "terminal-session"
+                }
+                key={session.id}
+              >
+                <TerminalPane
+                  active={activeSessionId === session.id}
+                  connectionState={runtime?.connectionState ?? "disconnected"}
+                  onConnected={onConnected}
+                  onStateChange={onTerminalState}
+                  session={session}
+                  visible={visible}
+                />
+              </div>
+            );
+          })}
+          {openSessions.length === 0 ? (
+            <div className="workspace-empty">{t("sessions.noSession")}</div>
+          ) : null}
         </div>
       </section>
 
@@ -111,15 +157,31 @@ export function Workspace({
       ) : (
         <aside className="right-rail">
           <FilesPane
-            currentPath={currentPath}
-            files={files}
-            loading={filesLoading}
+            currentPath={activeRuntime.currentPath}
+            files={activeRuntime.files}
+            loading={activeRuntime.filesLoading}
+            onCancelTransfer={() =>
+              activeSessionId && onCancelTransfer(activeSessionId)
+            }
             onCollapse={onToggleRight}
-            onOpenPath={onOpenPath}
-            onRefresh={onRefreshFiles}
+            onDownload={(file) =>
+              activeSessionId && onDownload(activeSessionId, file)
+            }
+            onOpenPath={(path) =>
+              activeSessionId && onOpenPath(activeSessionId, path)
+            }
+            onRefresh={() =>
+              activeSessionId && onRefreshFiles(activeSessionId)
+            }
+            onUpload={() => activeSessionId && onUpload(activeSessionId)}
+            sftpAvailable={Boolean(activeRuntime.connection?.sftpAvailable)}
+            transfer={activeRuntime.transfer}
           />
           {verticalResizeHandle}
-          <DeviceStatusPanel status={deviceStatus} />
+          <DeviceStatusPanel
+            connected={activeRuntime.connectionState === "connected"}
+            status={activeRuntime.deviceStatus}
+          />
         </aside>
       )}
     </section>

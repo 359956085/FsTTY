@@ -121,9 +121,12 @@ export function App() {
 
       <main className="app-main">
         {loadError ? <div className="error-banner">{loadError}</div> : null}
-        {view === "sessions" ? (
-          <SessionsPage />
-        ) : (
+        <div
+          className={view === "sessions" ? "app-view" : "app-view app-view-hidden"}
+        >
+          <SessionsPage visible={view === "sessions"} />
+        </div>
+        {view === "settings" ? (
           <SettingsPage
             settings={settings}
             onChange={(nextSettings) => {
@@ -131,7 +134,7 @@ export function App() {
               void i18n.changeLanguage(nextSettings.language);
             }}
           />
-        )}
+        ) : null}
       </main>
     </div>
   );

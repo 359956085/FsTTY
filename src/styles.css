@@ -43,7 +43,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -63,6 +64,7 @@ button:disabled {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 [role="separator"]:focus-visible {
   outline: 2px solid rgba(22, 140, 255, 0.9);
   outline-offset: -2px;
@@ -182,6 +184,17 @@ input:focus-visible,
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.app-view {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-view-hidden {
+  display: none;
 }
 
 .sessions-page {
@@ -698,6 +711,25 @@ input:focus-visible,
   overflow: hidden;
 }
 
+.terminal-session {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  inset: 0;
+}
+
+.terminal-session-active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.workspace-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--muted);
+}
+
 .terminal-wrap,
 .terminal-body {
   width: 100%;
@@ -706,7 +738,43 @@ input:focus-visible,
 }
 
 .terminal-wrap {
+  position: relative;
   padding: 10px 12px;
+}
+
+.terminal-connect-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(7, 15, 22, 0.78);
+  color: var(--muted);
+  text-align: center;
+}
+
+.terminal-connect-overlay strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.terminal-disconnect-button {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 14px;
+  min-height: 27px;
+  padding: 0 9px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.terminal-wrap:hover .terminal-disconnect-button,
+.terminal-disconnect-button:focus-visible {
+  opacity: 1;
 }
 
 .terminal-body .xterm {
@@ -748,10 +816,16 @@ input:focus-visible,
 
 .files-panel {
   display: grid;
-  grid-template-rows: 42px 40px minmax(0, 1fr) auto;
+  grid-template-rows: 42px 40px minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.panel-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .panel-title {
@@ -890,6 +964,79 @@ input:focus-visible,
   gap: 9px;
   height: 28px;
   color: #e0e6ec;
+}
+
+.file-download-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(22, 140, 255, 0.1);
+  color: #b9dcff;
+  font-size: 12px;
+}
+
+.transfer-bar {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(70px, 1fr) 54px 26px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 10px 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(9, 19, 28, 0.92);
+  font-size: 11px;
+}
+
+.transfer-bar > span:first-child {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.transfer-bar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-bar em {
+  color: var(--muted);
+  font-style: normal;
+  text-align: right;
+}
+
+.transfer-bar > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  background: transparent;
+  color: #ffaaaa;
+}
+
+.transfer-track {
+  display: block;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.transfer-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.transfer-completed .transfer-track > span {
+  background: var(--success);
 }
 
 .file-details-title svg {
@@ -1115,6 +1262,11 @@ input:focus-visible,
   box-shadow: 0 22px 64px rgba(0, 0, 0, 0.5);
 }
 
+.session-dialog {
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
 .dialog-header,
 .dialog-actions {
   padding: 14px 16px;
@@ -1145,6 +1297,78 @@ input:focus-visible,
 }
 
 .form-grid label span {
+  color: var(--muted);
+}
+
+.form-grid .form-wide {
+  grid-column: 1 / -1;
+}
+
+.file-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.dialog-secondary-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-dialog-backdrop {
+  z-index: 120;
+}
+
+.security-dialog,
+.credential-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.security-dialog .dialog-header,
+.credential-dialog .dialog-header {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.security-dialog .dialog-header svg {
+  color: var(--warning);
+}
+
+.security-details {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  padding: 16px;
+}
+
+.security-details dt {
+  color: var(--muted);
+}
+
+.security-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+.security-dialog > p {
+  margin: 0;
+  padding: 0 16px 16px;
+  color: #e7c27a;
+}
+
+.credential-input {
+  display: grid;
+  gap: 7px;
+  padding: 16px;
+}
+
+.credential-input > span {
   color: var(--muted);
 }
 

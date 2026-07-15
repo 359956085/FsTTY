@@ -1,13 +1,15 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type Channel } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  ConnectResult,
   CreateSessionPayload,
   DeviceStatus,
   FileEntry,
   Language,
   Session,
-  SessionConnection,
   SessionGroup,
+  TerminalEvent,
+  TransferEvent,
   UpdateSessionPayload,
 } from "./types";
 
@@ -24,14 +26,79 @@ export const api = {
   deleteSession(sessionId: string) {
     return invoke<void>("delete_session", { sessionId });
   },
-  openSession(sessionId: string) {
-    return invoke<SessionConnection>("open_session", { sessionId });
+  setSessionCredential(sessionId: string, credential: string) {
+    return invoke<Session>("set_session_credential", { sessionId, credential });
   },
-  listRemoteFiles(sessionId: string, path?: string) {
-    return invoke<FileEntry[]>("list_remote_files", { sessionId, path });
+  connectSession(
+    sessionId: string,
+    columns: number,
+    rows: number,
+    onEvent: Channel<TerminalEvent>,
+  ) {
+    return invoke<ConnectResult>("connect_session", {
+      sessionId,
+      columns,
+      rows,
+      onEvent,
+    });
   },
-  getDeviceStatus(sessionId: string) {
-    return invoke<DeviceStatus>("get_device_status", { sessionId });
+  trustHostKey(sessionId: string, challengeId: string) {
+    return invoke<void>("trust_host_key", { sessionId, challengeId });
+  },
+  forgetHostKey(sessionId: string) {
+    return invoke<boolean>("forget_host_key", { sessionId });
+  },
+  writeTerminal(connectionId: string, data: string) {
+    return invoke<void>("write_terminal", { connectionId, data });
+  },
+  resizeTerminal(connectionId: string, columns: number, rows: number) {
+    return invoke<void>("resize_terminal", { connectionId, columns, rows });
+  },
+  disconnectSession(connectionId: string) {
+    return invoke<void>("disconnect_session", { connectionId });
+  },
+  listRemoteFiles(connectionId: string, path: string) {
+    return invoke<FileEntry[]>("list_remote_files", { connectionId, path });
+  },
+  uploadFile(
+    connectionId: string,
+    transferId: string,
+    localPath: string,
+    remoteDirectory: string,
+    overwrite: boolean,
+    onProgress: Channel<TransferEvent>,
+  ) {
+    return invoke<void>("upload_file", {
+      connectionId,
+      transferId,
+      localPath,
+      remoteDirectory,
+      overwrite,
+      onProgress,
+    });
+  },
+  downloadFile(
+    connectionId: string,
+    transferId: string,
+    remotePath: string,
+    localPath: string,
+    overwrite: boolean,
+    onProgress: Channel<TransferEvent>,
+  ) {
+    return invoke<void>("download_file", {
+      connectionId,
+      transferId,
+      remotePath,
+      localPath,
+      overwrite,
+      onProgress,
+    });
+  },
+  cancelTransfer(transferId: string) {
+    return invoke<boolean>("cancel_transfer", { transferId });
+  },
+  getDeviceStatus(connectionId: string) {
+    return invoke<DeviceStatus>("get_device_status", { connectionId });
   },
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
@@ -40,4 +107,3 @@ export const api = {
     return invoke<AppSettings>("set_language", { language });
   },
 };
-

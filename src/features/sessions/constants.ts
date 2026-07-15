@@ -1,1 +1,1 @@
-export const DEFAULT_REMOTE_PATH = "/www/html";
+export const DEFAULT_REMOTE_PATH = "/";

@@ -4,25 +4,16 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct DeviceStatus {
     pub session_id: String,
-    pub ip: String,
-    pub username: String,
-    pub os: String,
-    pub uptime: String,
-    pub cpu_percent: u8,
-    pub cpu_cores: u8,
-    pub memory_percent: u8,
-    pub memory_used_gb: f32,
-    pub memory_total_gb: f32,
-    pub disk_percent: u8,
-    pub disk_used_gb: f32,
-    pub disk_total_gb: f32,
-    pub services: Vec<ServiceStatus>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceStatus {
-    pub name: String,
-    pub state: String,
-    pub port: u16,
+    pub available: bool,
+    pub os: Option<String>,
+    pub architecture: Option<String>,
+    pub uptime_seconds: Option<u64>,
+    pub cpu_percent: Option<u8>,
+    pub cpu_cores: Option<u16>,
+    pub memory_percent: Option<u8>,
+    pub memory_used_gb: Option<f64>,
+    pub memory_total_gb: Option<f64>,
+    pub disk_percent: Option<u8>,
+    pub disk_used_gb: Option<f64>,
+    pub disk_total_gb: Option<f64>,
 }

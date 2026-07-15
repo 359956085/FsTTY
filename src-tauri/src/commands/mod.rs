@@ -2,7 +2,9 @@ mod session_commands;
 mod settings_commands;
 
 pub use session_commands::{
-    create_session, delete_session, get_device_status, list_remote_files, list_sessions,
-    open_session, update_session,
+    cancel_transfer, connect_session, create_session, delete_session, disconnect_session,
+    download_file, forget_host_key, get_device_status, list_remote_files, list_sessions,
+    resize_terminal, set_session_credential, trust_host_key, update_session, upload_file,
+    write_terminal,
 };
 pub use settings_commands::{get_app_settings, set_language};

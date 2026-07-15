@@ -1,165 +1,234 @@
 use crate::models::{
-    AppError, CreateSessionPayload, DeviceStatus, FileEntry, Session, SessionConnection,
-    SessionGroup, UpdateSessionPayload,
+    AppError, ConnectResult, CreateSessionPayload, DeviceStatus, FileEntry, SessionGroup,
+    SessionProfile, TerminalEvent, TransferEvent, UpdateSessionPayload,
 };
-use crate::services::{AppState, SessionService};
-use std::sync::MutexGuard;
-use tauri::State;
-
-const DEFAULT_REMOTE_PATH: &str = "/www/html";
+use crate::services::AppState;
+use tauri::{ipc::Channel, State};
+use zeroize::Zeroizing;
 
 #[tauri::command]
-pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionGroup>, AppError> {
-    let service = lock_session_service(&state)?;
-
-    Ok(service.list_groups())
-}
-
-#[tauri::command]
-pub fn create_session(
-    state: State<'_, AppState>,
-    payload: CreateSessionPayload,
-) -> Result<Session, AppError> {
-    validate_create_payload(&payload)?;
-
-    let mut service = lock_session_service(&state)?;
-
-    Ok(service.create(payload))
-}
-
-#[tauri::command]
-pub fn update_session(
-    state: State<'_, AppState>,
-    payload: UpdateSessionPayload,
-) -> Result<Session, AppError> {
-    validate_update_payload(&payload)?;
-
-    let mut service = lock_session_service(&state)?;
-
-    service.update(payload)
-}
-
-#[tauri::command]
-pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), AppError> {
-    validate_id(&session_id)?;
-
-    let mut service = lock_session_service(&state)?;
-
-    service.delete(&session_id)
-}
-
-#[tauri::command]
-pub fn open_session(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<SessionConnection, AppError> {
-    validate_id(&session_id)?;
-
-    let service = lock_session_service(&state)?;
-
-    service.open(&session_id)
-}
-
-#[tauri::command]
-pub fn list_remote_files(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: Option<String>,
-) -> Result<Vec<FileEntry>, AppError> {
-    validate_id(&session_id)?;
-
-    let safe_path = sanitize_remote_path(path.as_deref().unwrap_or(DEFAULT_REMOTE_PATH))?;
-    let session_service = lock_session_service(&state)?;
-
-    // 文件服务必须先确认 session 存在，避免后续真实 SFTP 时访问未知目标。
-    session_service.find(&session_id)?;
-    Ok(state.file_service.list(&session_id, &safe_path))
-}
-
-#[tauri::command]
-pub fn get_device_status(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<DeviceStatus, AppError> {
-    validate_id(&session_id)?;
-
-    let session_service = lock_session_service(&state)?;
-    let session = session_service.find(&session_id)?;
-
-    Ok(state.device_service.status(session))
-}
-
-fn lock_session_service<'a>(
-    state: &'a State<'_, AppState>,
-) -> Result<MutexGuard<'a, SessionService>, AppError> {
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionGroup>, AppError> {
     state
         .session_service
         .lock()
-        .map_err(|_| AppError::Internal("session 服务锁定失败".to_owned()))
+        .await
+        .list_groups(&state.credential_service)
+        .await
 }
 
-fn validate_create_payload(payload: &CreateSessionPayload) -> Result<(), AppError> {
-    validate_required("session 名称", &payload.name)?;
-    validate_required("主机地址", &payload.host)?;
-    validate_required("用户名", &payload.username)?;
-    validate_port(payload.port)
+#[tauri::command]
+pub async fn create_session(
+    state: State<'_, AppState>,
+    payload: CreateSessionPayload,
+) -> Result<SessionProfile, AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .create(payload, &state.credential_service)
+        .await
 }
 
-fn validate_update_payload(payload: &UpdateSessionPayload) -> Result<(), AppError> {
-    validate_id(&payload.id)?;
-
-    if let Some(name) = &payload.name {
-        validate_required("session 名称", name)?;
+#[tauri::command]
+pub async fn update_session(
+    state: State<'_, AppState>,
+    payload: UpdateSessionPayload,
+) -> Result<SessionProfile, AppError> {
+    let session_id = payload.id.clone();
+    let (profile, connection_invalidated) = state
+        .session_service
+        .lock()
+        .await
+        .update(payload, &state.credential_service)
+        .await?;
+    if connection_invalidated {
+        state
+            .connection_manager
+            .disconnect_session(&session_id)
+            .await;
     }
-    if let Some(host) = &payload.host {
-        validate_required("主机地址", host)?;
-    }
-    if let Some(username) = &payload.username {
-        validate_required("用户名", username)?;
-    }
-    if let Some(port) = payload.port {
-        validate_port(port)?;
-    }
-
-    Ok(())
+    Ok(profile)
 }
 
-fn validate_required(label: &str, value: &str) -> Result<(), AppError> {
-    let trimmed = value.trim();
-
-    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
-        return Err(AppError::Validation(format!(
-            "{label}不能为空或包含控制字符"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_id(value: &str) -> Result<(), AppError> {
-    validate_required("session id", value)
-}
-
-fn validate_port(port: u16) -> Result<(), AppError> {
-    if port == 0 {
-        return Err(AppError::Validation(
-            "端口必须在 1 到 65535 之间".to_owned(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn sanitize_remote_path(path: &str) -> Result<String, AppError> {
-    let trimmed = path.trim();
-
-    if trimmed.is_empty()
-        || !trimmed.starts_with('/')
-        || trimmed.contains("..")
-        || trimmed.chars().any(char::is_control)
+#[tauri::command]
+pub async fn delete_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), AppError> {
     {
-        return Err(AppError::Validation("远程路径不合法".to_owned()));
+        state.session_service.lock().await.find(&session_id)?;
     }
+    state
+        .connection_manager
+        .disconnect_session(&session_id)
+        .await;
+    state
+        .session_service
+        .lock()
+        .await
+        .delete(&session_id, &state.credential_service)
+        .await
+}
 
-    Ok(trimmed.trim_end_matches('/').to_owned())
+#[tauri::command]
+pub async fn set_session_credential(
+    state: State<'_, AppState>,
+    session_id: String,
+    credential: Zeroizing<String>,
+) -> Result<SessionProfile, AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .set_credential(&session_id, credential, &state.credential_service)
+        .await
+}
+
+#[tauri::command]
+pub async fn connect_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    columns: u32,
+    rows: u32,
+    on_event: Channel<TerminalEvent>,
+) -> Result<ConnectResult, AppError> {
+    let session = state.session_service.lock().await.find(&session_id)?;
+    state
+        .connection_manager
+        .connect(session, columns, rows, on_event, &state.credential_service)
+        .await
+}
+
+#[tauri::command]
+pub async fn trust_host_key(
+    state: State<'_, AppState>,
+    session_id: String,
+    challenge_id: String,
+) -> Result<(), AppError> {
+    let session = state.session_service.lock().await.find(&session_id)?;
+    state
+        .connection_manager
+        .trust_host_key(&session, &challenge_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn forget_host_key(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<bool, AppError> {
+    let session = state.session_service.lock().await.find(&session_id)?;
+    state.connection_manager.forget_host_key(&session).await
+}
+
+#[tauri::command]
+pub async fn write_terminal(
+    state: State<'_, AppState>,
+    connection_id: String,
+    data: String,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .write_terminal(&connection_id, data)
+        .await
+}
+
+#[tauri::command]
+pub async fn resize_terminal(
+    state: State<'_, AppState>,
+    connection_id: String,
+    columns: u32,
+    rows: u32,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .resize_terminal(&connection_id, columns, rows)
+        .await
+}
+
+#[tauri::command]
+pub async fn disconnect_session(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<(), AppError> {
+    state.connection_manager.disconnect(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn list_remote_files(
+    state: State<'_, AppState>,
+    connection_id: String,
+    path: String,
+) -> Result<Vec<FileEntry>, AppError> {
+    state
+        .connection_manager
+        .list_files(&connection_id, &path)
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn upload_file(
+    state: State<'_, AppState>,
+    connection_id: String,
+    transfer_id: String,
+    local_path: String,
+    remote_directory: String,
+    overwrite: bool,
+    on_progress: Channel<TransferEvent>,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .upload_file(
+            &connection_id,
+            &transfer_id,
+            &local_path,
+            &remote_directory,
+            overwrite,
+            on_progress,
+        )
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn download_file(
+    state: State<'_, AppState>,
+    connection_id: String,
+    transfer_id: String,
+    remote_path: String,
+    local_path: String,
+    overwrite: bool,
+    on_progress: Channel<TransferEvent>,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .download_file(
+            &connection_id,
+            &transfer_id,
+            &remote_path,
+            &local_path,
+            overwrite,
+            on_progress,
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn cancel_transfer(
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<bool, AppError> {
+    Ok(state.connection_manager.cancel_transfer(&transfer_id).await)
+}
+
+#[tauri::command]
+pub async fn get_device_status(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<DeviceStatus, AppError> {
+    state
+        .device_service
+        .status(&state.connection_manager, &connection_id)
+        .await
 }

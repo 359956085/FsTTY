@@ -1,13 +1,14 @@
-import { Cpu, HardDrive, MemoryStick, MonitorCog } from "lucide-react";
+import { Clock3, Cpu, HardDrive, MemoryStick, MonitorCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { DeviceStatus } from "../../shared/api/types";
 
 interface DeviceStatusPanelProps {
   status: DeviceStatus | null;
+  connected: boolean;
 }
 
-export function DeviceStatusPanel({ status }: DeviceStatusPanelProps) {
+export function DeviceStatusPanel({ connected, status }: DeviceStatusPanelProps) {
   const { t } = useTranslation();
 
   return (
@@ -16,36 +17,51 @@ export function DeviceStatusPanel({ status }: DeviceStatusPanelProps) {
         <h2>{t("sessions.deviceStatus")}</h2>
       </header>
 
-      {status ? (
+      {status?.available ? (
         <div className="device-metrics">
           <MetricRow
-            detail={t("sessions.cores", { count: status.cpuCores })}
+            detail={
+              status.cpuCores == null
+                ? "--"
+                : t("sessions.cores", { count: status.cpuCores })
+            }
             icon={<Cpu size={18} />}
             label={t("sessions.cpu")}
             percent={status.cpuPercent}
-            value={`${status.cpuPercent}%`}
           />
           <MetricRow
-            detail={`${status.memoryUsedGb} / ${status.memoryTotalGb} GB`}
+            detail={formatCapacity(status.memoryUsedGb, status.memoryTotalGb)}
             icon={<MemoryStick size={18} />}
             label={t("sessions.memory")}
             percent={status.memoryPercent}
-            value={`${status.memoryPercent}%`}
           />
           <MetricRow
-            detail={`${status.diskUsedGb} / ${status.diskTotalGb} GB`}
+            detail={formatCapacity(status.diskUsedGb, status.diskTotalGb)}
             icon={<HardDrive size={18} />}
             label={t("sessions.disk")}
             percent={status.diskPercent}
-            value={`${status.diskPercent}%`}
           />
           <div className="device-row device-os-row">
             <MonitorCog size={18} />
             <span>{t("sessions.os")}</span>
-            <strong>{status.os} ({t("sessions.bit64")})</strong>
+            <strong>
+              {status.os ?? "--"}
+              {status.architecture ? ` (${status.architecture})` : ""}
+            </strong>
+          </div>
+          <div className="device-row device-os-row">
+            <Clock3 size={18} />
+            <span>{t("sessions.uptime")}</span>
+            <strong>{formatUptime(status.uptimeSeconds)}</strong>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="empty-message">
+          {connected
+            ? t("sessions.deviceUnavailable")
+            : t("sessions.connectForDevice")}
+        </p>
+      )}
     </section>
   );
 }
@@ -53,21 +69,38 @@ export function DeviceStatusPanel({ status }: DeviceStatusPanelProps) {
 interface MetricRowProps {
   icon: ReactNode;
   label: string;
-  percent: number;
-  value: string;
+  percent?: number | null;
   detail: string;
 }
 
-function MetricRow({ detail, icon, label, percent, value }: MetricRowProps) {
+function MetricRow({ detail, icon, label, percent }: MetricRowProps) {
+  const safePercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
   return (
     <div className="device-row">
       {icon}
       <span>{label}</span>
       <span className="metric-track">
-        <span style={{ width: `${percent}%` }} />
+        <span style={{ width: `${safePercent}%` }} />
       </span>
-      <strong>{value}</strong>
+      <strong>{percent == null ? "--" : `${percent}%`}</strong>
       <em>{detail}</em>
     </div>
   );
+}
+
+function formatCapacity(used?: number | null, total?: number | null) {
+  if (used == null || total == null) {
+    return "--";
+  }
+  return `${used.toFixed(1)} / ${total.toFixed(1)} GB`;
+}
+
+function formatUptime(seconds?: number | null) {
+  if (seconds == null) {
+    return "--";
+  }
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  return days > 0 ? `${days} 天 ${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
 }

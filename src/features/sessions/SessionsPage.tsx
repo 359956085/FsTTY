@@ -1,47 +1,29 @@
 import { ChevronRight } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
 import { SessionList } from "./SessionList";
 import { usePaneLayout } from "./usePaneLayout";
+import {
+  createRuntime,
+  useSessionConnections,
+} from "./useSessionConnections";
 import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
 
-export function SessionsPage() {
+interface SessionsPageProps {
+  visible: boolean;
+}
+
+export function SessionsPage({ visible }: SessionsPageProps) {
   const { t } = useTranslation();
-  const {
-    activeSession,
-    activeSessionId,
-    closeSessionTab,
-    collapsedGroupNames,
-    connection,
-    currentPath,
-    deleteActiveSession,
-    deviceStatus,
-    dialogState,
-    error,
-    favoriteSessionIds,
-    files,
-    filesLoading,
-    filter,
-    groups,
-    loading,
-    openPath,
-    openSessions,
-    query,
-    refreshActiveSession,
-    refreshFiles,
-    refreshSessions,
-    saveSession,
-    selectSession,
-    setDialogState,
-    setFilter,
-    setQuery,
-    toggleFavorite,
-    toggleGroup,
-  } = useSessionsPageState({
+  const sessionsState = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
+    errorFallback: t("errors.unknown"),
+  });
+  const connections = useSessionConnections({
     errorFallback: t("errors.unknown"),
   });
   const {
@@ -52,10 +34,47 @@ export function SessionsPage() {
     toggleLeftCollapsed,
     toggleRightCollapsed,
   } = usePaneLayout();
+  const validSessionIds = useMemo(
+    () => new Set(sessionsState.sessions.map((session) => session.id)),
+    [sessionsState.sessions],
+  );
+
+  useEffect(() => {
+    connections.pruneRuntimes(validSessionIds);
+  }, [connections.pruneRuntimes, validSessionIds]);
+
+  const connectionStates = useMemo(
+    () =>
+      Object.fromEntries(
+        sessionsState.sessions.map((session) => [
+          session.id,
+          connections.runtimes[session.id]?.connectionState ?? "disconnected",
+        ]),
+      ),
+    [connections.runtimes, sessionsState.sessions],
+  );
+  const activeRuntime = sessionsState.activeSessionId
+    ? connections.runtimes[sessionsState.activeSessionId] ?? createRuntime()
+    : createRuntime();
+
+  async function closeSession(sessionId: string) {
+    await connections.disconnect(sessionId);
+    connections.removeRuntime(sessionId);
+    sessionsState.closeSessionTab(sessionId);
+  }
+
+  async function deleteSession() {
+    const deletedId = await sessionsState.deleteActiveSession();
+    if (deletedId) {
+      connections.removeRuntime(deletedId);
+    }
+  }
 
   return (
     <div
-      className={layout.leftCollapsed ? "sessions-page left-collapsed" : "sessions-page"}
+      className={
+        layout.leftCollapsed ? "sessions-page left-collapsed" : "sessions-page"
+      }
       ref={rootRef}
     >
       {layout.leftCollapsed ? (
@@ -70,27 +89,34 @@ export function SessionsPage() {
         </aside>
       ) : (
         <SessionList
-          activeSessionId={activeSessionId}
-          collapsedGroupNames={collapsedGroupNames}
-          favoriteSessionIds={favoriteSessionIds}
-          filter={filter}
-          groups={groups}
-          query={query}
+          activeSessionId={sessionsState.activeSessionId}
+          collapsedGroupNames={sessionsState.collapsedGroupNames}
+          connectionStates={connectionStates}
+          favoriteSessionIds={sessionsState.favoriteSessionIds}
+          filter={sessionsState.filter}
+          groups={sessionsState.groups}
+          query={sessionsState.query}
           onCollapse={toggleLeftCollapsed}
-          onCreate={() => setDialogState({ mode: "create" })}
-          onDelete={() => void deleteActiveSession()}
+          onCreate={() => sessionsState.setDialogState({ mode: "create" })}
+          onDelete={() => void deleteSession()}
           onEdit={() =>
-            activeSession && setDialogState({ mode: "edit", session: activeSession })
+            sessionsState.activeSession &&
+            sessionsState.setDialogState({
+              mode: "edit",
+              session: sessionsState.activeSession,
+            })
           }
-          onFilterChange={setFilter}
-          onQueryChange={setQuery}
+          onFilterChange={sessionsState.setFilter}
+          onQueryChange={sessionsState.setQuery}
           onRefresh={() => {
-            void refreshSessions();
-            void refreshActiveSession();
+            void sessionsState.refreshSessions();
+            if (sessionsState.activeSessionId) {
+              void connections.refreshSession(sessionsState.activeSessionId);
+            }
           }}
-          onSelect={selectSession}
-          onToggleFavorite={toggleFavorite}
-          onToggleGroup={toggleGroup}
+          onSelect={sessionsState.selectSession}
+          onToggleFavorite={sessionsState.toggleFavorite}
+          onToggleGroup={sessionsState.toggleGroup}
         />
       )}
 
@@ -106,15 +132,25 @@ export function SessionsPage() {
       />
 
       <Workspace
-        activeSessionId={activeSessionId}
-        connection={connection}
-        currentPath={currentPath}
-        deviceStatus={deviceStatus}
-        error={error}
-        files={files}
-        filesLoading={filesLoading}
-        loading={loading}
-        openSessions={openSessions}
+        activeRuntime={activeRuntime}
+        activeSessionId={sessionsState.activeSessionId}
+        connectionStates={connectionStates}
+        error={sessionsState.error}
+        loading={sessionsState.loading}
+        onCancelTransfer={(sessionId) => void connections.cancelTransfer(sessionId)}
+        onCloseSession={(sessionId) => void closeSession(sessionId)}
+        onConnected={connections.handleConnected}
+        onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
+        onDownload={(sessionId, file) =>
+          void connections.downloadFile(sessionId, file)
+        }
+        onOpenPath={connections.openPath}
+        onRefreshFiles={connections.refreshFiles}
+        onSelectSession={sessionsState.selectSession}
+        onTerminalState={connections.handleTerminalState}
+        onToggleRight={toggleRightCollapsed}
+        onUpload={(sessionId) => void connections.uploadFile(sessionId)}
+        openSessions={sessionsState.openSessions}
         rightCollapsed={layout.rightCollapsed}
         rightResizeHandle={
           <ResizeHandle
@@ -128,6 +164,7 @@ export function SessionsPage() {
             valueNow={layout.rightWidth}
           />
         }
+        runtimes={connections.runtimes}
         verticalResizeHandle={
           <ResizeHandle
             ariaLabel={t("sessions.resizeFiles")}
@@ -139,20 +176,16 @@ export function SessionsPage() {
             valueNow={layout.fileRatio}
           />
         }
-        onCloseSession={closeSessionTab}
-        onCreateSession={() => setDialogState({ mode: "create" })}
-        onOpenPath={openPath}
-        onRefreshFiles={refreshFiles}
-        onSelectSession={selectSession}
-        onToggleRight={toggleRightCollapsed}
+        visible={visible}
       />
 
-      {dialogState ? (
+      {sessionsState.dialogState ? (
         <SessionFormDialog
-          mode={dialogState.mode}
-          session={dialogState.session}
-          onClose={() => setDialogState(null)}
-          onSave={(payload) => void saveSession(payload)}
+          mode={sessionsState.dialogState.mode}
+          saveError={sessionsState.saveError}
+          session={sessionsState.dialogState.session}
+          onClose={() => sessionsState.setDialogState(null)}
+          onSave={sessionsState.saveSession}
         />
       ) : null}
     </div>

@@ -1,16 +1,181 @@
-import { useEffect, useRef } from "react";
+import { Channel } from "@tauri-apps/api/core";
+import { KeyRound, Link, Link2Off, ShieldAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import type { SessionConnection } from "../../shared/api/types";
+import { api } from "../../shared/api/client";
+import { readApiError, resolveApiError } from "../../shared/api/errors";
+import type {
+  ConnectionState,
+  HostKeyChallenge,
+  HostKeyChange,
+  Session,
+  SshConnection,
+  TerminalEvent,
+} from "../../shared/api/types";
+import { Button } from "../../shared/ui/Button";
+import { TextInput } from "../../shared/ui/TextInput";
 
 interface TerminalPaneProps {
-  connection: SessionConnection | null;
+  active: boolean;
+  visible: boolean;
+  session: Session;
+  connectionState: ConnectionState;
+  onConnected: (sessionId: string, connection: SshConnection) => void;
+  onStateChange: (
+    sessionId: string,
+    state: ConnectionState,
+    error?: string | null,
+  ) => void;
 }
 
-export function TerminalPane({ connection }: TerminalPaneProps) {
+export function TerminalPane({
+  active,
+  connectionState,
+  onConnected,
+  onStateChange,
+  session,
+  visible,
+}: TerminalPaneProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
-  const latestConnectionRef = useRef<SessionConnection | null>(connection);
-  const commandRef = useRef("");
+  const fitAddonRef = useRef<XTermFitAddon | null>(null);
+  const connectionRef = useRef<SshConnection | null>(null);
+  const eventChannelRef = useRef<Channel<TerminalEvent> | null>(null);
+  const inputBufferRef = useRef("");
+  const inputTimerRef = useRef<number | null>(null);
+  const resizeTimerRef = useRef<number | null>(null);
+  const writeChainRef = useRef<Promise<void>>(Promise.resolve());
+  const sendInputRef = useRef<(data: string) => void>(() => undefined);
+  const mountedRef = useRef(true);
+  const connectionAttemptRef = useRef(0);
+  const connectingRef = useRef(false);
+  const [hostKeyChallenge, setHostKeyChallenge] =
+    useState<HostKeyChallenge | null>(null);
+  const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
+  const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
+  const [credential, setCredential] = useState("");
+  const [dialogError, setDialogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  function reportState(state: ConnectionState, error: string | null = null) {
+    if (mountedRef.current) {
+      onStateChange(session.id, state, error);
+    }
+  }
+
+  function clearPendingInput() {
+    if (inputTimerRef.current !== null) {
+      window.clearTimeout(inputTimerRef.current);
+      inputTimerRef.current = null;
+    }
+    inputBufferRef.current = "";
+    writeChainRef.current = Promise.resolve();
+  }
+
+  function flushInput() {
+    if (inputTimerRef.current !== null) {
+      window.clearTimeout(inputTimerRef.current);
+      inputTimerRef.current = null;
+    }
+    const connection = connectionRef.current;
+    const data = inputBufferRef.current;
+    inputBufferRef.current = "";
+    if (!connection || !data) {
+      return;
+    }
+    const connectionId = connection.connectionId;
+    for (const chunk of splitUtf8(data, 64 * 1024)) {
+      writeChainRef.current = writeChainRef.current
+        .then(() => {
+          if (connectionRef.current?.connectionId !== connectionId) {
+            return;
+          }
+          return api.writeTerminal(connectionId, chunk);
+        })
+        .catch((error: unknown) => {
+          if (connectionRef.current?.connectionId !== connectionId) {
+            return;
+          }
+          connectionAttemptRef.current += 1;
+          connectionRef.current = null;
+          eventChannelRef.current = null;
+          clearPendingInput();
+          void api.disconnectSession(connectionId).catch(() => undefined);
+          reportState("error", resolveApiError(error, t("errors.unknown")));
+        });
+    }
+  }
+
+  sendInputRef.current = (data) => {
+    const connection = connectionRef.current;
+    if (!connection && !connectingRef.current) {
+      return;
+    }
+    const nextInput = inputBufferRef.current + data;
+    // Shell 首屏可能在连接命令返回前查询终端能力。先缓存 xterm 的自动响应，避免远端登录脚本永久等待。
+    if (!connection) {
+      if (new TextEncoder().encode(nextInput).byteLength <= 64 * 1024) {
+        inputBufferRef.current = nextInput;
+      }
+      return;
+    }
+    inputBufferRef.current = nextInput;
+    if (new TextEncoder().encode(inputBufferRef.current).byteLength >= 32 * 1024) {
+      flushInput();
+      return;
+    }
+    if (inputTimerRef.current === null) {
+      inputTimerRef.current = window.setTimeout(flushInput, 16);
+    }
+  };
+
+  function fitAndResize() {
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    const container = containerRef.current;
+    if (!terminal || !fitAddon || !container || container.clientWidth === 0) {
+      return;
+    }
+    try {
+      fitAddon.fit();
+    } catch {
+      return;
+    }
+    const connection = connectionRef.current;
+    if (!connection || terminal.cols < 1 || terminal.rows < 1) {
+      return;
+    }
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+    }
+    resizeTimerRef.current = window.setTimeout(() => {
+      resizeTimerRef.current = null;
+      const currentConnection = connectionRef.current;
+      if (currentConnection) {
+        void api
+          .resizeTerminal(
+            currentConnection.connectionId,
+            terminal.cols,
+            terminal.rows,
+          )
+          .catch(() => undefined);
+      }
+    }, 50);
+  }
+
+  function focusTerminal() {
+    // WebView2 不会稳定把空白终端区域的点击转给 xterm 隐藏输入框。
+    terminalRef.current?.focus();
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -19,27 +184,23 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
 
     async function mountTerminal() {
       const container = containerRef.current;
-
       if (!container) {
         return;
       }
-
       const [{ Terminal }, { FitAddon }] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
       ]);
-
       if (disposed) {
-        // 动态模块加载期间组件可能已卸载，避免创建无法释放的终端实例。
         return;
       }
-
       const terminal = new Terminal({
-        convertEol: true,
+        convertEol: false,
         cursorBlink: true,
         fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
         fontSize: 13,
         lineHeight: 1.38,
+        scrollback: 10_000,
         theme: {
           background: "#09131c",
           foreground: "#c9d3dd",
@@ -53,84 +214,363 @@ export function TerminalPane({ connection }: TerminalPaneProps) {
         },
       });
       const fitAddon = new FitAddon();
-
       terminal.loadAddon(fitAddon);
       terminal.open(container);
-      fitAddon.fit();
+      terminal.onData((data) => sendInputRef.current(data));
       terminalRef.current = terminal;
+      fitAddonRef.current = fitAddon;
       terminalInstance = terminal;
-
-      terminal.onData((data) => {
-        const activeConnection = latestConnectionRef.current;
-
-        if (data === "\r") {
-          terminal.writeln("");
-          terminal.writeln(`模拟命令: ${commandRef.current}`);
-          terminal.write(
-            `${activeConnection?.session.username ?? "user"}@${activeConnection?.session.name ?? "fstty"}:~$ `,
-          );
-          commandRef.current = "";
-          return;
-        }
-
-        if (data === "\u007f") {
-          if (commandRef.current.length > 0) {
-            commandRef.current = commandRef.current.slice(0, -1);
-            terminal.write("\b \b");
-          }
-          return;
-        }
-
-        commandRef.current += data;
-        terminal.write(data);
-      });
-
-      observer = new ResizeObserver(() => {
-        fitAddon.fit();
-      });
+      observer = new ResizeObserver(fitAndResize);
       observer.observe(container);
-      writeConnectionOutput(terminal, latestConnectionRef.current);
+      fitAndResize();
     }
 
-    void mountTerminal();
-
+    void mountTerminal().catch(() => {
+      reportState("error", t("sessions.terminalNotReady"));
+    });
     return () => {
       disposed = true;
+      connectionAttemptRef.current += 1;
+      connectingRef.current = false;
       observer?.disconnect();
+      clearPendingInput();
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+      const connection = connectionRef.current;
+      connectionRef.current = null;
+      if (connection) {
+        void api.disconnectSession(connection.connectionId).catch(() => undefined);
+      }
+      eventChannelRef.current = null;
       terminalRef.current = null;
+      fitAddonRef.current = null;
       terminalInstance?.dispose();
     };
   }, []);
 
   useEffect(() => {
-    latestConnectionRef.current = connection;
-    commandRef.current = "";
-    const terminal = terminalRef.current;
-
-    if (!terminal) {
+    if (!active || !visible) {
+      clearPendingInput();
       return;
     }
+    const frame = window.requestAnimationFrame(() => {
+      fitAndResize();
+      if (connectionState === "connected") {
+        focusTerminal();
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, connectionState, visible]);
 
+  async function connectTerminal() {
+    if (connectingRef.current || connectionState === "connecting" || connectionRef.current) {
+      return;
+    }
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      reportState("error", t("sessions.terminalNotReady"));
+      return;
+    }
+    clearPendingInput();
     terminal.reset();
-    writeConnectionOutput(terminal, connection);
-  }, [connection]);
+    const attemptId = connectionAttemptRef.current + 1;
+    connectionAttemptRef.current = attemptId;
+    connectingRef.current = true;
+    setDialogError(null);
+    setHostKeyChange(null);
+    reportState("connecting");
+    const channel = new Channel<TerminalEvent>();
+    channel.onmessage = (event) => {
+      if (
+        !mountedRef.current ||
+        connectionAttemptRef.current !== attemptId ||
+        (connectionRef.current &&
+          event.connectionId !== connectionRef.current.connectionId)
+      ) {
+        return;
+      }
+      if (event.kind === "data") {
+        terminalRef.current?.write(decodeBase64(event.data));
+        return;
+      }
+      if (event.kind === "error") {
+        connectionAttemptRef.current += 1;
+        connectionRef.current = null;
+        eventChannelRef.current = null;
+        clearPendingInput();
+        terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
+        reportState("error", event.message);
+        return;
+      }
+      connectionAttemptRef.current += 1;
+      connectionRef.current = null;
+      eventChannelRef.current = null;
+      clearPendingInput();
+      terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
+      reportState("disconnected");
+    };
+    eventChannelRef.current = channel;
+
+    try {
+      const result = await api.connectSession(
+        session.id,
+        Math.max(1, terminal.cols),
+        Math.max(1, terminal.rows),
+        channel,
+      );
+      if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
+        if (result.kind === "connected") {
+          await api
+            .disconnectSession(result.connection.connectionId)
+            .catch(() => undefined);
+        }
+        return;
+      }
+      if (result.kind === "hostKeyRequired") {
+        eventChannelRef.current = null;
+        clearPendingInput();
+        setHostKeyChallenge(result.challenge);
+        reportState("disconnected");
+        return;
+      }
+      if (result.kind === "hostKeyChanged") {
+        eventChannelRef.current = null;
+        clearPendingInput();
+        setHostKeyChange(result.change);
+        reportState("error", t("sessions.hostKeyChanged"));
+        return;
+      }
+      connectionRef.current = result.connection;
+      flushInput();
+      onConnected(session.id, result.connection);
+      fitAndResize();
+    } catch (error) {
+      if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
+        return;
+      }
+      eventChannelRef.current = null;
+      clearPendingInput();
+      const info = readApiError(error, t("errors.unknown"));
+      const shouldRefreshCredential =
+        info.kind === "credential" ||
+        (info.kind === "authentication" && session.auth.kind === "password");
+      if (shouldRefreshCredential) {
+        setCredential("");
+        setDialogError(info.message);
+        setCredentialDialogOpen(true);
+      }
+      reportState("error", info.message);
+    } finally {
+      connectingRef.current = false;
+    }
+  }
+
+  async function disconnectTerminal() {
+    const connection = connectionRef.current;
+    if (!connection) {
+      reportState("disconnected");
+      return;
+    }
+    clearPendingInput();
+    reportState("disconnecting");
+    try {
+      await api.disconnectSession(connection.connectionId);
+      connectionAttemptRef.current += 1;
+      connectionRef.current = null;
+      eventChannelRef.current = null;
+      clearPendingInput();
+      reportState("disconnected");
+    } catch (error) {
+      reportState("error", resolveApiError(error, t("errors.unknown")));
+    }
+  }
+
+  async function trustAndReconnect() {
+    if (!hostKeyChallenge) {
+      return;
+    }
+    try {
+      await api.trustHostKey(session.id, hostKeyChallenge.challengeId);
+      setHostKeyChallenge(null);
+      await connectTerminal();
+    } catch (error) {
+      setDialogError(resolveApiError(error, t("errors.unknown")));
+    }
+  }
+
+  async function saveCredentialAndReconnect() {
+    if (!credential) {
+      setDialogError(t("sessions.validationCredential"));
+      return;
+    }
+    try {
+      await api.setSessionCredential(session.id, credential);
+      setCredential("");
+      setCredentialDialogOpen(false);
+      setDialogError(null);
+      await connectTerminal();
+    } catch (error) {
+      setDialogError(resolveApiError(error, t("errors.unknown")));
+    }
+  }
 
   return (
     <div className="terminal-wrap">
-      <div className="terminal-body" ref={containerRef} />
+      <div
+        className="terminal-body"
+        onPointerDown={focusTerminal}
+        ref={containerRef}
+      />
+      {connectionState !== "connected" ? (
+        <div className="terminal-connect-overlay">
+          <Link2Off size={28} />
+          <strong>{session.name}</strong>
+          <span>
+            {connectionState === "connecting"
+              ? t("sessions.connecting")
+              : t("sessions.manualConnectHint")}
+          </span>
+          <Button
+            disabled={
+              connectionState === "connecting" || connectionState === "disconnecting"
+            }
+            icon={<Link size={16} />}
+            onClick={() => void connectTerminal()}
+          >
+            {connectionState === "connecting"
+              ? t("sessions.connecting")
+              : t("sessions.connect")}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          className="terminal-disconnect-button"
+          icon={<Link2Off size={14} />}
+          onClick={() => void disconnectTerminal()}
+          variant="ghost"
+        >
+          {t("sessions.disconnect")}
+        </Button>
+      )}
+
+      {hostKeyChallenge ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section aria-modal="true" className="dialog security-dialog" role="dialog">
+            <header className="dialog-header">
+              <ShieldAlert size={20} />
+              <h2>{t("sessions.hostKeyTitle")}</h2>
+            </header>
+            <dl className="security-details">
+              <dt>{t("sessions.host")}</dt>
+              <dd>{hostKeyChallenge.host}:{hostKeyChallenge.port}</dd>
+              <dt>{t("sessions.algorithm")}</dt>
+              <dd>{hostKeyChallenge.algorithm}</dd>
+              <dt>{t("sessions.fingerprint")}</dt>
+              <dd>{hostKeyChallenge.fingerprint}</dd>
+            </dl>
+            <p>{t("sessions.hostKeyWarning")}</p>
+            {dialogError ? <div className="form-error">{dialogError}</div> : null}
+            <footer className="dialog-actions">
+              <Button onClick={() => setHostKeyChallenge(null)} variant="ghost">
+                {t("sessions.cancel")}
+              </Button>
+              <Button onClick={() => void trustAndReconnect()}>
+                {t("sessions.trustAndConnect")}
+              </Button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {hostKeyChange ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section aria-modal="true" className="dialog security-dialog" role="dialog">
+            <header className="dialog-header">
+              <ShieldAlert size={20} />
+              <h2>{t("sessions.hostKeyChanged")}</h2>
+            </header>
+            <dl className="security-details">
+              <dt>{t("sessions.oldFingerprint")}</dt>
+              <dd>{hostKeyChange.oldFingerprint}</dd>
+              <dt>{t("sessions.newFingerprint")}</dt>
+              <dd>{hostKeyChange.newFingerprint}</dd>
+            </dl>
+            <p>{t("sessions.hostKeyChangedHint")}</p>
+            <footer className="dialog-actions">
+              <Button onClick={() => setHostKeyChange(null)}>
+                {t("sessions.close")}
+              </Button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {credentialDialogOpen ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section aria-modal="true" className="dialog credential-dialog" role="dialog">
+            <header className="dialog-header">
+              <KeyRound size={20} />
+              <h2>{t("sessions.credentialRequired")}</h2>
+            </header>
+            <label className="credential-input">
+              <span>
+                {session.auth.kind === "password"
+                  ? t("sessions.password")
+                  : t("sessions.passphrase")}
+              </span>
+              <TextInput
+                autoFocus
+                onChange={(event) => setCredential(event.target.value)}
+                type="password"
+                value={credential}
+              />
+            </label>
+            {dialogError ? <div className="form-error">{dialogError}</div> : null}
+            <footer className="dialog-actions">
+              <Button
+                onClick={() => {
+                  setCredential("");
+                  setDialogError(null);
+                  setCredentialDialogOpen(false);
+                }}
+                variant="ghost"
+              >
+                {t("sessions.cancel")}
+              </Button>
+              <Button onClick={() => void saveCredentialAndReconnect()}>
+                {t("sessions.saveAndConnect")}
+              </Button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function writeConnectionOutput(terminal: XTerm, connection: SessionConnection | null) {
-  const lines = connection?.terminalOutput ?? [];
+function decodeBase64(value: string) {
+  const binary = window.atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
 
-  lines.forEach((line, index) => {
-    if (index === lines.length - 1) {
-      terminal.write(line);
-      return;
+function splitUtf8(value: string, maxBytes: number) {
+  const encoder = new TextEncoder();
+  const chunks: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const character of value) {
+    const bytes = encoder.encode(character).byteLength;
+    if (current && currentBytes + bytes > maxBytes) {
+      chunks.push(current);
+      current = "";
+      currentBytes = 0;
     }
-
-    terminal.writeln(line);
-  });
+    current += character;
+    currentBytes += bytes;
+  }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks;
 }
