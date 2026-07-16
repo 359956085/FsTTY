@@ -34,6 +34,7 @@ jobs:
           TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
           FSTTY_UPDATE_ENDPOINT: ${{ vars.FSTTY_UPDATE_ENDPOINT }}
         with:
+          tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
           releaseName: FsTTY ${{ github.ref_name }}
           releaseBody: 自动构建的 Windows 安装包
