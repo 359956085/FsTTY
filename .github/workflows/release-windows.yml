@@ -1,0 +1,41 @@
+name: Windows Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 私钥只能放在 Actions Secrets，禁止放入普通 Variables。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 公钥和更新地址可放在 Actions Variables，供构建配置使用。
+          TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
+          FSTTY_UPDATE_ENDPOINT: ${{ vars.FSTTY_UPDATE_ENDPOINT }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: FsTTY ${{ github.ref_name }}
+          releaseBody: 自动构建的 Windows 安装包
+          releaseDraft: false
+          prerelease: false

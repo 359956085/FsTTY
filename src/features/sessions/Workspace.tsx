@@ -1,5 +1,6 @@
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
@@ -8,6 +9,7 @@ import type {
   SshConnection,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
+import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { FilesPane } from "./FilesPane";
 import { TerminalPane } from "./TerminalPane";
 import type { SessionRuntime } from "./useSessionConnections";
@@ -25,6 +27,7 @@ interface WorkspaceProps {
   verticalResizeHandle: ReactNode;
   visible: boolean;
   onCancelTransfer: (sessionId: string) => void;
+  onDismissTransfer: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onConnected: (sessionId: string, connection: SshConnection) => void;
   onCreateSession: () => void;
@@ -48,6 +51,7 @@ export function Workspace({
   error,
   loading,
   onCancelTransfer,
+  onDismissTransfer,
   onCloseSession,
   onConnected,
   onCreateSession,
@@ -67,12 +71,13 @@ export function Workspace({
 }: WorkspaceProps) {
   const { t } = useTranslation();
   const activeError = activeRuntime.error ?? error;
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
 
   return (
     <section
       className={rightCollapsed ? "workspace-grid right-collapsed" : "workspace-grid"}
     >
-      <div className="session-tabs">
+      <div className="session-tabs" onContextMenu={(event) => event.preventDefault()}>
         {openSessions.map((session) => (
           <div
             className={
@@ -81,6 +86,10 @@ export function Workspace({
                 : "session-tab"
             }
             key={session.id}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setTabContextMenu({ x: event.clientX, y: event.clientY, sessionId: session.id });
+            }}
           >
             <button onClick={() => onSelectSession(session.id)} type="button">
               <span
@@ -109,6 +118,19 @@ export function Workspace({
           <Plus size={20} />
         </button>
       </div>
+
+      {tabContextMenu ? (
+        <ContextMenu
+          items={[
+            { id: "close", label: t("sessions.contextCloseCurrent"), icon: <X size={15} />, onSelect: () => onCloseSession(tabContextMenu.sessionId) },
+            { id: "closeOthers", label: t("sessions.contextCloseOthers"), onSelect: () => openSessions.filter((session) => session.id !== tabContextMenu.sessionId).forEach((session) => onCloseSession(session.id)) },
+            { id: "closeAll", label: t("sessions.contextCloseAll"), danger: true, onSelect: () => openSessions.forEach((session) => onCloseSession(session.id)) },
+          ]}
+          onClose={() => setTabContextMenu(null)}
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+        />
+      ) : null}
 
       <section className="terminal-panel">
         <div className="terminal-stage">
@@ -162,6 +184,9 @@ export function Workspace({
             loading={activeRuntime.filesLoading}
             onCancelTransfer={() =>
               activeSessionId && onCancelTransfer(activeSessionId)
+            }
+            onDismissTransfer={() =>
+              activeSessionId && onDismissTransfer(activeSessionId)
             }
             onCollapse={onToggleRight}
             onDownload={(file) =>

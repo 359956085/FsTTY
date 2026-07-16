@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe2 } from "lucide-react";
+import { Globe2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -13,11 +13,23 @@ interface SettingsPageProps {
 export function SettingsPage({ settings, onChange }: SettingsPageProps) {
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
+  const [proxy, setProxy] = useState(settings.updateProxy);
 
   async function handleLanguageChange(language: Language) {
     setError(null);
     try {
       const nextSettings = await api.setLanguage(language);
+      onChange(nextSettings);
+    } catch (nextError) {
+      setError(resolveApiError(nextError, t("errors.unknown")));
+    }
+  }
+
+  async function handleUpdateSettings(autoUpdate: boolean, updateProxy = proxy) {
+    setError(null);
+    try {
+      const nextSettings = await api.updateAppSettings(autoUpdate, updateProxy.trim());
+      setProxy(nextSettings.updateProxy);
       onChange(nextSettings);
     } catch (nextError) {
       setError(resolveApiError(nextError, t("errors.unknown")));
@@ -61,6 +73,33 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
           </div>
         </div>
         {error ? <div className="form-error">{error}</div> : null}
+      </section>
+      <section className="settings-panel">
+        <div className="settings-row">
+          <h2 className="settings-row-title">
+            <RefreshCw aria-hidden="true" size={18} />
+            <span>{t("settings.autoUpdate")}</span>
+          </h2>
+          <input
+            aria-label={t("settings.autoUpdate")}
+            checked={settings.autoUpdate}
+            onChange={(event) => void handleUpdateSettings(event.target.checked)}
+            type="checkbox"
+          />
+        </div>
+        <div className="settings-row">
+          <label className="settings-row-title" htmlFor="update-proxy">
+            <span>{t("settings.updateProxy")}</span>
+          </label>
+          <input
+            className="text-input settings-proxy-input"
+            id="update-proxy"
+            onChange={(event) => setProxy(event.target.value)}
+            onBlur={() => void handleUpdateSettings(settings.autoUpdate)}
+            placeholder="http://127.0.0.1:7890"
+            value={proxy}
+          />
+        </div>
       </section>
     </section>
   );

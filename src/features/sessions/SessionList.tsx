@@ -3,7 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
-  MoreHorizontal,
+  Link,
   Pencil,
   Plus,
   RefreshCcw,
@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConnectionState, SessionGroup } from "../../shared/api/types";
 import { TextInput } from "../../shared/ui/TextInput";
+import { ContextMenu } from "../../shared/ui/ContextMenu";
 
 export type SessionFilter = "all" | "online" | "offline" | "favorites";
 
@@ -59,7 +60,7 @@ export function SessionList({
 }: SessionListProps) {
   const { t } = useTranslation();
   const [filterOpen, setFilterOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const favoriteIds = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const collapsedGroups = useMemo(() => new Set(collapsedGroupNames), [collapsedGroupNames]);
   const filteredGroups = useMemo(() => {
@@ -95,17 +96,17 @@ export function SessionList({
   ];
 
   return (
-    <aside className="session-sidebar">
+    <aside className="session-sidebar" onContextMenu={(event) => event.preventDefault()}>
       <header className="session-sidebar-header">
         <h2>{t("sessions.title")}</h2>
-        <button
-          aria-label={t("sessions.collapse")}
-          className="icon-button"
-          onClick={onCollapse}
-          type="button"
-        >
-          <ChevronLeft size={18} />
-        </button>
+        <span className="session-sidebar-header-actions">
+          <button aria-label={t("sessions.new")} className="icon-button" onClick={onCreate} type="button">
+            <Plus size={18} />
+          </button>
+          <button aria-label={t("sessions.collapse")} className="icon-button" onClick={onCollapse} type="button">
+            <ChevronLeft size={18} />
+          </button>
+        </span>
       </header>
 
       <div className="session-search-row">
@@ -177,6 +178,11 @@ export function SessionList({
                           : "session-item"
                       }
                       key={session.id}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        onSelect(session.id);
+                        setContextMenu({ x: event.clientX, y: event.clientY });
+                      }}
                     >
                       <button
                         className="session-item-select"
@@ -217,58 +223,20 @@ export function SessionList({
         })}
       </div>
 
-      <footer className="session-sidebar-footer">
-        <button className="new-session-button" onClick={onCreate} type="button">
-          <Plus size={18} />
-          <span>{t("sessions.new")}</span>
-        </button>
-        <button
-          aria-label={t("sessions.edit")}
-          className="icon-button"
-          disabled={!activeSessionId}
-          onClick={onEdit}
-          type="button"
-        >
-          <Pencil size={17} />
-        </button>
-        <div className="menu-anchor">
-          <button
-            aria-expanded={moreOpen}
-            aria-label={t("sessions.more")}
-            className="icon-button"
-            onClick={() => setMoreOpen((open) => !open)}
-            type="button"
-          >
-            <MoreHorizontal size={18} />
-          </button>
-          {moreOpen ? (
-            <div className="popup-menu popup-menu-bottom">
-              <button
-                onClick={() => {
-                  onRefresh();
-                  setMoreOpen(false);
-                }}
-                type="button"
-              >
-                <RefreshCcw size={15} />
-                {t("sessions.refresh")}
-              </button>
-              <button
-                className="popup-menu-danger"
-                disabled={!activeSessionId}
-                onClick={() => {
-                  onDelete();
-                  setMoreOpen(false);
-                }}
-                type="button"
-              >
-                <Trash2 size={15} />
-                {t("sessions.delete")}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </footer>
+      {contextMenu ? (
+        <ContextMenu
+          items={[
+            { id: "connect", label: t("sessions.contextConnect"), icon: <Link size={15} />, onSelect: () => activeSessionId && onSelect(activeSessionId) },
+            { id: "edit", label: t("sessions.edit"), icon: <Pencil size={15} />, onSelect: onEdit },
+            { id: "favorite", label: t(favoriteIds.has(activeSessionId ?? "") ? "sessions.unfavorite" : "sessions.favorite"), icon: <Star size={15} />, onSelect: () => activeSessionId && onToggleFavorite(activeSessionId) },
+            { id: "refresh", label: t("sessions.refresh"), icon: <RefreshCcw size={15} />, onSelect: onRefresh },
+            { id: "delete", label: t("sessions.delete"), icon: <Trash2 size={15} />, danger: true, disabled: !activeSessionId, onSelect: onDelete },
+          ]}
+          onClose={() => setContextMenu(null)}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />
+      ) : null}
     </aside>
   );
 }

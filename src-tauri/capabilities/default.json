@@ -10,5 +10,6 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
     "dialog:default"
+    ,"updater:default"
   ]
 }

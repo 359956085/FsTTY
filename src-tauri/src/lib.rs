@@ -6,7 +6,7 @@ use commands::{
     cancel_transfer, connect_session, create_session, delete_session, disconnect_session,
     download_file, forget_host_key, get_app_settings, get_device_status, list_remote_files,
     list_sessions, resize_terminal, set_language, set_session_credential, trust_host_key,
-    update_session, upload_file, write_terminal,
+    update_app_settings, update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::Manager;
@@ -15,6 +15,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             app.manage(AppState::new(app_data_dir));
@@ -39,6 +40,7 @@ pub fn run() {
             get_device_status,
             get_app_settings,
             set_language
+            , update_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("启动 FsTTY 失败");

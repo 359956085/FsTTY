@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub language: Language,
+    pub auto_update: bool,
+    pub update_proxy: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

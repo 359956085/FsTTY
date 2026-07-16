@@ -1,23 +1,24 @@
 import {
   Ban,
+  Clipboard,
   ChevronLeft,
   ChevronRight,
   Download,
-  FileCode2,
   FileQuestion,
+  FileCode2,
   FileText,
   Folder,
   FolderOpen,
   Link as LinkIcon,
   RefreshCw,
   Upload,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
 import type { TransferProgress } from "./useSessionConnections";
-
-type DetailTab = "details" | "permissions";
+import { ContextMenu } from "../../shared/ui/ContextMenu";
 
 interface FilesPaneProps {
   currentPath: string;
@@ -26,6 +27,7 @@ interface FilesPaneProps {
   sftpAvailable: boolean;
   transfer: TransferProgress | null;
   onCancelTransfer: () => void;
+  onDismissTransfer: () => void;
   onCollapse: () => void;
   onDownload: (file: FileEntry) => void;
   onOpenPath: (path: string) => void;
@@ -38,6 +40,7 @@ export function FilesPane({
   files,
   loading,
   onCancelTransfer,
+  onDismissTransfer,
   onCollapse,
   onDownload,
   onOpenPath,
@@ -48,7 +51,7 @@ export function FilesPane({
 }: FilesPaneProps) {
   const { t } = useTranslation();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("details");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
   const transferRunning = transfer?.state === "running";
 
   useEffect(() => {
@@ -70,8 +73,12 @@ export function FilesPane({
     ? Math.min(100, Math.round((transfer.transferredBytes / transfer.totalBytes) * 100))
     : 0;
 
+  async function copyPath(path: string) {
+    await navigator.clipboard.writeText(path).catch(() => undefined);
+  }
+
   return (
-    <section className="files-panel">
+    <section className="files-panel" onContextMenu={(event) => event.preventDefault()}>
       <header className="panel-title">
         <h2>{t("sessions.files")}</h2>
         <span className="panel-title-actions">
@@ -154,9 +161,13 @@ export function FilesPane({
               key={file.path}
               onClick={() => {
                 setSelectedPath(file.path);
-                setDetailTab("details");
               }}
               onDoubleClick={() => file.kind === "folder" && onOpenPath(file.path)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setSelectedPath(file.path);
+                setContextMenu({ x: event.clientX, y: event.clientY, file });
+              }}
               type="button"
             >
               <span>
@@ -170,6 +181,21 @@ export function FilesPane({
           );
         })}
       </div>
+
+      {contextMenu ? (
+        <ContextMenu
+          items={[
+            ...(contextMenu.file.kind === "folder"
+              ? [{ id: "open", label: t("sessions.contextOpenFolder"), icon: <FolderOpen size={15} />, onSelect: () => onOpenPath(contextMenu.file.path) }]
+              : [{ id: "download", label: t("sessions.download"), icon: <Download size={15} />, disabled: transferRunning, onSelect: () => onDownload(contextMenu.file) }]),
+            { id: "copy", label: t("sessions.contextCopyPath"), icon: <Clipboard size={15} />, onSelect: () => void copyPath(contextMenu.file.path) },
+            { id: "refresh", label: t("sessions.refresh"), icon: <RefreshCw size={15} />, disabled: loading, onSelect: onRefresh },
+          ]}
+          onClose={() => setContextMenu(null)}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />
+      ) : null}
 
       {transfer ? (
         <section className={`transfer-bar transfer-${transfer.state}`}>
@@ -195,76 +221,18 @@ export function FilesPane({
             >
               <Ban size={15} />
             </button>
-          ) : null}
+          ) : (
+            <button
+              aria-label={t("sessions.close")}
+              onClick={onDismissTransfer}
+              type="button"
+            >
+              <X size={15} />
+            </button>
+          )}
         </section>
       ) : null}
 
-      {selected ? (
-        <section className="file-details">
-          <div className="file-details-title">
-            {selected.kind === "folder" ? <Folder size={20} /> : <FileCode2 size={20} />}
-            <strong>{selected.name}</strong>
-            {selected.kind === "file" ? (
-              <button
-                aria-label={t("sessions.download")}
-                className="file-download-button"
-                disabled={transferRunning}
-                onClick={() => onDownload(selected)}
-                type="button"
-              >
-                <Download size={15} />
-                {t("sessions.download")}
-              </button>
-            ) : null}
-          </div>
-
-          <div className="detail-tabs" role="tablist">
-            {(["details", "permissions"] as const).map((tab) => (
-              <button
-                aria-selected={detailTab === tab}
-                className={detailTab === tab ? "detail-tab-active" : ""}
-                key={tab}
-                onClick={() => setDetailTab(tab)}
-                role="tab"
-                type="button"
-              >
-                {t(`sessions.${tab}`)}
-              </button>
-            ))}
-          </div>
-
-          {detailTab === "details" ? (
-            <dl className="details-list">
-              <dt>{t("sessions.size")}</dt>
-              <dd>
-                {selected.size == null
-                  ? "--"
-                  : `${formatSize(selected.size)} (${selected.size.toLocaleString()} ${t("sessions.bytesUnit")})`}
-              </dd>
-              <dt>{t("sessions.type")}</dt>
-              <dd>{t(`sessions.fileKind.${selected.kind}`)}</dd>
-              <dt>{t("sessions.modified")}</dt>
-              <dd>{formatModifiedTime(selected.modifiedAt)}</dd>
-              <dt>{t("sessions.permissions")}</dt>
-              <dd>{selected.permissions}</dd>
-              <dt>{t("sessions.owner")}</dt>
-              <dd>{selected.owner}</dd>
-              <dt>{t("sessions.group")}</dt>
-              <dd>{selected.group}</dd>
-            </dl>
-          ) : null}
-          {detailTab === "permissions" ? (
-            <dl className="details-list">
-              <dt>{t("sessions.owner")}</dt>
-              <dd>{selected.owner}</dd>
-              <dt>{t("sessions.group")}</dt>
-              <dd>{selected.group}</dd>
-              <dt>{t("sessions.permissions")}</dt>
-              <dd>{selected.permissions}</dd>
-            </dl>
-          ) : null}
-      </section>
-      ) : null}
     </section>
   );
 }

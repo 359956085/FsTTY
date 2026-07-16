@@ -7,4 +7,4 @@ pub use session_commands::{
     resize_terminal, set_session_credential, trust_host_key, update_session, upload_file,
     write_terminal,
 };
-pub use settings_commands::{get_app_settings, set_language};
+pub use settings_commands::{get_app_settings, set_language, update_app_settings};

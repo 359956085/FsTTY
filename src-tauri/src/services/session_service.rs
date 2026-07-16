@@ -424,7 +424,8 @@ async fn prepare_auth(
                     ))
                 }
                 CredentialAction::Clear => {
-                    return Err(AppError::Validation("密码认证不能清空密码".to_owned()))
+                    // 允许保存空密码；连接时由 SSH 键盘交互流程处理认证输入。
+                    SecretChange::Delete
                 }
             };
             Ok((SessionAuth::Password, change))
@@ -635,7 +636,7 @@ fn validate_common(
 ) -> Result<(), AppError> {
     validate_text("会话名称", name, 128, false)?;
     validate_text("主机地址", host, 253, false)?;
-    validate_text("用户名", username, 128, false)?;
+    validate_text("用户名", username, 128, true)?;
     validate_text("分组", group, 128, true)?;
     if host.chars().any(char::is_whitespace) {
         return Err(AppError::Validation("主机地址不能包含空白字符".to_owned()));

@@ -1,11 +1,49 @@
+# 前端依赖与构建
 node_modules/
 dist/
+.vite/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Rust/Tauri 构建产物
 target/
 src-tauri/target/
 src-tauri/gen/
-.vite/
+
+# 本地工具缓存
+.codex/
+.agents/
+
+# IDE
+.idea/*
+.vscode/
+*.iml
+
+# 环境变量与本地配置
+.env
+.env.*
+!.env.example
+
+# 临时文件与系统文件
 *.log
 *.tmp
+*.temp
+*.bak
 .DS_Store
 Thumbs.db
-.idea/*
+Desktop.ini
+
+# 覆盖率与测试输出
+coverage/
+.next/
+playwright-report/
+
+# 本地发布和签名临时文件
+release/
+artifacts/
+*.sig
+*.key
+*.private-key

@@ -1,4 +1,4 @@
-import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { KeyRound, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -34,12 +34,6 @@ export function SessionFormDialog({
   const [username, setUsername] = useState(session?.username ?? "");
   const [group, setGroup] = useState(session?.group ?? "未分组");
   const [tags, setTags] = useState(session?.tags.join(", ") ?? "");
-  const [authKind, setAuthKind] = useState<"password" | "privateKey">(
-    session?.auth.kind ?? "password",
-  );
-  const [privateKeyPath, setPrivateKeyPath] = useState(
-    session?.auth.kind === "privateKey" ? session.auth.path : "",
-  );
   const [credential, setCredential] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hostKeyMessage, setHostKeyMessage] = useState<string | null>(null);
@@ -49,22 +43,6 @@ export function SessionFormDialog({
     () => (mode === "create" ? t("sessions.createTitle") : t("sessions.editTitle")),
     [mode, t],
   );
-
-  async function choosePrivateKey() {
-    try {
-      const selected = await open({
-        directory: false,
-        multiple: false,
-        title: t("sessions.selectPrivateKey"),
-      });
-      if (selected) {
-        setPrivateKeyPath(selected);
-        setError(null);
-      }
-    } catch (nextError) {
-      setError(resolveApiError(nextError, t("errors.unknown")));
-    }
-  }
 
   async function forgetHostKey() {
     if (!session) {
@@ -93,18 +71,17 @@ export function SessionFormDialog({
     if (submitting) {
       return;
     }
-    const normalizedName = name.trim();
     const normalizedHost = host.trim();
+    const normalizedName = name.trim() || normalizedHost;
     const normalizedPort = Number(port);
     const normalizedUsername = username.trim();
     const normalizedGroup = group.trim();
-    const normalizedKeyPath = privateKeyPath.trim();
     const tagList = tags
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
 
-    if (!normalizedName || !normalizedHost || !normalizedUsername) {
+    if (!normalizedHost) {
       setError(t("sessions.validationRequired"));
       return;
     }
@@ -112,21 +89,7 @@ export function SessionFormDialog({
       setError(t("sessions.validationPort"));
       return;
     }
-    if (authKind === "privateKey" && !normalizedKeyPath) {
-      setError(t("sessions.validationPrivateKey"));
-      return;
-    }
-
-    const sameAuth =
-      mode === "edit" &&
-      session &&
-      session.auth.kind === authKind &&
-      (authKind !== "privateKey" ||
-        (session.auth.kind === "privateKey" && session.auth.path === normalizedKeyPath));
-    if (authKind === "password" && !credential && !sameAuth) {
-      setError(t("sessions.validationCredential"));
-      return;
-    }
+    const sameAuth = mode === "edit" && session?.auth.kind === "password";
     const credentialAction = credential
       ? { mode: "replace" as const, value: credential }
       : sameAuth
@@ -139,10 +102,7 @@ export function SessionFormDialog({
       username: normalizedUsername,
       group: normalizedGroup,
       tags: tagList,
-      auth:
-        authKind === "password"
-          ? { kind: "password" }
-          : { kind: "privateKey", path: normalizedKeyPath },
+      auth: { kind: "password" },
       credential: credentialAction,
     };
     setError(null);
@@ -180,11 +140,11 @@ export function SessionFormDialog({
             <TextInput onChange={(event) => setName(event.target.value)} value={name} />
           </label>
           <label>
-            <span>{t("sessions.host")}</span>
+            <span>{t("sessions.host")} *</span>
             <TextInput onChange={(event) => setHost(event.target.value)} value={host} />
           </label>
           <label>
-            <span>{t("sessions.port")}</span>
+            <span>{t("sessions.port")} *</span>
             <TextInput onChange={(event) => setPort(event.target.value)} value={port} />
           </label>
           <label>
@@ -203,24 +163,7 @@ export function SessionFormDialog({
             <TextInput onChange={(event) => setTags(event.target.value)} value={tags} />
           </label>
           <label>
-            <span>{t("sessions.authType")}</span>
-            <select
-              className="text-input"
-              onChange={(event) =>
-                setAuthKind(event.target.value as "password" | "privateKey")
-              }
-              value={authKind}
-            >
-              <option value="password">{t("sessions.passwordAuth")}</option>
-              <option value="privateKey">{t("sessions.privateKeyAuth")}</option>
-            </select>
-          </label>
-          <label>
-            <span>
-              {authKind === "password"
-                ? t("sessions.password")
-                : t("sessions.passphrase")}
-            </span>
+            <span>{t("sessions.password")}</span>
             <TextInput
               autoComplete="new-password"
               onChange={(event) => setCredential(event.target.value)}
@@ -229,17 +172,6 @@ export function SessionFormDialog({
               value={credential}
             />
           </label>
-          {authKind === "privateKey" ? (
-            <label className="form-wide">
-              <span>{t("sessions.privateKey")}</span>
-              <span className="file-picker-row">
-                <TextInput readOnly value={privateKeyPath} />
-                <Button onClick={() => void choosePrivateKey()} variant="ghost">
-                  {t("sessions.browse")}
-                </Button>
-              </span>
-            </label>
-          ) : null}
         </div>
 
         {session ? (

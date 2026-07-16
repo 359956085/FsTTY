@@ -24,3 +24,25 @@ pub fn set_language(
 
     Ok(service.set_language(language))
 }
+
+#[tauri::command]
+pub fn update_app_settings(
+    state: State<'_, AppState>,
+    auto_update: bool,
+    update_proxy: String,
+) -> Result<AppSettings, AppError> {
+    if update_proxy.len() > 512
+        || update_proxy.chars().any(char::is_control)
+        || (!update_proxy.is_empty()
+            && !["http://", "https://", "socks5://"]
+                .iter()
+                .any(|prefix| update_proxy.starts_with(prefix)))
+    {
+        return Err(AppError::Validation("更新代理地址无效".to_owned()));
+    }
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    Ok(service.update(auto_update, update_proxy))
+}

@@ -1,4 +1,4 @@
-import { Clock3, Cpu, HardDrive, MemoryStick, MonitorCog } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, MonitorCog } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { DeviceStatus } from "../../shared/api/types";
@@ -44,15 +44,12 @@ export function DeviceStatusPanel({ connected, status }: DeviceStatusPanelProps)
           <div className="device-row device-os-row">
             <MonitorCog size={18} />
             <span>{t("sessions.os")}</span>
-            <strong>
+            <strong
+              title={`${status.os ?? "--"}${status.architecture ? ` (${status.architecture})` : ""}`}
+            >
               {status.os ?? "--"}
               {status.architecture ? ` (${status.architecture})` : ""}
             </strong>
-          </div>
-          <div className="device-row device-os-row">
-            <Clock3 size={18} />
-            <span>{t("sessions.uptime")}</span>
-            <strong>{formatUptime(status.uptimeSeconds)}</strong>
           </div>
         </div>
       ) : (
@@ -93,14 +90,4 @@ function formatCapacity(used?: number | null, total?: number | null) {
     return "--";
   }
   return `${used.toFixed(1)} / ${total.toFixed(1)} GB`;
-}
-
-function formatUptime(seconds?: number | null) {
-  if (seconds == null) {
-    return "--";
-  }
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  return days > 0 ? `${days} 天 ${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
 }

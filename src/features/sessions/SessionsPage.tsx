@@ -138,6 +138,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         error={sessionsState.error}
         loading={sessionsState.loading}
         onCancelTransfer={(sessionId) => void connections.cancelTransfer(sessionId)}
+        onDismissTransfer={connections.dismissTransfer}
         onCloseSession={(sessionId) => void closeSession(sessionId)}
         onConnected={connections.handleConnected}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}

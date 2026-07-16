@@ -1,5 +1,5 @@
 import { Channel } from "@tauri-apps/api/core";
-import { KeyRound, Link, Link2Off, ShieldAlert } from "lucide-react";
+import { Copy, Link, Link2Off, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
@@ -15,7 +15,7 @@ import type {
   TerminalEvent,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
-import { TextInput } from "../../shared/ui/TextInput";
+import { ContextMenu } from "../../shared/ui/ContextMenu";
 
 interface TerminalPaneProps {
   active: boolean;
@@ -55,9 +55,8 @@ export function TerminalPane({
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
-  const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
-  const [credential, setCredential] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -177,6 +176,20 @@ export function TerminalPane({
     terminalRef.current?.focus();
   }
 
+  async function copyTerminalSelection() {
+    const selection = terminalRef.current?.getSelection() ?? "";
+    if (selection) {
+      await navigator.clipboard.writeText(selection).catch(() => undefined);
+    }
+  }
+
+  async function pasteTerminalClipboard() {
+    const value = await navigator.clipboard.readText().catch(() => "");
+    if (value) {
+      sendInputRef.current(value);
+    }
+  }
+
   useEffect(() => {
     let disposed = false;
     let observer: ResizeObserver | null = null;
@@ -202,15 +215,15 @@ export function TerminalPane({
         lineHeight: 1.38,
         scrollback: 10_000,
         theme: {
-          background: "#09131c",
-          foreground: "#c9d3dd",
-          cursor: "#f5f7fb",
-          black: "#0b1118",
-          blue: "#22a7f0",
+          background: "#080d11",
+          foreground: "#d5d9dd",
+          cursor: "#f1f3f5",
+          black: "#111416",
+          blue: "#aeb6bd",
           cyan: "#2dd4bf",
-          green: "#67d75b",
-          red: "#ff6b6b",
-          yellow: "#fbbf24",
+          green: "#56cf63",
+          red: "#f06b72",
+          yellow: "#e5aa4b",
         },
       });
       const fitAddon = new FitAddon();
@@ -352,14 +365,6 @@ export function TerminalPane({
       eventChannelRef.current = null;
       clearPendingInput();
       const info = readApiError(error, t("errors.unknown"));
-      const shouldRefreshCredential =
-        info.kind === "credential" ||
-        (info.kind === "authentication" && session.auth.kind === "password");
-      if (shouldRefreshCredential) {
-        setCredential("");
-        setDialogError(info.message);
-        setCredentialDialogOpen(true);
-      }
       reportState("error", info.message);
     } finally {
       connectingRef.current = false;
@@ -399,26 +404,15 @@ export function TerminalPane({
     }
   }
 
-  async function saveCredentialAndReconnect() {
-    if (!credential) {
-      setDialogError(t("sessions.validationCredential"));
-      return;
-    }
-    try {
-      await api.setSessionCredential(session.id, credential);
-      setCredential("");
-      setCredentialDialogOpen(false);
-      setDialogError(null);
-      await connectTerminal();
-    } catch (error) {
-      setDialogError(resolveApiError(error, t("errors.unknown")));
-    }
-  }
-
   return (
     <div className="terminal-wrap">
       <div
         className="terminal-body"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          focusTerminal();
+          setContextMenu({ x: event.clientX, y: event.clientY });
+        }}
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
@@ -443,16 +437,23 @@ export function TerminalPane({
               : t("sessions.connect")}
           </Button>
         </div>
-      ) : (
-        <Button
-          className="terminal-disconnect-button"
-          icon={<Link2Off size={14} />}
-          onClick={() => void disconnectTerminal()}
-          variant="ghost"
-        >
-          {t("sessions.disconnect")}
-        </Button>
-      )}
+      ) : null}
+
+      {contextMenu ? (
+        <ContextMenu
+          items={[
+            { id: "copy", label: t("sessions.contextCopy"), icon: <Copy size={15} />, disabled: !(terminalRef.current?.getSelection() ?? ""), onSelect: () => void copyTerminalSelection() },
+            { id: "paste", label: t("sessions.contextPaste"), onSelect: () => void pasteTerminalClipboard() },
+            { id: "selectAll", label: t("sessions.contextSelectAll"), onSelect: () => terminalRef.current?.selectAll() },
+            { id: "clear", label: t("sessions.contextClear"), onSelect: () => terminalRef.current?.clear() },
+            { id: "reconnect", label: t("sessions.contextReconnect"), disabled: connectionState === "connected" || connectionState === "connecting", onSelect: () => void connectTerminal() },
+            { id: "disconnect", label: t("sessions.disconnect"), disabled: connectionState !== "connected", onSelect: () => void disconnectTerminal() },
+          ]}
+          onClose={() => setContextMenu(null)}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />
+      ) : null}
 
       {hostKeyChallenge ? (
         <div className="dialog-backdrop terminal-dialog-backdrop">
@@ -506,45 +507,6 @@ export function TerminalPane({
         </div>
       ) : null}
 
-      {credentialDialogOpen ? (
-        <div className="dialog-backdrop terminal-dialog-backdrop">
-          <section aria-modal="true" className="dialog credential-dialog" role="dialog">
-            <header className="dialog-header">
-              <KeyRound size={20} />
-              <h2>{t("sessions.credentialRequired")}</h2>
-            </header>
-            <label className="credential-input">
-              <span>
-                {session.auth.kind === "password"
-                  ? t("sessions.password")
-                  : t("sessions.passphrase")}
-              </span>
-              <TextInput
-                autoFocus
-                onChange={(event) => setCredential(event.target.value)}
-                type="password"
-                value={credential}
-              />
-            </label>
-            {dialogError ? <div className="form-error">{dialogError}</div> : null}
-            <footer className="dialog-actions">
-              <Button
-                onClick={() => {
-                  setCredential("");
-                  setDialogError(null);
-                  setCredentialDialogOpen(false);
-                }}
-                variant="ghost"
-              >
-                {t("sessions.cancel")}
-              </Button>
-              <Button onClick={() => void saveCredentialAndReconnect()}>
-                {t("sessions.saveAndConnect")}
-              </Button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
     </div>
   );
 }

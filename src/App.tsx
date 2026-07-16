@@ -15,7 +15,11 @@ type AppView = "sessions" | "settings";
 export function App() {
   const { t, i18n } = useTranslation();
   const [view, setView] = useState<AppView>("sessions");
-  const [settings, setSettings] = useState<AppSettings>({ language: "zh-CN" });
+  const [settings, setSettings] = useState<AppSettings>({
+    language: "zh-CN",
+    autoUpdate: true,
+    updateProxy: "",
+  });
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,7 +63,10 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <header className="app-titlebar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
           <img

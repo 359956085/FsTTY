@@ -5,6 +5,7 @@ use crate::models::{
 use crate::services::CredentialService;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use russh::client;
+use russh::client::KeyboardInteractiveAuthResponse;
 use russh::keys::{
     known_hosts::{check_known_hosts_path, known_host_keys_path, learn_known_hosts_path},
     load_secret_key,
@@ -1046,14 +1047,50 @@ async fn authenticate_inner(
 
     let result = match &session.auth {
         SessionAuth::Password => {
-            let secret = credentials
-                .get(&session.id)
-                .await?
-                .ok_or_else(|| AppError::Credential("密码缺失，请重新输入".to_owned()))?;
-            handle
-                .authenticate_password(session.username.clone(), secret.to_string())
-                .await
-                .map_err(|_| AppError::Authentication("SSH 密码认证失败".to_owned()))?
+            let secret = credentials.get(&session.id).await?;
+            if session.username.is_empty() || secret.is_none() {
+                let mut response = handle
+                    .authenticate_keyboard_interactive_start(&session.username, None::<String>)
+                    .await
+                    .map_err(|_| AppError::Authentication("SSH 交互认证失败".to_owned()))?;
+                loop {
+                    response = match response {
+                        KeyboardInteractiveAuthResponse::Success => {
+                            break client::AuthResult::Success;
+                        }
+                        KeyboardInteractiveAuthResponse::Failure { .. } => {
+                            return Err(AppError::Authentication("SSH 交互认证失败".to_owned()))
+                        }
+                        KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                            let password = secret
+                                .as_ref()
+                                .map(|value| value.to_string())
+                                .unwrap_or_default();
+                            let responses = prompts
+                                .into_iter()
+                                .map(|prompt| {
+                                    if prompt.echo {
+                                        session.username.clone()
+                                    } else {
+                                        password.clone()
+                                    }
+                                })
+                                .collect();
+                            handle
+                                .authenticate_keyboard_interactive_respond(responses)
+                                .await
+                                .map_err(|_| {
+                                    AppError::Authentication("SSH 交互认证失败".to_owned())
+                                })?
+                        }
+                    };
+                }
+            } else {
+                handle
+                    .authenticate_password(session.username.clone(), secret.unwrap().to_string())
+                    .await
+                    .map_err(|_| AppError::Authentication("SSH 密码认证失败".to_owned()))?
+            }
         }
         SessionAuth::PrivateKey {
             path,

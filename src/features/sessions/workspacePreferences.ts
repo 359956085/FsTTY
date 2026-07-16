@@ -1,9 +1,10 @@
 export const WORKSPACE_STORAGE_KEY = "fstty.workspace.v1";
+const WORKSPACE_LAYOUT_MIGRATION = "fstty.workspace.layout.v2";
 
 export const WORKSPACE_LAYOUT_LIMITS = {
   leftWidth: { defaultValue: 260, min: 220, max: 420 },
   rightWidth: { defaultValue: 460, min: 360, max: 600 },
-  fileRatio: { defaultValue: 66, min: 45, max: 75 },
+    fileRatio: { defaultValue: 75, min: 45, max: 75 },
   terminalMinWidth: 440,
 } as const;
 
@@ -163,7 +164,21 @@ export function readWorkspacePreferences(): WorkspacePreferences {
 
   try {
     const stored = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
-    return stored ? normalizePreferences(JSON.parse(stored) as unknown) : createDefaultPreferences();
+    const preferences = stored
+      ? normalizePreferences(JSON.parse(stored) as unknown)
+      : createDefaultPreferences();
+    if (
+      stored &&
+      !window.localStorage.getItem(WORKSPACE_LAYOUT_MIGRATION)
+    ) {
+      preferences.layout.fileRatio = WORKSPACE_LAYOUT_LIMITS.fileRatio.defaultValue;
+      window.localStorage.setItem(
+        WORKSPACE_STORAGE_KEY,
+        JSON.stringify(preferences),
+      );
+      window.localStorage.setItem(WORKSPACE_LAYOUT_MIGRATION, "1");
+    }
+    return preferences;
   } catch {
     return createDefaultPreferences();
   }

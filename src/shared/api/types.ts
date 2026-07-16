@@ -2,6 +2,8 @@ export type Language = "zh-CN" | "en-US";
 
 export interface AppSettings {
   language: Language;
+  autoUpdate: boolean;
+  updateProxy: string;
 }
 
 export interface SessionGroup {

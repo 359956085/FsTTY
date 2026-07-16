@@ -446,8 +446,20 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [errorFallback, updateRuntime],
   );
 
+  const dismissTransfer = useCallback(
+    (sessionId: string) => {
+      updateRuntime(sessionId, (runtime) =>
+        runtime.transfer?.state === "running"
+          ? runtime
+          : { ...runtime, transfer: null },
+      );
+    },
+    [updateRuntime],
+  );
+
   return {
     cancelTransfer,
+    dismissTransfer,
     disconnect,
     downloadFile,
     handleConnected,
