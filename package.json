@@ -1,7 +1,7 @@
 {
   "name": "fstty",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1430",
@@ -12,7 +12,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/plugin-updater": "2.0.0",
+    "@tauri-apps/plugin-updater": "2.10.1",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "i18next": "^25.0.0",
