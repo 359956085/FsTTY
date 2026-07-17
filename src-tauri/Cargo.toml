@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
-keyring = "4.1"
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.3"
 serde = { version = "1", features = ["derive"] }
@@ -26,3 +25,10 @@ tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "sync", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["serde"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring-core = "1"
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+keyring = "4.1"

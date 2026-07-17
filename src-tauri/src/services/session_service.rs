@@ -197,7 +197,8 @@ impl SessionService {
         } else {
             None
         };
-        let connection_invalidated = old_session.host != payload.host.trim()
+        let connection_invalidated = secret_changed
+            || old_session.host != payload.host.trim()
             || old_session.port != payload.port
             || old_session.username != payload.username.trim()
             || old_session.auth != auth;
@@ -805,7 +806,7 @@ mod tests {
     #[ignore = "需要使用当前系统凭据库"]
     async fn credential_lifecycle_smoke() {
         let directory = test_directory("credential-store");
-        let credentials = CredentialService;
+        let credentials = CredentialService::new();
         let mut service = SessionService::load(&directory);
         let initial_secret = Zeroizing::new(Uuid::new_v4().to_string());
         let created = service
@@ -830,7 +831,7 @@ mod tests {
         let content = fs::read_to_string(directory.join(STORE_FILE)).expect("无法读取会话文件");
         assert!(!content.contains(initial_secret.as_str()));
 
-        service
+        let (_, preserve_invalidated) = service
             .update(
                 UpdateSessionPayload {
                     id: created.id.clone(),
@@ -847,6 +848,7 @@ mod tests {
             )
             .await
             .expect("保留凭据更新失败");
+        assert!(!preserve_invalidated);
         assert_eq!(
             credentials
                 .get(&created.id)
@@ -855,6 +857,49 @@ mod tests {
                 .expect("凭据意外丢失")
                 .as_str(),
             initial_secret.as_str()
+        );
+
+        let replacement_secret = Zeroizing::new(Uuid::new_v4().to_string());
+        let (_, replacement_invalidated) = service
+            .update(
+                UpdateSessionPayload {
+                    id: created.id.clone(),
+                    name: "凭据测试已更新".to_owned(),
+                    host: "127.0.0.1".to_owned(),
+                    port: 22,
+                    username: "root".to_owned(),
+                    group: "测试".to_owned(),
+                    tags: vec![],
+                    auth: SessionAuthInput::Password,
+                    credential: CredentialAction::Replace {
+                        value: replacement_secret.clone(),
+                    },
+                },
+                &credentials,
+            )
+            .await
+            .expect("替换凭据更新失败");
+        assert!(replacement_invalidated);
+        assert_eq!(
+            credentials
+                .get(&created.id)
+                .await
+                .expect("替换后读取凭据失败")
+                .expect("替换后凭据丢失")
+                .as_str(),
+            replacement_secret.as_str()
+        );
+
+        drop(credentials);
+        let credentials = CredentialService::new();
+        assert_eq!(
+            credentials
+                .get(&created.id)
+                .await
+                .expect("重新初始化后读取凭据失败")
+                .expect("重新初始化后凭据丢失")
+                .as_str(),
+            replacement_secret.as_str()
         );
 
         let real_temp_path = service.temp_path.clone();
@@ -888,7 +933,7 @@ mod tests {
                 .expect("回滚后读取凭据失败")
                 .expect("回滚后凭据丢失")
                 .as_str(),
-            initial_secret.as_str()
+            replacement_secret.as_str()
         );
 
         service

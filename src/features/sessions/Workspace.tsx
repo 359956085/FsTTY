@@ -31,6 +31,7 @@ interface WorkspaceProps {
   onCloseSession: (sessionId: string) => void;
   onConnected: (sessionId: string, connection: SshConnection) => void;
   onCreateSession: () => void;
+  onDirectoryChange: (sessionId: string, path: string) => void;
   onDownload: (sessionId: string, file: FileEntry) => void;
   onOpenPath: (sessionId: string, path: string) => void;
   onRefreshFiles: (sessionId: string) => void;
@@ -55,6 +56,7 @@ export function Workspace({
   onCloseSession,
   onConnected,
   onCreateSession,
+  onDirectoryChange,
   onDownload,
   onOpenPath,
   onRefreshFiles,
@@ -154,7 +156,9 @@ export function Workspace({
                 <TerminalPane
                   active={activeSessionId === session.id}
                   connectionState={runtime?.connectionState ?? "disconnected"}
+                  directoryRequest={runtime?.terminalDirectoryRequest ?? null}
                   onConnected={onConnected}
+                  onDirectoryChange={onDirectoryChange}
                   onStateChange={onTerminalState}
                   session={session}
                   visible={visible}

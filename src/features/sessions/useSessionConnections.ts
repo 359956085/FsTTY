@@ -21,6 +21,11 @@ export interface TransferProgress {
   state: "running" | "completed" | "cancelled";
 }
 
+export interface TerminalDirectoryRequest {
+  id: number;
+  path: string;
+}
+
 export interface SessionRuntime {
   connectionState: ConnectionState;
   connection: SshConnection | null;
@@ -30,6 +35,7 @@ export interface SessionRuntime {
   filesLoading: boolean;
   deviceStatus: DeviceStatus | null;
   transfer: TransferProgress | null;
+  terminalDirectoryRequest: TerminalDirectoryRequest | null;
 }
 
 interface UseSessionConnectionsOptions {
@@ -41,6 +47,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const runtimesRef = useRef(runtimes);
   const fileRequestIds = useRef(new Map<string, number>());
   const deviceRequestIds = useRef(new Map<string, number>());
+  const terminalDirectoryRequestId = useRef(0);
 
   useEffect(() => {
     runtimesRef.current = runtimes;
@@ -74,22 +81,24 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       try {
         const files = await api.listRemoteFiles(connectionId, path);
         if (fileRequestIds.current.get(sessionId) !== requestId) {
-          return;
+          return false;
         }
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
           files,
           filesLoading: false,
         }));
+        return true;
       } catch (error) {
         if (fileRequestIds.current.get(sessionId) !== requestId) {
-          return;
+          return false;
         }
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
           filesLoading: false,
           error: resolveApiError(error, errorFallback),
         }));
+        return false;
       }
     },
     [errorFallback, updateRuntime],
@@ -125,6 +134,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         currentPath,
         files: [],
         deviceStatus: null,
+        terminalDirectoryRequest: null,
       }));
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
@@ -168,6 +178,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             : runtime.deviceStatus,
         transfer:
           state === "disconnected" || state === "error" ? null : runtime.transfer,
+        terminalDirectoryRequest:
+          state === "disconnected" || state === "error"
+            ? null
+            : runtime.terminalDirectoryRequest,
       }));
     },
     [updateRuntime],
@@ -179,7 +193,40 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (!runtime?.connection?.sftpAvailable) {
         return;
       }
-      void loadFiles(sessionId, runtime.connection.connectionId, normalizeRemotePath(path));
+      const normalizedPath = normalizeRemotePath(path);
+      if (!normalizedPath) {
+        return;
+      }
+      const connectionId = runtime.connection.connectionId;
+      void loadFiles(sessionId, connectionId, normalizedPath).then((opened) => {
+        const current = runtimesRef.current[sessionId];
+        if (!opened || current?.connection?.connectionId !== connectionId) {
+          return;
+        }
+        updateRuntime(sessionId, (latest) => ({
+          ...latest,
+          terminalDirectoryRequest: {
+            id: ++terminalDirectoryRequestId.current,
+            path: normalizedPath,
+          },
+        }));
+      });
+    },
+    [loadFiles, updateRuntime],
+  );
+
+  const handleTerminalDirectory = useCallback(
+    (sessionId: string, path: string) => {
+      const normalizedPath = normalizeRemotePath(path);
+      const runtime = runtimesRef.current[sessionId];
+      if (
+        !normalizedPath ||
+        !runtime?.connection?.sftpAvailable ||
+        runtime.currentPath === normalizedPath
+      ) {
+        return;
+      }
+      void loadFiles(sessionId, runtime.connection.connectionId, normalizedPath);
     },
     [loadFiles],
   );
@@ -463,6 +510,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     disconnect,
     downloadFile,
     handleConnected,
+    handleTerminalDirectory,
     handleTerminalState,
     openPath,
     pruneRuntimes,
@@ -484,6 +532,7 @@ export function createRuntime(): SessionRuntime {
     filesLoading: false,
     deviceStatus: null,
     transfer: null,
+    terminalDirectoryRequest: null,
   };
 }
 
@@ -539,8 +588,15 @@ function fileNameFromPath(path: string) {
 }
 
 function normalizeRemotePath(path: string) {
+  if (
+    !path.startsWith("/") ||
+    new TextEncoder().encode(path).byteLength > 4096 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(path)
+  ) {
+    return null;
+  }
   const parts: string[] = [];
-  for (const part of path.trim().replace(/\\/g, "/").split("/")) {
+  for (const part of path.split("/")) {
     if (!part || part === ".") {
       continue;
     }

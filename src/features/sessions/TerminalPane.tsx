@@ -16,13 +16,24 @@ import type {
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import type { TerminalDirectoryRequest } from "./useSessionConnections";
+
+const SHELL_OSC_IDENTIFIER = 777;
+
+interface ShellIntegration {
+  functionName: string;
+  stage: "detecting" | "installing" | "active" | "unsupported";
+  token: string;
+}
 
 interface TerminalPaneProps {
   active: boolean;
   visible: boolean;
   session: Session;
   connectionState: ConnectionState;
+  directoryRequest: TerminalDirectoryRequest | null;
   onConnected: (sessionId: string, connection: SshConnection) => void;
+  onDirectoryChange: (sessionId: string, path: string) => void;
   onStateChange: (
     sessionId: string,
     state: ConnectionState,
@@ -33,7 +44,9 @@ interface TerminalPaneProps {
 export function TerminalPane({
   active,
   connectionState,
+  directoryRequest,
   onConnected,
+  onDirectoryChange,
   onStateChange,
   session,
   visible,
@@ -52,11 +65,18 @@ export function TerminalPane({
   const mountedRef = useRef(true);
   const connectionAttemptRef = useRef(0);
   const connectingRef = useRef(false);
+  const consumedDirectoryRequestRef = useRef(0);
+  const lastReportedDirectoryRef = useRef<string | null>(null);
+  const onDirectoryChangeRef = useRef(onDirectoryChange);
+  const shellAtPromptRef = useRef(false);
+  const shellIntegrationRef = useRef<ShellIntegration | null>(null);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  onDirectoryChangeRef.current = onDirectoryChange;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -78,6 +98,64 @@ export function TerminalPane({
     }
     inputBufferRef.current = "";
     writeChainRef.current = Promise.resolve();
+  }
+
+  function resetShellIntegration() {
+    lastReportedDirectoryRef.current = null;
+    shellAtPromptRef.current = false;
+    shellIntegrationRef.current = null;
+  }
+
+  function startShellIntegration() {
+    // 每次连接使用独立令牌，避免远端普通程序输出相同 OSC 编号时误触发目录同步。
+    const token = crypto.randomUUID().replace(/-/g, "");
+    shellIntegrationRef.current = {
+      functionName: `__fstty_cwd_${token.slice(0, 12)}`,
+      stage: "detecting",
+      token,
+    };
+    shellAtPromptRef.current = false;
+    lastReportedDirectoryRef.current = null;
+    sendImmediateInput(
+      ` printf '\\033]${SHELL_OSC_IDENTIFIER};fstty-shell:${token}:%s\\007' "$SHELL"\r`,
+    );
+  }
+
+  function handleShellOsc(data: string) {
+    const integration = shellIntegrationRef.current;
+    if (!integration) {
+      return true;
+    }
+    const shellPrefix = `fstty-shell:${integration.token}:`;
+    if (data.startsWith(shellPrefix) && integration.stage === "detecting") {
+      const shellName = data
+        .slice(shellPrefix.length)
+        .replace(/\\/g, "/")
+        .split("/")
+        .pop()
+        ?.toLowerCase();
+      const command = createShellIntegrationCommand(shellName, integration);
+      if (!command) {
+        integration.stage = "unsupported";
+        return true;
+      }
+      integration.stage = "installing";
+      sendImmediateInput(command);
+      return true;
+    }
+    const directoryPrefix = `fstty-cwd:${integration.token}:`;
+    if (!data.startsWith(directoryPrefix)) {
+      return true;
+    }
+    const path = data.slice(directoryPrefix.length);
+    if (!isValidRemotePath(path)) {
+      return true;
+    }
+    integration.stage = "active";
+    shellAtPromptRef.current = true;
+    lastReportedDirectoryRef.current = path;
+    onDirectoryChangeRef.current(session.id, path);
+    return true;
   }
 
   function flushInput() {
@@ -112,6 +190,11 @@ export function TerminalPane({
           reportState("error", resolveApiError(error, t("errors.unknown")));
         });
     }
+  }
+
+  function sendImmediateInput(data: string) {
+    sendInputRef.current(data);
+    flushInput();
   }
 
   sendInputRef.current = (data) => {
@@ -195,23 +278,47 @@ export function TerminalPane({
     terminalRef.current?.focus();
   }
 
+  function restoreTerminalFocus() {
+    // 等右键菜单卸载后再聚焦，避免菜单按钮立即把焦点抢回去。
+    window.requestAnimationFrame(() => {
+      const container = containerRef.current;
+      if (!mountedRef.current || !container || container.getClientRects().length === 0) {
+        return;
+      }
+      focusTerminal();
+    });
+  }
+
   async function copyTerminalSelection() {
-    const selection = terminalRef.current?.getSelection() ?? "";
-    if (selection) {
-      await navigator.clipboard.writeText(selection).catch(() => undefined);
+    try {
+      const selection = terminalRef.current?.getSelection() ?? "";
+      if (selection) {
+        await navigator.clipboard.writeText(selection);
+      }
+    } catch {
+      // 剪贴板权限失败不影响终端继续输入。
+    } finally {
+      restoreTerminalFocus();
     }
   }
 
   async function pasteTerminalClipboard() {
-    const value = await navigator.clipboard.readText().catch(() => "");
-    if (value) {
-      sendInputRef.current(value);
+    try {
+      const value = await navigator.clipboard.readText();
+      if (value) {
+        sendInputRef.current(value);
+      }
+    } catch {
+      // 剪贴板权限失败不影响终端继续输入。
+    } finally {
+      restoreTerminalFocus();
     }
   }
 
   useEffect(() => {
     let disposed = false;
     let observer: ResizeObserver | null = null;
+    let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
 
     async function mountTerminal() {
@@ -248,7 +355,15 @@ export function TerminalPane({
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
       terminal.open(container);
-      terminal.onData((data) => sendInputRef.current(data));
+      oscHandler = terminal.parser.registerOscHandler(
+        SHELL_OSC_IDENTIFIER,
+        handleShellOsc,
+      );
+      terminal.onData((data) => {
+        // 收到目录信号后，只要用户开始输入就不再视为干净提示符，避免自动 cd 污染命令行。
+        shellAtPromptRef.current = false;
+        sendInputRef.current(data);
+      });
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
       terminalInstance = terminal;
@@ -265,7 +380,9 @@ export function TerminalPane({
       connectionAttemptRef.current += 1;
       connectingRef.current = false;
       observer?.disconnect();
+      oscHandler?.dispose();
       clearPendingInput();
+      resetShellIntegration();
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
@@ -280,6 +397,25 @@ export function TerminalPane({
       terminalInstance?.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    if (!directoryRequest || directoryRequest.id === consumedDirectoryRequestRef.current) {
+      return;
+    }
+    consumedDirectoryRequestRef.current = directoryRequest.id;
+    if (
+      connectionState !== "connected" ||
+      !connectionRef.current ||
+      shellIntegrationRef.current?.stage !== "active" ||
+      !shellAtPromptRef.current ||
+      lastReportedDirectoryRef.current === directoryRequest.path ||
+      !isValidRemotePath(directoryRequest.path)
+    ) {
+      return;
+    }
+    shellAtPromptRef.current = false;
+    sendImmediateInput(` builtin cd -- ${quoteShellPath(directoryRequest.path)}\r`);
+  }, [connectionState, directoryRequest]);
 
   useEffect(() => {
     if (!active || !visible) {
@@ -305,6 +441,7 @@ export function TerminalPane({
       return;
     }
     clearPendingInput();
+    resetShellIntegration();
     terminal.reset();
     const attemptId = connectionAttemptRef.current + 1;
     connectionAttemptRef.current = attemptId;
@@ -331,6 +468,7 @@ export function TerminalPane({
         connectionRef.current = null;
         eventChannelRef.current = null;
         clearPendingInput();
+        resetShellIntegration();
         terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
         reportState("error", event.message);
         return;
@@ -339,6 +477,7 @@ export function TerminalPane({
       connectionRef.current = null;
       eventChannelRef.current = null;
       clearPendingInput();
+      resetShellIntegration();
       terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
       reportState("disconnected");
     };
@@ -376,6 +515,7 @@ export function TerminalPane({
       connectionRef.current = result.connection;
       flushInput();
       onConnected(session.id, result.connection);
+      startShellIntegration();
       fitAndResize();
     } catch (error) {
       if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
@@ -383,6 +523,7 @@ export function TerminalPane({
       }
       eventChannelRef.current = null;
       clearPendingInput();
+      resetShellIntegration();
       const info = readApiError(error, t("errors.unknown"));
       reportState("error", info.message);
     } finally {
@@ -397,6 +538,7 @@ export function TerminalPane({
       return;
     }
     clearPendingInput();
+    resetShellIntegration();
     reportState("disconnecting");
     try {
       await api.disconnectSession(connection.connectionId);
@@ -404,6 +546,7 @@ export function TerminalPane({
       connectionRef.current = null;
       eventChannelRef.current = null;
       clearPendingInput();
+      resetShellIntegration();
       reportState("disconnected");
     } catch (error) {
       reportState("error", resolveApiError(error, t("errors.unknown")));
@@ -535,6 +678,33 @@ export function TerminalPane({
 function decodeBase64(value: string) {
   const binary = window.atob(value);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function createShellIntegrationCommand(
+  shellName: string | undefined,
+  integration: ShellIntegration,
+) {
+  // 只修改当前 Shell 进程的提示符钩子，不写入用户远程配置文件。
+  const reportDirectory = `printf '\\033]${SHELL_OSC_IDENTIFIER};fstty-cwd:${integration.token}:%s\\007' "$PWD"`;
+  if (shellName === "bash") {
+    return ` ${integration.functionName}(){ ${reportDirectory}; }; case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "declare -a"*) PROMPT_COMMAND+=(${integration.functionName});; *) PROMPT_COMMAND="${integration.functionName}\${PROMPT_COMMAND:+;\$PROMPT_COMMAND}";; esac\r`;
+  }
+  if (shellName === "zsh") {
+    return ` ${integration.functionName}(){ ${reportDirectory}; }; precmd_functions+=(${integration.functionName})\r`;
+  }
+  return null;
+}
+
+function isValidRemotePath(path: string) {
+  return (
+    path.startsWith("/") &&
+    new TextEncoder().encode(path).byteLength <= 4096 &&
+    !/[\u0000-\u001f\u007f-\u009f]/u.test(path)
+  );
+}
+
+function quoteShellPath(path: string) {
+  return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
 function splitUtf8(value: string, maxBytes: number) {

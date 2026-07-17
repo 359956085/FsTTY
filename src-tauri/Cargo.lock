@@ -1522,6 +1522,7 @@ version = "0.1.3"
 dependencies = [
  "base64 0.22.1",
  "keyring",
+ "keyring-core",
  "russh",
  "russh-sftp",
  "serde",
@@ -1533,6 +1534,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tokio",
  "uuid",
+ "windows-native-keyring-store",
  "zeroize",
 ]
 

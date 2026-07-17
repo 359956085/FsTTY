@@ -8,6 +8,13 @@ export const WORKSPACE_LAYOUT_LIMITS = {
   terminalMinWidth: 440,
 } as const;
 
+export const FILE_COLUMN_LIMITS = {
+  name: { defaultValue: 140, min: 120, max: 480 },
+  size: { defaultValue: 72, min: 64, max: 160 },
+  modified: { defaultValue: 132, min: 112, max: 240 },
+  permissions: { defaultValue: 96, min: 80, max: 180 },
+} as const;
+
 export interface WorkspaceLayoutPreferences {
   leftWidth: number;
   rightWidth: number;
@@ -21,16 +28,25 @@ export interface WorkspaceTabsPreferences {
   activeSessionId: string | null;
 }
 
+export interface FileColumnPreferences {
+  name: number;
+  size: number;
+  modified: number;
+  permissions: number;
+}
+
 export interface WorkspacePreferences {
   layout: WorkspaceLayoutPreferences;
   tabs: WorkspaceTabsPreferences;
   favoriteSessionIds: string[];
+  fileColumns: FileColumnPreferences;
 }
 
 export interface WorkspacePreferencesPatch {
   layout?: Partial<WorkspaceLayoutPreferences>;
   tabs?: Partial<WorkspaceTabsPreferences>;
   favoriteSessionIds?: string[];
+  fileColumns?: Partial<FileColumnPreferences>;
 }
 
 const MAX_STORED_SESSION_IDS = 100;
@@ -50,6 +66,12 @@ function createDefaultPreferences(): WorkspacePreferences {
       activeSessionId: null,
     },
     favoriteSessionIds: [],
+    fileColumns: {
+      name: FILE_COLUMN_LIMITS.name.defaultValue,
+      size: FILE_COLUMN_LIMITS.size.defaultValue,
+      modified: FILE_COLUMN_LIMITS.modified.defaultValue,
+      permissions: FILE_COLUMN_LIMITS.permissions.defaultValue,
+    },
   };
 }
 
@@ -104,6 +126,7 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
   const root = isRecord(value) ? value : {};
   const layout = isRecord(root.layout) ? root.layout : {};
   const tabs = isRecord(root.tabs) ? root.tabs : {};
+  const fileColumns = isRecord(root.fileColumns) ? root.fileColumns : {};
 
   const openSessionIds = readSessionIds(
     tabs.openSessionIds,
@@ -154,6 +177,32 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
       root.favoriteSessionIds,
       defaults.favoriteSessionIds,
     ),
+    fileColumns: {
+      name: readBoundedNumber(
+        fileColumns.name,
+        defaults.fileColumns.name,
+        FILE_COLUMN_LIMITS.name.min,
+        FILE_COLUMN_LIMITS.name.max,
+      ),
+      size: readBoundedNumber(
+        fileColumns.size,
+        defaults.fileColumns.size,
+        FILE_COLUMN_LIMITS.size.min,
+        FILE_COLUMN_LIMITS.size.max,
+      ),
+      modified: readBoundedNumber(
+        fileColumns.modified,
+        defaults.fileColumns.modified,
+        FILE_COLUMN_LIMITS.modified.min,
+        FILE_COLUMN_LIMITS.modified.max,
+      ),
+      permissions: readBoundedNumber(
+        fileColumns.permissions,
+        defaults.fileColumns.permissions,
+        FILE_COLUMN_LIMITS.permissions.min,
+        FILE_COLUMN_LIMITS.permissions.max,
+      ),
+    },
   };
 }
 
@@ -188,11 +237,12 @@ export function updateWorkspacePreferences(
   patch: WorkspacePreferencesPatch,
 ): WorkspacePreferences {
   const current = readWorkspacePreferences();
-  // 深层合并三个独立区域，防止布局调整覆盖标签或收藏。
+  // 深层合并四个独立区域，防止单项调整覆盖其他工作区偏好。
   const next = normalizePreferences({
     layout: { ...current.layout, ...patch.layout },
     tabs: { ...current.tabs, ...patch.tabs },
     favoriteSessionIds: patch.favoriteSessionIds ?? current.favoriteSessionIds,
+    fileColumns: { ...current.fileColumns, ...patch.fileColumns },
   });
 
   if (typeof window !== "undefined") {

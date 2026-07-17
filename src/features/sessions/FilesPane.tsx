@@ -14,11 +14,43 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
 import type { TransferProgress } from "./useSessionConnections";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import { ResizeHandle } from "./ResizeHandle";
+import {
+  FILE_COLUMN_LIMITS,
+  readWorkspacePreferences,
+  updateWorkspacePreferences,
+  type FileColumnPreferences,
+} from "./workspacePreferences";
+
+type ResizableFileColumn = "name" | "size" | "modified";
+
+const FILE_COLUMN_KEYBOARD_STEP = 8;
+
+function clampFileColumn(column: ResizableFileColumn, value: number) {
+  const limits = FILE_COLUMN_LIMITS[column];
+  return Math.min(Math.max(value, limits.min), limits.max);
+}
+
+function applyFileColumnWidth(
+  table: HTMLDivElement | null,
+  column: keyof FileColumnPreferences,
+  value: number,
+) {
+  table?.style.setProperty(`--file-column-${column}`, `${value}px`);
+}
 
 interface FilesPaneProps {
   currentPath: string;
@@ -50,9 +82,33 @@ export function FilesPane({
   transfer,
 }: FilesPaneProps) {
   const { t } = useTranslation();
+  const tableRef = useRef<HTMLDivElement>(null);
+  const [fileColumns, setFileColumns] = useState<FileColumnPreferences>(
+    () => readWorkspacePreferences().fileColumns,
+  );
+  const fileColumnsRef = useRef(fileColumns);
+  const removeColumnDragListenersRef = useRef<() => void>(() => undefined);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
   const transferRunning = transfer?.state === "running";
+
+  useLayoutEffect(() => {
+    fileColumnsRef.current = fileColumns;
+    for (const [column, value] of Object.entries(fileColumns)) {
+      applyFileColumnWidth(
+        tableRef.current,
+        column as keyof FileColumnPreferences,
+        value,
+      );
+    }
+  }, [fileColumns]);
+
+  useEffect(
+    () => () => {
+      removeColumnDragListenersRef.current();
+    },
+    [],
+  );
 
   useEffect(() => {
     setSelectedPath((current) => {
@@ -76,6 +132,88 @@ export function FilesPane({
   async function copyPath(path: string) {
     await navigator.clipboard.writeText(path).catch(() => undefined);
   }
+
+  const commitFileColumn = useCallback(
+    (column: ResizableFileColumn, value: number) => {
+      const next = {
+        ...fileColumnsRef.current,
+        [column]: clampFileColumn(column, value),
+      };
+      fileColumnsRef.current = next;
+      setFileColumns(next);
+      updateWorkspacePreferences({ fileColumns: next });
+    },
+    [],
+  );
+
+  const beginFileColumnResize = useCallback(
+    (column: ResizableFileColumn, event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      removeColumnDragListenersRef.current();
+      const handle = event.currentTarget;
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startWidth = fileColumnsRef.current[column];
+      handle.setPointerCapture(pointerId);
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        window.removeEventListener("blur", handlePointerCancel);
+        if (handle.hasPointerCapture(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
+        removeColumnDragListenersRef.current = () => undefined;
+      };
+
+      const calculateWidth = (clientX: number) =>
+        clampFileColumn(column, startWidth + clientX - startX);
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) {
+          return;
+        }
+        pointerEvent.preventDefault();
+        applyFileColumnWidth(tableRef.current, column, calculateWidth(pointerEvent.clientX));
+      };
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) {
+          return;
+        }
+        const nextWidth = calculateWidth(pointerEvent.clientX);
+        cleanup();
+        commitFileColumn(column, nextWidth);
+      };
+
+      const handlePointerCancel = () => {
+        applyFileColumnWidth(tableRef.current, column, fileColumnsRef.current[column]);
+        cleanup();
+      };
+
+      removeColumnDragListenersRef.current = cleanup;
+      window.addEventListener("pointermove", handlePointerMove, { passive: false });
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
+      window.addEventListener("blur", handlePointerCancel);
+    },
+    [commitFileColumn],
+  );
+
+  const adjustFileColumn = useCallback(
+    (column: ResizableFileColumn, direction: -1 | 1) => {
+      commitFileColumn(
+        column,
+        fileColumnsRef.current[column] + direction * FILE_COLUMN_KEYBOARD_STEP,
+      );
+    },
+    [commitFileColumn],
+  );
 
   return (
     <section className="files-panel" onContextMenu={(event) => event.preventDefault()}>
@@ -138,12 +276,30 @@ export function FilesPane({
         </button>
       </div>
 
-      <div className="file-table">
+      <div className="file-table" ref={tableRef}>
         <div className="file-row file-head">
-          <span>{t("sessions.name")}</span>
-          <span>{t("sessions.size")}</span>
-          <span>{t("sessions.modified")}</span>
-          <span>{t("sessions.permissions")}</span>
+          {(["name", "size", "modified"] as const).map((column) => {
+            const limits = FILE_COLUMN_LIMITS[column];
+            const label = t(`sessions.${column}`);
+            return (
+              <span className="file-head-cell" key={column}>
+                <span className="file-head-label">{label}</span>
+                <ResizeHandle
+                  ariaLabel={t("sessions.resizeFileColumn", { column: label })}
+                  className="file-column-resizer"
+                  onKeyboardResize={(direction) => adjustFileColumn(column, direction)}
+                  onPointerDown={(event) => beginFileColumnResize(column, event)}
+                  orientation="vertical"
+                  valueMax={limits.max}
+                  valueMin={limits.min}
+                  valueNow={fileColumns[column]}
+                />
+              </span>
+            );
+          })}
+          <span className="file-head-cell">
+            <span className="file-head-label">{t("sessions.permissions")}</span>
+          </span>
         </div>
         {!sftpAvailable ? (
           <p className="empty-message">{t("sessions.sftpUnavailable")}</p>
@@ -153,6 +309,9 @@ export function FilesPane({
         ) : null}
         {files.map((file) => {
           const Icon = fileIcon(file);
+          const size = file.size == null ? "--" : formatSize(file.size);
+          const modified = formatModifiedTime(file.modifiedAt);
+          const permissions = file.permissions.split(" ")[0];
           return (
             <button
               className={
@@ -170,13 +329,13 @@ export function FilesPane({
               }}
               type="button"
             >
-              <span>
+              <span title={file.name}>
                 <Icon size={16} />
                 {file.name}
               </span>
-              <span>{file.size == null ? "--" : formatSize(file.size)}</span>
-              <span>{formatModifiedTime(file.modifiedAt)}</span>
-              <span>{file.permissions.split(" ")[0]}</span>
+              <span title={size}>{size}</span>
+              <span title={modified}>{modified}</span>
+              <span title={permissions}>{permissions}</span>
             </button>
           );
         })}

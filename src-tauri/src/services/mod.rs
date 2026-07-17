@@ -26,7 +26,7 @@ impl AppState {
     pub fn new(app_data_dir: PathBuf) -> Self {
         Self {
             session_service: Mutex::new(SessionService::load(&app_data_dir)),
-            credential_service: CredentialService,
+            credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new(&app_data_dir),
             device_service: DeviceService,
             settings_service: StdMutex::new(SettingsService::default()),

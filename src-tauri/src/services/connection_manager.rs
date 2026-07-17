@@ -1765,7 +1765,7 @@ mod tests {
         let test_dir = std::env::temp_dir().join(format!("fstty-ssh-{test_id}"));
         std::fs::create_dir_all(&test_dir).expect("无法创建测试目录");
         let manager = ConnectionManager::new(&test_dir);
-        let credentials = CredentialService;
+        let credentials = CredentialService::new();
         let session = StoredSession {
             id: Uuid::new_v4().to_string(),
             name: "真实 SSH 测试".to_owned(),

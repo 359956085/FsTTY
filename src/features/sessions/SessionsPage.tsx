@@ -142,6 +142,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         onCloseSession={(sessionId) => void closeSession(sessionId)}
         onConnected={connections.handleConnected}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
+        onDirectoryChange={connections.handleTerminalDirectory}
         onDownload={(sessionId, file) =>
           void connections.downloadFile(sessionId, file)
         }

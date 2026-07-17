@@ -43,10 +43,13 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
         <p>{t("settings.language")}</p>
       </header>
 
-      <section aria-labelledby="language-setting-title" className="settings-panel">
-        <div className="settings-row">
+      <section
+        aria-labelledby="language-setting-title"
+        className="settings-panel settings-language-panel"
+      >
+        <div className="settings-row settings-language-row">
           <h2 className="settings-row-title" id="language-setting-title">
-            <Globe2 aria-hidden="true" size={18} />
+            <Globe2 aria-hidden="true" size={24} />
             <span>{t("settings.language")}</span>
           </h2>
           <div
@@ -74,20 +77,21 @@ export function SettingsPage({ settings, onChange }: SettingsPageProps) {
         </div>
         {error ? <div className="form-error">{error}</div> : null}
       </section>
-      <section className="settings-panel">
-        <div className="settings-row">
+      <section className="settings-panel settings-update-panel">
+        <div className="settings-row settings-auto-update-row">
           <h2 className="settings-row-title">
-            <RefreshCw aria-hidden="true" size={18} />
+            <RefreshCw aria-hidden="true" size={24} />
             <span>{t("settings.autoUpdate")}</span>
           </h2>
           <input
             aria-label={t("settings.autoUpdate")}
             checked={settings.autoUpdate}
+            className="settings-auto-update-toggle"
             onChange={(event) => void handleUpdateSettings(event.target.checked)}
             type="checkbox"
           />
         </div>
-        <div className="settings-row">
+        <div className="settings-row settings-proxy-row">
           <label className="settings-row-title" htmlFor="update-proxy">
             <span>{t("settings.updateProxy")}</span>
           </label>
