@@ -182,6 +182,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
 
       {sessionsState.dialogState ? (
         <SessionFormDialog
+          groupOptions={sessionsState.groups.map((group) => group.name)}
           mode={sessionsState.dialogState.mode}
           saveError={sessionsState.saveError}
           session={sessionsState.dialogState.session}

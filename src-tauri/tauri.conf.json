@@ -17,7 +17,8 @@
         "height": 920,
         "minWidth": 1180,
         "minHeight": 720,
-        "decorations": false
+        "decorations": false,
+        "visible": false
       }
     ],
     "security": {
@@ -33,6 +34,20 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/359956085/FsTTY/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

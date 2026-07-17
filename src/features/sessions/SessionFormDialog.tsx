@@ -1,5 +1,5 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { KeyRound, X } from "lucide-react";
+import { ChevronDown, KeyRound, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
@@ -14,6 +14,7 @@ import { TextInput } from "../../shared/ui/TextInput";
 
 interface SessionFormDialogProps {
   mode: "create" | "edit";
+  groupOptions: string[];
   session?: Session;
   saveError?: string | null;
   onClose: () => void;
@@ -21,6 +22,7 @@ interface SessionFormDialogProps {
 }
 
 export function SessionFormDialog({
+  groupOptions,
   mode,
   onClose,
   onSave,
@@ -33,7 +35,7 @@ export function SessionFormDialog({
   const [port, setPort] = useState(String(session?.port ?? 22));
   const [username, setUsername] = useState(session?.username ?? "");
   const [group, setGroup] = useState(session?.group ?? "未分组");
-  const [tags, setTags] = useState(session?.tags.join(", ") ?? "");
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
   const [credential, setCredential] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hostKeyMessage, setHostKeyMessage] = useState<string | null>(null);
@@ -42,6 +44,13 @@ export function SessionFormDialog({
   const title = useMemo(
     () => (mode === "create" ? t("sessions.createTitle") : t("sessions.editTitle")),
     [mode, t],
+  );
+  const availableGroups = useMemo(
+    () =>
+      Array.from(
+        new Set(["未分组", ...groupOptions.map((option) => option.trim()).filter(Boolean)]),
+      ),
+    [groupOptions],
   );
 
   async function forgetHostKey() {
@@ -76,10 +85,6 @@ export function SessionFormDialog({
     const normalizedPort = Number(port);
     const normalizedUsername = username.trim();
     const normalizedGroup = group.trim();
-    const tagList = tags
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean);
 
     if (!normalizedHost) {
       setError(t("sessions.validationRequired"));
@@ -101,7 +106,8 @@ export function SessionFormDialog({
       port: normalizedPort,
       username: normalizedUsername,
       group: normalizedGroup,
-      tags: tagList,
+      // 表单不再编辑标签；编辑旧会话时保留已有值，避免保存其他字段时意外丢失数据。
+      tags: session?.tags ?? [],
       auth: { kind: "password" },
       credential: credentialAction,
     };
@@ -119,7 +125,7 @@ export function SessionFormDialog({
   }
 
   return (
-    <div className="dialog-backdrop" role="presentation">
+    <div className="dialog-backdrop session-dialog-backdrop" role="presentation">
       <section aria-modal="true" className="dialog session-dialog" role="dialog">
         <header className="dialog-header">
           <h2>{title}</h2>
@@ -140,6 +146,70 @@ export function SessionFormDialog({
             <TextInput onChange={(event) => setName(event.target.value)} value={name} />
           </label>
           <label>
+            <span>{t("sessions.group")}</span>
+            <div
+              className="group-combobox"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setGroupMenuOpen(false);
+                }
+              }}
+            >
+              <TextInput
+                aria-autocomplete="list"
+                aria-controls="session-group-options"
+                aria-expanded={groupMenuOpen}
+                className="group-combobox-input"
+                onChange={(event) => {
+                  setGroup(event.target.value);
+                  setGroupMenuOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setGroupMenuOpen(true);
+                  } else if (event.key === "Escape") {
+                    setGroupMenuOpen(false);
+                  }
+                }}
+                role="combobox"
+                value={group}
+              />
+              <button
+                aria-label={t("sessions.selectGroup")}
+                className="group-combobox-toggle"
+                onClick={() => setGroupMenuOpen((open) => !open)}
+                onMouseDown={(event) => event.preventDefault()}
+                type="button"
+              >
+                <ChevronDown size={16} />
+              </button>
+              {groupMenuOpen ? (
+                <div className="group-combobox-menu" id="session-group-options" role="listbox">
+                  {availableGroups.map((option) => (
+                    <button
+                      aria-selected={option === group}
+                      className={
+                        option === group
+                          ? "group-combobox-option selected"
+                          : "group-combobox-option"
+                      }
+                      key={option}
+                      onClick={() => {
+                        setGroup(option);
+                        setGroupMenuOpen(false);
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </label>
+          <label>
             <span>{t("sessions.host")} *</span>
             <TextInput onChange={(event) => setHost(event.target.value)} value={host} />
           </label>
@@ -153,14 +223,6 @@ export function SessionFormDialog({
               onChange={(event) => setUsername(event.target.value)}
               value={username}
             />
-          </label>
-          <label>
-            <span>{t("sessions.group")}</span>
-            <TextInput onChange={(event) => setGroup(event.target.value)} value={group} />
-          </label>
-          <label>
-            <span>{t("sessions.tags")}</span>
-            <TextInput onChange={(event) => setTags(event.target.value)} value={tags} />
           </label>
           <label>
             <span>{t("sessions.password")}</span>
@@ -191,9 +253,6 @@ export function SessionFormDialog({
         ) : null}
 
         <footer className="dialog-actions">
-          <Button disabled={submitting} onClick={onClose} variant="ghost">
-            {t("sessions.cancel")}
-          </Button>
           <Button disabled={submitting} onClick={() => void handleSubmit()}>
             {t("sessions.save")}
           </Button>

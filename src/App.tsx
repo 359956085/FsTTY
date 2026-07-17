@@ -52,6 +52,8 @@ export function App() {
       const currentWindow = getCurrentWindow();
       if (action === "minimize") {
         await currentWindow.minimize();
+        // 保持窗口为可见状态，避免窗口状态插件把托盘最小化误记为启动隐藏。
+        await currentWindow.setSkipTaskbar(true);
       } else if (action === "maximize") {
         await currentWindow.toggleMaximize();
       } else {

@@ -9,17 +9,83 @@ use commands::{
     update_app_settings, update_session, upload_file, write_terminal,
 };
 use services::AppState;
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager,
+};
+use tauri_plugin_window_state::StateFlags;
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_skip_taskbar(false);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 本地开发允许空公钥启动；发布构建使用 Actions Variables 注入公钥。
+    let updater_builder = match option_env!("TAURI_SIGNING_PUBLIC_KEY") {
+        Some(public_key) if !public_key.trim().is_empty() => {
+            tauri_plugin_updater::Builder::new().pubkey(public_key)
+        }
+        _ => tauri_plugin_updater::Builder::new(),
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(updater_builder.build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    StateFlags::POSITION
+                        | StateFlags::SIZE
+                        | StateFlags::MAXIMIZED
+                        | StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             app.manage(AppState::new(app_data_dir));
+
+            let show_item = MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出 FsTTY", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
+                .tooltip("FsTTY")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show-main" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            tray_builder.build(app)?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                window.app_handle().exit(0);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_sessions,
@@ -39,8 +105,8 @@ pub fn run() {
             cancel_transfer,
             get_device_status,
             get_app_settings,
-            set_language
-            , update_app_settings
+            set_language,
+            update_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("启动 FsTTY 失败");

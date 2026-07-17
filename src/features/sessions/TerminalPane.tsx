@@ -144,11 +144,30 @@ export function TerminalPane({
     if (!terminal || !fitAddon || !container || container.clientWidth === 0) {
       return;
     }
+    const buffer = terminal.buffer.active;
+    const wasAtBottom = buffer.viewportY === buffer.baseY;
+    const previousCols = terminal.cols;
+    const previousRows = terminal.rows;
+    // 窗口尺寸变化会重排换行内容。记录视口顶部所在缓冲行，避免用户查看历史时发生跳动。
+    const viewportMarker =
+      buffer.type === "normal" && !wasAtBottom
+        ? terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY)
+        : undefined;
     try {
       fitAddon.fit();
     } catch {
+      viewportMarker?.dispose();
       return;
     }
+    const dimensionsChanged = previousCols !== terminal.cols || previousRows !== terminal.rows;
+    if (dimensionsChanged) {
+      if (wasAtBottom) {
+        terminal.scrollToBottom();
+      } else if (viewportMarker && viewportMarker.line >= 0) {
+        terminal.scrollToLine(viewportMarker.line);
+      }
+    }
+    viewportMarker?.dispose();
     const connection = connectionRef.current;
     if (!connection || terminal.cols < 1 || terminal.rows < 1) {
       return;
@@ -426,11 +445,13 @@ export function TerminalPane({
               : t("sessions.manualConnectHint")}
           </span>
           <Button
+            className="terminal-connect-button"
             disabled={
               connectionState === "connecting" || connectionState === "disconnecting"
             }
             icon={<Link size={16} />}
             onClick={() => void connectTerminal()}
+            variant="ghost"
           >
             {connectionState === "connecting"
               ? t("sessions.connecting")
