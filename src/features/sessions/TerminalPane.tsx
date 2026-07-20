@@ -28,7 +28,9 @@ interface ShellIntegration {
 
 interface TerminalPaneProps {
   active: boolean;
+  autoConnect: boolean;
   visible: boolean;
+  runtimeId: string;
   session: Session;
   connectionState: ConnectionState;
   directoryRequest: TerminalDirectoryRequest | null;
@@ -43,11 +45,13 @@ interface TerminalPaneProps {
 
 export function TerminalPane({
   active,
+  autoConnect,
   connectionState,
   directoryRequest,
   onConnected,
   onDirectoryChange,
   onStateChange,
+  runtimeId,
   session,
   visible,
 }: TerminalPaneProps) {
@@ -87,7 +91,7 @@ export function TerminalPane({
 
   function reportState(state: ConnectionState, error: string | null = null) {
     if (mountedRef.current) {
-      onStateChange(session.id, state, error);
+      onStateChange(runtimeId, state, error);
     }
   }
 
@@ -154,7 +158,7 @@ export function TerminalPane({
     integration.stage = "active";
     shellAtPromptRef.current = true;
     lastReportedDirectoryRef.current = path;
-    onDirectoryChangeRef.current(session.id, path);
+    onDirectoryChangeRef.current(runtimeId, path);
     return true;
   }
 
@@ -370,6 +374,9 @@ export function TerminalPane({
       observer = new ResizeObserver(fitAndResize);
       observer.observe(container);
       fitAndResize();
+      if (autoConnect && !disposed) {
+        void connectTerminal();
+      }
     }
 
     void mountTerminal().catch(() => {
@@ -514,7 +521,7 @@ export function TerminalPane({
       }
       connectionRef.current = result.connection;
       flushInput();
-      onConnected(session.id, result.connection);
+      onConnected(runtimeId, result.connection);
       startShellIntegration();
       fitAndResize();
     } catch (error) {

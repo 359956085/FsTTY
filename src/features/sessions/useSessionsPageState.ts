@@ -17,7 +17,17 @@ export type SessionDialogState =
   | { mode: "edit"; session: Session }
   | null;
 
-export type SessionFilter = "all" | "online" | "offline" | "favorites";
+export type SessionFilter = "all" | "favorites";
+
+interface SessionTabState {
+  id: string;
+  sessionId: string;
+  autoConnect: boolean;
+}
+
+export interface OpenSessionTab extends SessionTabState {
+  session: Session;
+}
 
 interface UseSessionsPageStateOptions {
   confirmDeleteText: string;
@@ -29,8 +39,9 @@ export function useSessionsPageState({
   errorFallback,
 }: UseSessionsPageStateOptions) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [openTabs, setOpenTabs] = useState<SessionTabState[]>([]);
   const [favoriteSessionIds, setFavoriteSessionIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SessionFilter>("all");
@@ -41,46 +52,50 @@ export function useSessionsPageState({
   const [loading, setLoading] = useState(false);
   const initialized = useRef(false);
   const requestId = useRef(0);
-  const activeSessionIdRef = useRef<string | null>(null);
-  const openSessionIdsRef = useRef<string[]>([]);
+  const activeTabIdRef = useRef<string | null>(null);
+  const openTabsRef = useRef<SessionTabState[]>([]);
   const favoriteSessionIdsRef = useRef<string[]>([]);
 
   const sessions = useMemo(
     () => groups.flatMap((group) => group.sessions),
     [groups],
   );
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId) ?? null,
-    [activeSessionId, sessions],
-  );
-  const openSessions = useMemo(() => {
+  const openSessionTabs = useMemo(() => {
     const byId = new Map(sessions.map((session) => [session.id, session]));
-    return openSessionIds.flatMap((sessionId) => {
-      const session = byId.get(sessionId);
-      return session ? [session] : [];
+    return openTabs.flatMap((tab) => {
+      const session = byId.get(tab.sessionId);
+      return session ? [{ ...tab, session }] : [];
     });
-  }, [openSessionIds, sessions]);
+  }, [openTabs, sessions]);
 
   const applyPreferences = useCallback(
     (
-      nextOpenIds: string[],
-      requestedActiveId: string | null,
+      nextTabs: SessionTabState[],
+      requestedActiveTabId: string | null,
       nextFavoriteIds: string[],
     ) => {
-      const uniqueOpenIds = [...new Set(nextOpenIds)];
+      const seen = new Set<string>();
+      const uniqueTabs = nextTabs.filter((tab) => {
+        if (seen.has(tab.id)) return false;
+        seen.add(tab.id);
+        return true;
+      });
       const uniqueFavoriteIds = [...new Set(nextFavoriteIds)];
-      const nextActiveId =
-        requestedActiveId && uniqueOpenIds.includes(requestedActiveId)
-          ? requestedActiveId
-          : uniqueOpenIds[0] ?? null;
-      openSessionIdsRef.current = uniqueOpenIds;
-      activeSessionIdRef.current = nextActiveId;
+      const nextActiveTabId =
+        requestedActiveTabId && uniqueTabs.some((tab) => tab.id === requestedActiveTabId)
+          ? requestedActiveTabId
+          : uniqueTabs[0]?.id ?? null;
+      openTabsRef.current = uniqueTabs;
+      activeTabIdRef.current = nextActiveTabId;
       favoriteSessionIdsRef.current = uniqueFavoriteIds;
-      setOpenSessionIds(uniqueOpenIds);
-      setActiveSessionId(nextActiveId);
+      setOpenTabs(uniqueTabs);
+      setActiveTabId(nextActiveTabId);
       setFavoriteSessionIds(uniqueFavoriteIds);
       updateWorkspacePreferences({
-        tabs: { openSessionIds: uniqueOpenIds, activeSessionId: nextActiveId },
+        tabs: {
+          openTabs: uniqueTabs.map(({ id, sessionId }) => ({ id, sessionId })),
+          activeTabId: nextActiveTabId,
+        },
         favoriteSessionIds: uniqueFavoriteIds,
       });
     },
@@ -94,45 +109,36 @@ export function useSessionsPageState({
     setError(null);
     try {
       const nextGroups = await api.listSessions();
-      if (requestId.current !== nextRequestId) {
-        return;
-      }
+      if (requestId.current !== nextRequestId) return;
       const nextSessions = nextGroups.flatMap((group) => group.sessions);
       const validIds = new Set(nextSessions.map((session) => session.id));
-      const preferences = initialized.current
-        ? {
-            tabs: {
-              openSessionIds: openSessionIdsRef.current,
-              activeSessionId: activeSessionIdRef.current,
-            },
-            favoriteSessionIds: favoriteSessionIdsRef.current,
-          }
-        : readWorkspacePreferences();
-      const validOpenIds = preferences.tabs.openSessionIds.filter((id) =>
-        validIds.has(id),
-      );
-      const validFavoriteIds = preferences.favoriteSessionIds.filter((id) =>
-        validIds.has(id),
-      );
-      const validActiveId =
-        preferences.tabs.activeSessionId &&
-        validOpenIds.includes(preferences.tabs.activeSessionId)
-          ? preferences.tabs.activeSessionId
-          : validOpenIds[0] ?? null;
+      const stored = initialized.current ? null : readWorkspacePreferences();
+      const candidateTabs = initialized.current
+        ? openTabsRef.current
+        : (stored?.tabs.openTabs ?? []).map((tab) => ({ ...tab, autoConnect: false }));
+      const validTabs = candidateTabs.filter((tab) => validIds.has(tab.sessionId));
+      const candidateActiveTabId = initialized.current
+        ? activeTabIdRef.current
+        : stored?.tabs.activeTabId ?? null;
+      const candidateFavoriteIds = initialized.current
+        ? favoriteSessionIdsRef.current
+        : stored?.favoriteSessionIds ?? [];
+      const validFavoriteIds = candidateFavoriteIds.filter((id) => validIds.has(id));
       initialized.current = true;
       setGroups(nextGroups);
+      setSelectedSessionId((current) => {
+        return current && validIds.has(current) ? current : null;
+      });
       setCollapsedGroupNames((current) =>
         current.filter((name) => nextGroups.some((group) => group.name === name)),
       );
-      applyPreferences(validOpenIds, validActiveId, validFavoriteIds);
+      applyPreferences(validTabs, candidateActiveTabId, validFavoriteIds);
     } catch (nextError) {
       if (requestId.current === nextRequestId) {
         setError(resolveApiError(nextError, errorFallback));
       }
     } finally {
-      if (requestId.current === nextRequestId) {
-        setLoading(false);
-      }
+      if (requestId.current === nextRequestId) setLoading(false);
     }
   }, [applyPreferences, errorFallback]);
 
@@ -143,46 +149,55 @@ export function useSessionsPageState({
     };
   }, [refreshSessions]);
 
-  const selectSession = useCallback(
-    (sessionId: string) => {
-      if (!sessions.some((session) => session.id === sessionId)) {
-        return;
-      }
-      const nextOpenIds = openSessionIdsRef.current.includes(sessionId)
-        ? openSessionIdsRef.current
-        : [...openSessionIdsRef.current, sessionId];
-      applyPreferences(nextOpenIds, sessionId, favoriteSessionIdsRef.current);
+  const selectSession = useCallback((sessionId: string) => {
+    setSelectedSessionId(sessionId);
+  }, []);
+
+  const openSessionTab = useCallback(
+    (sessionId: string, autoConnect = true) => {
+      const session = sessions.find((item) => item.id === sessionId);
+      if (!session) return;
+      const tab: SessionTabState = {
+        id: crypto.randomUUID(),
+        sessionId,
+        autoConnect:
+          autoConnect && Boolean(session.username.trim()) && session.credentialState === "stored",
+      };
+      applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
     },
     [applyPreferences, sessions],
   );
 
+  const selectTab = useCallback(
+    (tabId: string) => {
+      applyPreferences(openTabsRef.current, tabId, favoriteSessionIdsRef.current);
+    },
+    [applyPreferences],
+  );
+
   const closeSessionTab = useCallback(
-    (sessionId: string) => {
-      const current = openSessionIdsRef.current;
-      const index = current.indexOf(sessionId);
-      if (index < 0) {
-        return;
-      }
-      const nextOpenIds = current.filter((id) => id !== sessionId);
-      const nextActiveId =
-        activeSessionIdRef.current === sessionId
-          ? nextOpenIds[index] ?? nextOpenIds[index - 1] ?? null
-          : activeSessionIdRef.current;
-      applyPreferences(nextOpenIds, nextActiveId, favoriteSessionIdsRef.current);
+    (tabId: string) => {
+      const current = openTabsRef.current;
+      const index = current.findIndex((tab) => tab.id === tabId);
+      if (index < 0) return;
+      const nextTabs = current.filter((tab) => tab.id !== tabId);
+      const nextActiveTabId =
+        activeTabIdRef.current === tabId
+          ? nextTabs[index]?.id ?? nextTabs[index - 1]?.id ?? null
+          : activeTabIdRef.current;
+      applyPreferences(nextTabs, nextActiveTabId, favoriteSessionIdsRef.current);
     },
     [applyPreferences],
   );
 
   const toggleFavorite = useCallback(
     (sessionId: string) => {
-      if (!sessions.some((session) => session.id === sessionId)) {
-        return;
-      }
+      if (!sessions.some((session) => session.id === sessionId)) return;
       const current = favoriteSessionIdsRef.current;
       const next = current.includes(sessionId)
         ? current.filter((id) => id !== sessionId)
         : [...current, sessionId];
-      applyPreferences(openSessionIdsRef.current, activeSessionIdRef.current, next);
+      applyPreferences(openTabsRef.current, activeTabIdRef.current, next);
     },
     [applyPreferences, sessions],
   );
@@ -195,9 +210,7 @@ export function useSessionsPageState({
     );
   }, []);
 
-  async function saveSession(
-    payload: CreateSessionPayload | UpdateSessionPayload,
-  ) {
+  async function saveSession(payload: CreateSessionPayload | UpdateSessionPayload) {
     setError(null);
     setSaveError(null);
     try {
@@ -207,16 +220,18 @@ export function useSessionsPageState({
       } else {
         const created = await api.createSession(payload);
         setGroups((current) => upsertSessionInGroups(current, created));
-        applyPreferences(
-          [...openSessionIdsRef.current, created.id],
-          created.id,
-          favoriteSessionIdsRef.current,
-        );
+        setSelectedSessionId(created.id);
+        const tab: SessionTabState = {
+          id: crypto.randomUUID(),
+          sessionId: created.id,
+          autoConnect:
+            Boolean(created.username.trim()) && created.credentialState === "stored",
+        };
+        applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
       }
       setDialogState(null);
       await refreshSessions();
     } catch (nextError) {
-      // 保存失败时保留弹窗和输入，用户可修正后重试。
       const message = resolveApiError(nextError, errorFallback);
       setError(message);
       setSaveError(message);
@@ -228,19 +243,22 @@ export function useSessionsPageState({
     setDialogState(next);
   }, []);
 
-  async function deleteActiveSession() {
-    const sessionId = activeSessionIdRef.current;
-    if (!sessionId || !window.confirm(confirmDeleteText)) {
-      return null;
-    }
+  async function deleteSession(sessionId: string) {
+    if (!window.confirm(confirmDeleteText)) return null;
     setError(null);
     try {
       await api.deleteSession(sessionId);
-      const currentOpenIds = openSessionIdsRef.current;
-      const deletedIndex = currentOpenIds.indexOf(sessionId);
-      const nextOpenIds = currentOpenIds.filter((id) => id !== sessionId);
-      const nextActiveId =
-        nextOpenIds[deletedIndex] ?? nextOpenIds[deletedIndex - 1] ?? null;
+      const currentTabs = openTabsRef.current;
+      const removedIndexes = currentTabs
+        .map((tab, index) => (tab.sessionId === sessionId ? index : -1))
+        .filter((index) => index >= 0);
+      const nextTabs = currentTabs.filter((tab) => tab.sessionId !== sessionId);
+      const firstRemovedIndex = removedIndexes[0] ?? 0;
+      const nextActiveTabId = currentTabs.some(
+        (tab) => tab.id === activeTabIdRef.current && tab.sessionId === sessionId,
+      )
+        ? nextTabs[firstRemovedIndex]?.id ?? nextTabs[firstRemovedIndex - 1]?.id ?? null
+        : activeTabIdRef.current;
       setGroups((current) =>
         current
           .map((group) => ({
@@ -249,9 +267,10 @@ export function useSessionsPageState({
           }))
           .filter((group) => group.sessions.length > 0),
       );
+      setSelectedSessionId((current) => (current === sessionId ? null : current));
       applyPreferences(
-        nextOpenIds,
-        nextActiveId,
+        nextTabs,
+        nextActiveTabId,
         favoriteSessionIdsRef.current.filter((id) => id !== sessionId),
       );
       return sessionId;
@@ -262,23 +281,25 @@ export function useSessionsPageState({
   }
 
   return {
-    activeSession,
-    activeSessionId,
+    activeTabId,
     closeSessionTab,
     collapsedGroupNames,
-    deleteActiveSession,
+    deleteSession,
     dialogState,
     error,
     favoriteSessionIds,
     filter,
     groups,
     loading,
-    openSessions,
+    openSessionTab,
+    openSessionTabs,
     query,
     refreshSessions,
     saveError,
     saveSession,
     selectSession,
+    selectTab,
+    selectedSessionId,
     sessions,
     setDialogState: changeDialogState,
     setFilter,
@@ -295,9 +316,7 @@ function upsertSessionInGroups(groups: SessionGroup[], session: Session) {
       sessions: group.sessions.filter((current) => current.id !== session.id),
     }))
     .filter((group) => group.sessions.length > 0);
-  const groupIndex = withoutSession.findIndex(
-    (group) => group.name === session.group,
-  );
+  const groupIndex = withoutSession.findIndex((group) => group.name === session.group);
   if (groupIndex < 0) {
     return [...withoutSession, { name: session.group, sessions: [session] }];
   }

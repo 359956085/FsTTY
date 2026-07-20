@@ -15,7 +15,7 @@ use russh::keys::{
 use russh::{ChannelMsg, Disconnect, MethodKind};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FilePermissions, FileType as SftpFileType};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -51,8 +51,8 @@ struct ConnectionManagerInner {
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
     connections: RwLock<HashMap<String, Arc<ConnectionEntry>>>,
-    session_connections: RwLock<HashMap<String, String>>,
-    connecting_sessions: Mutex<HashMap<String, Arc<ConnectCancellation>>>,
+    session_connections: RwLock<HashMap<String, HashSet<String>>>,
+    connecting_sessions: Mutex<HashMap<String, Vec<Arc<ConnectCancellation>>>>,
     challenges: Mutex<HashMap<String, PendingHostKey>>,
     transfers: Mutex<HashMap<String, ActiveTransfer>>,
 }
@@ -246,22 +246,13 @@ impl ConnectionManager {
         credentials: &CredentialService,
     ) -> Result<ConnectResult, AppError> {
         validate_terminal_size(columns, rows)?;
-        if self
-            .inner
-            .session_connections
-            .read()
-            .await
-            .contains_key(&session.id)
-        {
-            return Err(AppError::Conflict("该会话已经连接".to_owned()));
-        }
         let cancellation = {
             let mut connecting = self.inner.connecting_sessions.lock().await;
-            if connecting.contains_key(&session.id) {
-                return Err(AppError::Busy("该会话正在连接".to_owned()));
-            }
             let cancellation = Arc::new(ConnectCancellation::new());
-            connecting.insert(session.id.clone(), cancellation.clone());
+            connecting
+                .entry(session.id.clone())
+                .or_default()
+                .push(cancellation.clone());
             cancellation
         };
 
@@ -277,11 +268,11 @@ impl ConnectionManager {
             () = cancellation.cancelled() => Err(AppError::Connection("连接已取消".to_owned())),
         };
         let mut connecting = self.inner.connecting_sessions.lock().await;
-        if connecting
-            .get(&session.id)
-            .is_some_and(|current| Arc::ptr_eq(current, &cancellation))
-        {
-            connecting.remove(&session.id);
+        if let Some(attempts) = connecting.get_mut(&session.id) {
+            attempts.retain(|current| !Arc::ptr_eq(current, &cancellation));
+            if attempts.is_empty() {
+                connecting.remove(&session.id);
+            }
         }
         result
     }
@@ -392,9 +383,11 @@ impl ConnectionManager {
         // 与删除/关键字段更新共用连接门闩，避免取消后旧连接晚到并重新写回。
         let connecting = self.inner.connecting_sessions.lock().await;
         if cancellation.cancelled.load(Ordering::Acquire)
-            || !connecting
-                .get(&session.id)
-                .is_some_and(|current| Arc::ptr_eq(current, cancellation))
+            || !connecting.get(&session.id).is_some_and(|attempts| {
+                attempts
+                    .iter()
+                    .any(|current| Arc::ptr_eq(current, cancellation))
+            })
         {
             return Err(AppError::Connection("连接已取消".to_owned()));
         }
@@ -407,7 +400,9 @@ impl ConnectionManager {
             .session_connections
             .write()
             .await
-            .insert(session.id.clone(), connection_id.clone());
+            .entry(session.id.clone())
+            .or_default()
+            .insert(connection_id.clone());
         drop(connecting);
 
         let (terminal_reader, terminal_writer) = terminal.split();
@@ -561,24 +556,26 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect_session(&self, session_id: &str) {
-        let cancellation = self
+        let cancellations = self
             .inner
             .connecting_sessions
             .lock()
             .await
             .get(session_id)
-            .cloned();
-        if let Some(cancellation) = cancellation {
+            .cloned()
+            .unwrap_or_default();
+        for cancellation in cancellations {
             cancellation.cancel();
         }
-        let connection_id = self
+        let connection_ids = self
             .inner
             .session_connections
             .read()
             .await
             .get(session_id)
-            .cloned();
-        if let Some(connection_id) = connection_id {
+            .cloned()
+            .unwrap_or_default();
+        for connection_id in connection_ids {
             let _ = self.disconnect(&connection_id).await;
         }
     }
@@ -980,11 +977,11 @@ impl ConnectionManager {
         let entry = self.inner.connections.write().await.remove(connection_id);
         if let Some(entry) = &entry {
             let mut sessions = self.inner.session_connections.write().await;
-            if sessions
-                .get(&entry.session_id)
-                .is_some_and(|id| id == connection_id)
-            {
-                sessions.remove(&entry.session_id);
+            if let Some(connection_ids) = sessions.get_mut(&entry.session_id) {
+                connection_ids.remove(connection_id);
+                if connection_ids.is_empty() {
+                    sessions.remove(&entry.session_id);
+                }
             }
         }
         entry
@@ -1732,22 +1729,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disconnect_session_cancels_inflight_connect() {
+    async fn disconnect_session_cancels_all_inflight_connects() {
         let manager = ConnectionManager::new(&std::env::temp_dir());
         let session_id = Uuid::new_v4().to_string();
-        let cancellation = Arc::new(ConnectCancellation::new());
+        let first = Arc::new(ConnectCancellation::new());
+        let second = Arc::new(ConnectCancellation::new());
         manager
             .inner
             .connecting_sessions
             .lock()
             .await
-            .insert(session_id.clone(), cancellation.clone());
+            .insert(session_id.clone(), vec![first.clone(), second.clone()]);
 
         manager.disconnect_session(&session_id).await;
-        assert!(cancellation.cancelled.load(Ordering::Acquire));
-        time::timeout(Duration::from_millis(50), cancellation.cancelled())
-            .await
-            .expect("连接取消通知未生效");
+        for cancellation in [first, second] {
+            assert!(cancellation.cancelled.load(Ordering::Acquire));
+            time::timeout(Duration::from_millis(50), cancellation.cancelled())
+                .await
+                .expect("连接取消通知未生效");
+        }
     }
 
     #[tokio::test]

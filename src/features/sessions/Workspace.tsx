@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
   FileEntry,
-  Session,
   SshConnection,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
@@ -13,58 +12,59 @@ import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { FilesPane } from "./FilesPane";
 import { TerminalPane } from "./TerminalPane";
 import type { SessionRuntime } from "./useSessionConnections";
+import type { OpenSessionTab } from "./useSessionsPageState";
 
 interface WorkspaceProps {
-  activeSessionId: string | null;
+  activeTabId: string | null;
   activeRuntime: SessionRuntime;
   connectionStates: Readonly<Record<string, ConnectionState>>;
   error: string | null;
   loading: boolean;
-  openSessions: Session[];
+  openTabs: OpenSessionTab[];
   rightCollapsed: boolean;
   rightResizeHandle: ReactNode;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   verticalResizeHandle: ReactNode;
   visible: boolean;
-  onCancelTransfer: (sessionId: string) => void;
-  onDismissTransfer: (sessionId: string) => void;
-  onCloseSession: (sessionId: string) => void;
-  onConnected: (sessionId: string, connection: SshConnection) => void;
+  onCancelTransfer: (tabId: string) => void;
+  onDismissTransfer: (tabId: string) => void;
+  onCloseTab: (tabId: string) => void;
+  onConnected: (tabId: string, connection: SshConnection) => void;
   onCreateSession: () => void;
-  onDirectoryChange: (sessionId: string, path: string) => void;
-  onDownload: (sessionId: string, file: FileEntry) => void;
-  onOpenPath: (sessionId: string, path: string) => void;
-  onRefreshFiles: (sessionId: string) => void;
-  onSelectSession: (sessionId: string) => void;
+  onDirectoryChange: (tabId: string, path: string) => void;
+  onDownload: (tabId: string, file: FileEntry) => void;
+  onOpenPath: (tabId: string, path: string) => void;
+  onRefreshFiles: (tabId: string) => void;
+  onSelectTab: (tabId: string) => void;
   onTerminalState: (
-    sessionId: string,
+    tabId: string,
     state: ConnectionState,
     error?: string | null,
   ) => void;
   onToggleRight: () => void;
-  onUpload: (sessionId: string) => void;
+  onUpload: (tabId: string) => void;
 }
 
 export function Workspace({
   activeRuntime,
-  activeSessionId,
+  activeTabId,
   connectionStates,
   error,
   loading,
   onCancelTransfer,
   onDismissTransfer,
-  onCloseSession,
+  onCloseTab,
   onConnected,
   onCreateSession,
   onDirectoryChange,
   onDownload,
   onOpenPath,
   onRefreshFiles,
-  onSelectSession,
+  onSelectTab,
   onTerminalState,
   onToggleRight,
   onUpload,
-  openSessions,
+  openTabs,
   rightCollapsed,
   rightResizeHandle,
   runtimes,
@@ -73,38 +73,42 @@ export function Workspace({
 }: WorkspaceProps) {
   const { t } = useTranslation();
   const activeError = activeRuntime.error ?? error;
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number;
+    y: number;
+    tabId: string;
+  } | null>(null);
 
   return (
     <section
       className={rightCollapsed ? "workspace-grid right-collapsed" : "workspace-grid"}
     >
       <div className="session-tabs" onContextMenu={(event) => event.preventDefault()}>
-        {openSessions.map((session) => (
+        {openTabs.map((tab) => (
           <div
             className={
-              activeSessionId === session.id
+              activeTabId === tab.id
                 ? "session-tab session-tab-active"
                 : "session-tab"
             }
-            key={session.id}
+            key={tab.id}
             onContextMenu={(event) => {
               event.preventDefault();
-              setTabContextMenu({ x: event.clientX, y: event.clientY, sessionId: session.id });
+              setTabContextMenu({ x: event.clientX, y: event.clientY, tabId: tab.id });
             }}
           >
-            <button onClick={() => onSelectSession(session.id)} type="button">
+            <button onClick={() => onSelectTab(tab.id)} type="button">
               <span
                 className={`status-dot status-${
-                  connectionStates[session.id] === "connected" ? "online" : "offline"
+                  connectionStates[tab.id] === "connected" ? "online" : "offline"
                 }`}
               />
-              <span>{session.name}</span>
+              <span>{tab.session.name}</span>
             </button>
             <button
-              aria-label={`${t("sessions.closeTab")} ${session.name}`}
+              aria-label={`${t("sessions.closeTab")} ${tab.session.name}`}
               className="session-tab-close"
-              onClick={() => onCloseSession(session.id)}
+              onClick={() => onCloseTab(tab.id)}
               type="button"
             >
               <X size={14} />
@@ -124,9 +128,9 @@ export function Workspace({
       {tabContextMenu ? (
         <ContextMenu
           items={[
-            { id: "close", label: t("sessions.contextCloseCurrent"), icon: <X size={15} />, onSelect: () => onCloseSession(tabContextMenu.sessionId) },
-            { id: "closeOthers", label: t("sessions.contextCloseOthers"), onSelect: () => openSessions.filter((session) => session.id !== tabContextMenu.sessionId).forEach((session) => onCloseSession(session.id)) },
-            { id: "closeAll", label: t("sessions.contextCloseAll"), danger: true, onSelect: () => openSessions.forEach((session) => onCloseSession(session.id)) },
+            { id: "close", label: t("sessions.contextCloseCurrent"), icon: <X size={15} />, onSelect: () => onCloseTab(tabContextMenu.tabId) },
+            { id: "closeOthers", label: t("sessions.contextCloseOthers"), onSelect: () => openTabs.filter((tab) => tab.id !== tabContextMenu.tabId).forEach((tab) => onCloseTab(tab.id)) },
+            { id: "closeAll", label: t("sessions.contextCloseAll"), danger: true, onSelect: () => openTabs.forEach((tab) => onCloseTab(tab.id)) },
           ]}
           onClose={() => setTabContextMenu(null)}
           x={tabContextMenu.x}
@@ -142,31 +146,33 @@ export function Workspace({
           {loading ? (
             <div className="workspace-notice loading-banner">{t("sessions.loading")}</div>
           ) : null}
-          {openSessions.map((session) => {
-            const runtime = runtimes[session.id];
+          {openTabs.map((tab) => {
+            const runtime = runtimes[tab.id];
             return (
               <div
                 className={
-                  activeSessionId === session.id
+                  activeTabId === tab.id
                     ? "terminal-session terminal-session-active"
                     : "terminal-session"
                 }
-                key={session.id}
+                key={tab.id}
               >
                 <TerminalPane
-                  active={activeSessionId === session.id}
+                  active={activeTabId === tab.id}
+                  autoConnect={tab.autoConnect}
                   connectionState={runtime?.connectionState ?? "disconnected"}
                   directoryRequest={runtime?.terminalDirectoryRequest ?? null}
                   onConnected={onConnected}
                   onDirectoryChange={onDirectoryChange}
                   onStateChange={onTerminalState}
-                  session={session}
+                  runtimeId={tab.id}
+                  session={tab.session}
                   visible={visible}
                 />
               </div>
             );
           })}
-          {openSessions.length === 0 ? (
+          {openTabs.length === 0 ? (
             <div className="workspace-empty">{t("sessions.noSession")}</div>
           ) : null}
         </div>
@@ -187,22 +193,22 @@ export function Workspace({
             files={activeRuntime.files}
             loading={activeRuntime.filesLoading}
             onCancelTransfer={() =>
-              activeSessionId && onCancelTransfer(activeSessionId)
+              activeTabId && onCancelTransfer(activeTabId)
             }
             onDismissTransfer={() =>
-              activeSessionId && onDismissTransfer(activeSessionId)
+              activeTabId && onDismissTransfer(activeTabId)
             }
             onCollapse={onToggleRight}
             onDownload={(file) =>
-              activeSessionId && onDownload(activeSessionId, file)
+              activeTabId && onDownload(activeTabId, file)
             }
             onOpenPath={(path) =>
-              activeSessionId && onOpenPath(activeSessionId, path)
+              activeTabId && onOpenPath(activeTabId, path)
             }
             onRefresh={() =>
-              activeSessionId && onRefreshFiles(activeSessionId)
+              activeTabId && onRefreshFiles(activeTabId)
             }
-            onUpload={() => activeSessionId && onUpload(activeSessionId)}
+            onUpload={() => activeTabId && onUpload(activeTabId)}
             sftpAvailable={Boolean(activeRuntime.connection?.sftpAvailable)}
             transfer={activeRuntime.transfer}
           />

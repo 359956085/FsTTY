@@ -34,39 +34,42 @@ export function SessionsPage({ visible }: SessionsPageProps) {
     toggleLeftCollapsed,
     toggleRightCollapsed,
   } = usePaneLayout();
-  const validSessionIds = useMemo(
-    () => new Set(sessionsState.sessions.map((session) => session.id)),
-    [sessionsState.sessions],
+  const validRuntimeIds = useMemo(
+    () => new Set(sessionsState.openSessionTabs.map((tab) => tab.id)),
+    [sessionsState.openSessionTabs],
   );
 
   useEffect(() => {
-    connections.pruneRuntimes(validSessionIds);
-  }, [connections.pruneRuntimes, validSessionIds]);
+    connections.pruneRuntimes(validRuntimeIds);
+  }, [connections.pruneRuntimes, validRuntimeIds]);
 
   const connectionStates = useMemo(
     () =>
       Object.fromEntries(
-        sessionsState.sessions.map((session) => [
-          session.id,
-          connections.runtimes[session.id]?.connectionState ?? "disconnected",
+        sessionsState.openSessionTabs.map((tab) => [
+          tab.id,
+          connections.runtimes[tab.id]?.connectionState ?? "disconnected",
         ]),
       ),
-    [connections.runtimes, sessionsState.sessions],
+    [connections.runtimes, sessionsState.openSessionTabs],
   );
-  const activeRuntime = sessionsState.activeSessionId
-    ? connections.runtimes[sessionsState.activeSessionId] ?? createRuntime()
+  const activeRuntime = sessionsState.activeTabId
+    ? connections.runtimes[sessionsState.activeTabId] ?? createRuntime()
     : createRuntime();
 
-  async function closeSession(sessionId: string) {
-    await connections.disconnect(sessionId);
-    connections.removeRuntime(sessionId);
-    sessionsState.closeSessionTab(sessionId);
+  async function closeTab(tabId: string) {
+    await connections.disconnect(tabId);
+    connections.removeRuntime(tabId);
+    sessionsState.closeSessionTab(tabId);
   }
 
-  async function deleteSession() {
-    const deletedId = await sessionsState.deleteActiveSession();
+  async function deleteSession(sessionId: string) {
+    const affectedTabs = sessionsState.openSessionTabs.filter(
+      (tab) => tab.sessionId === sessionId,
+    );
+    const deletedId = await sessionsState.deleteSession(sessionId);
     if (deletedId) {
-      connections.removeRuntime(deletedId);
+      affectedTabs.forEach((tab) => connections.removeRuntime(tab.id));
     }
   }
 
@@ -89,32 +92,26 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         </aside>
       ) : (
         <SessionList
-          activeSessionId={sessionsState.activeSessionId}
           collapsedGroupNames={sessionsState.collapsedGroupNames}
-          connectionStates={connectionStates}
           favoriteSessionIds={sessionsState.favoriteSessionIds}
           filter={sessionsState.filter}
           groups={sessionsState.groups}
           query={sessionsState.query}
           onCollapse={toggleLeftCollapsed}
           onCreate={() => sessionsState.setDialogState({ mode: "create" })}
-          onDelete={() => void deleteSession()}
-          onEdit={() =>
-            sessionsState.activeSession &&
-            sessionsState.setDialogState({
-              mode: "edit",
-              session: sessionsState.activeSession,
-            })
-          }
-          onFilterChange={sessionsState.setFilter}
-          onQueryChange={sessionsState.setQuery}
-          onRefresh={() => {
-            void sessionsState.refreshSessions();
-            if (sessionsState.activeSessionId) {
-              void connections.refreshSession(sessionsState.activeSessionId);
+          onDelete={(sessionId) => void deleteSession(sessionId)}
+          onEdit={(sessionId) => {
+            const session = sessionsState.sessions.find((item) => item.id === sessionId);
+            if (session) {
+              sessionsState.setDialogState({ mode: "edit", session });
             }
           }}
+          onFilterChange={sessionsState.setFilter}
+          onQueryChange={sessionsState.setQuery}
+          onOpen={sessionsState.openSessionTab}
+          onRefresh={() => void sessionsState.refreshSessions()}
           onSelect={sessionsState.selectSession}
+          selectedSessionId={sessionsState.selectedSessionId}
           onToggleFavorite={sessionsState.toggleFavorite}
           onToggleGroup={sessionsState.toggleGroup}
         />
@@ -133,13 +130,13 @@ export function SessionsPage({ visible }: SessionsPageProps) {
 
       <Workspace
         activeRuntime={activeRuntime}
-        activeSessionId={sessionsState.activeSessionId}
+        activeTabId={sessionsState.activeTabId}
         connectionStates={connectionStates}
         error={sessionsState.error}
         loading={sessionsState.loading}
         onCancelTransfer={(sessionId) => void connections.cancelTransfer(sessionId)}
         onDismissTransfer={connections.dismissTransfer}
-        onCloseSession={(sessionId) => void closeSession(sessionId)}
+        onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={connections.handleConnected}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
         onDirectoryChange={connections.handleTerminalDirectory}
@@ -148,11 +145,11 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         }
         onOpenPath={connections.openPath}
         onRefreshFiles={connections.refreshFiles}
-        onSelectSession={sessionsState.selectSession}
+        onSelectTab={sessionsState.selectTab}
         onTerminalState={connections.handleTerminalState}
         onToggleRight={toggleRightCollapsed}
         onUpload={(sessionId) => void connections.uploadFile(sessionId)}
-        openSessions={sessionsState.openSessions}
+        openTabs={sessionsState.openSessionTabs}
         rightCollapsed={layout.rightCollapsed}
         rightResizeHandle={
           <ResizeHandle

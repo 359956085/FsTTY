@@ -24,8 +24,8 @@ export interface WorkspaceLayoutPreferences {
 }
 
 export interface WorkspaceTabsPreferences {
-  openSessionIds: string[];
-  activeSessionId: string | null;
+  openTabs: Array<{ id: string; sessionId: string }>;
+  activeTabId: string | null;
 }
 
 export interface FileColumnPreferences {
@@ -62,8 +62,8 @@ function createDefaultPreferences(): WorkspacePreferences {
       rightCollapsed: false,
     },
     tabs: {
-      openSessionIds: [],
-      activeSessionId: null,
+      openTabs: [],
+      activeTabId: null,
     },
     favoriteSessionIds: [],
     fileColumns: {
@@ -111,6 +111,27 @@ function readSessionIds(value: unknown, fallback: string[]) {
   return [...new Set(ids)].slice(0, MAX_STORED_SESSION_IDS);
 }
 
+function readTabs(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return value
+    .flatMap((tab) => {
+      if (
+        !isRecord(tab) ||
+        !isSessionId(tab.id) ||
+        !isSessionId(tab.sessionId) ||
+        seen.has(tab.id)
+      ) {
+        return [];
+      }
+      seen.add(tab.id);
+      return [{ id: tab.id, sessionId: tab.sessionId }];
+    })
+    .slice(0, MAX_STORED_SESSION_IDS);
+}
+
 function isSessionId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -128,13 +149,17 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
   const tabs = isRecord(root.tabs) ? root.tabs : {};
   const fileColumns = isRecord(root.fileColumns) ? root.fileColumns : {};
 
-  const openSessionIds = readSessionIds(
-    tabs.openSessionIds,
-    defaults.tabs.openSessionIds,
-  );
-  const requestedActiveId = isSessionId(tabs.activeSessionId)
-    ? tabs.activeSessionId
-    : null;
+  const storedTabs = readTabs(tabs.openTabs);
+  // 兼容旧版以会话 ID 作为标签 ID 的存储，首次保存后自动转成新结构。
+  const legacySessionIds = readSessionIds(tabs.openSessionIds, []);
+  const openTabs = storedTabs.length > 0
+    ? storedTabs
+    : legacySessionIds.map((sessionId) => ({ id: sessionId, sessionId }));
+  const requestedActiveId = isSessionId(tabs.activeTabId)
+    ? tabs.activeTabId
+    : isSessionId(tabs.activeSessionId)
+      ? tabs.activeSessionId
+      : null;
 
   return {
     layout: {
@@ -166,12 +191,12 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
       ),
     },
     tabs: {
-      openSessionIds,
+      openTabs,
       // 活动标签必须属于已打开标签，避免删除会话后恢复出悬空状态。
-      activeSessionId:
-        requestedActiveId && openSessionIds.includes(requestedActiveId)
+      activeTabId:
+        requestedActiveId && openTabs.some((tab) => tab.id === requestedActiveId)
           ? requestedActiveId
-          : openSessionIds[0] ?? null,
+          : openTabs[0]?.id ?? null,
     },
     favoriteSessionIds: readSessionIds(
       root.favoriteSessionIds,

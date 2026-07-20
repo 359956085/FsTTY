@@ -483,9 +483,8 @@ select:focus-visible,
 
 .session-item-select {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
   min-width: 0;
   padding: 6px 0 6px 10px;
   background: transparent;
