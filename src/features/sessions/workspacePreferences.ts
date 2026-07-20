@@ -3,7 +3,7 @@ const WORKSPACE_LAYOUT_MIGRATION = "fstty.workspace.layout.v2";
 
 export const WORKSPACE_LAYOUT_LIMITS = {
   leftWidth: { defaultValue: 260, min: 220, max: 420 },
-  rightWidth: { defaultValue: 460, min: 360, max: 600 },
+  rightWidth: { defaultValue: 460, min: 360, max: 800 },
     fileRatio: { defaultValue: 75, min: 45, max: 75 },
   terminalMinWidth: 440,
 } as const;
