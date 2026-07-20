@@ -138,6 +138,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         onDismissTransfer={connections.dismissTransfer}
         onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={connections.handleConnected}
+        onCredentialSaved={sessionsState.refreshSessions}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
         onDirectoryChange={connections.handleTerminalDirectory}
         onDownload={(sessionId, file) =>

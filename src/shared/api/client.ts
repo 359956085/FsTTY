@@ -34,12 +34,14 @@ export const api = {
     columns: number,
     rows: number,
     onEvent: Channel<TerminalEvent>,
+    oneTimeCredential?: string,
   ) {
     return invoke<ConnectResult>("connect_session", {
       sessionId,
       columns,
       rows,
       onEvent,
+      oneTimeCredential: oneTimeCredential ?? null,
     });
   },
   trustHostKey(sessionId: string, challengeId: string) {

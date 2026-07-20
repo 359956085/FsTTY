@@ -1,5 +1,5 @@
 import { Channel } from "@tauri-apps/api/core";
-import { Copy, Link, Link2Off, ShieldAlert } from "lucide-react";
+import { Copy, KeyRound, Link, Link2Off, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
@@ -16,6 +16,7 @@ import type {
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import { TextInput } from "../../shared/ui/TextInput";
 import type { TerminalDirectoryRequest } from "./useSessionConnections";
 
 const SHELL_OSC_IDENTIFIER = 777;
@@ -35,6 +36,7 @@ interface TerminalPaneProps {
   connectionState: ConnectionState;
   directoryRequest: TerminalDirectoryRequest | null;
   onConnected: (sessionId: string, connection: SshConnection) => void;
+  onCredentialSaved: () => Promise<void> | void;
   onDirectoryChange: (sessionId: string, path: string) => void;
   onStateChange: (
     sessionId: string,
@@ -49,6 +51,7 @@ export function TerminalPane({
   connectionState,
   directoryRequest,
   onConnected,
+  onCredentialSaved,
   onDirectoryChange,
   onStateChange,
   runtimeId,
@@ -72,15 +75,23 @@ export function TerminalPane({
   const consumedDirectoryRequestRef = useRef(0);
   const lastReportedDirectoryRef = useRef<string | null>(null);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
+  const onCredentialSavedRef = useRef(onCredentialSaved);
   const shellAtPromptRef = useRef(false);
   const shellIntegrationRef = useRef<ShellIntegration | null>(null);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [credentialPrompt, setCredentialPrompt] = useState<
+    "password" | "privateKeyPassphrase" | null
+  >(null);
+  const [credentialValue, setCredentialValue] = useState("");
+  const [rememberCredential, setRememberCredential] = useState(true);
+  const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   onDirectoryChangeRef.current = onDirectoryChange;
+  onCredentialSavedRef.current = onCredentialSaved;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -438,13 +449,17 @@ export function TerminalPane({
     return () => window.cancelAnimationFrame(frame);
   }, [active, connectionState, visible]);
 
-  async function connectTerminal() {
+  async function connectTerminal(oneTimeCredential?: string, fromCredentialPrompt = false) {
     if (connectingRef.current || connectionState === "connecting" || connectionRef.current) {
       return;
     }
     const terminal = terminalRef.current;
     if (!terminal) {
       reportState("error", t("sessions.terminalNotReady"));
+      return;
+    }
+    if (!session.username.trim()) {
+      reportState("error", t("sessions.usernameRequired"));
       return;
     }
     clearPendingInput();
@@ -496,6 +511,7 @@ export function TerminalPane({
         Math.max(1, terminal.cols),
         Math.max(1, terminal.rows),
         channel,
+        oneTimeCredential,
       );
       if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
         if (result.kind === "connected") {
@@ -519,7 +535,21 @@ export function TerminalPane({
         reportState("error", t("sessions.hostKeyChanged"));
         return;
       }
+      if (result.kind === "credentialRequired") {
+        eventChannelRef.current = null;
+        clearPendingInput();
+        resetShellIntegration();
+        setCredentialPrompt(result.credentialKind);
+        setCredentialValue("");
+        setRememberCredential(true);
+        setDialogError(null);
+        reportState("disconnected");
+        return;
+      }
       connectionRef.current = result.connection;
+      setCredentialPrompt(null);
+      setCredentialValue("");
+      setDialogError(null);
       flushInput();
       onConnected(runtimeId, result.connection);
       startShellIntegration();
@@ -532,10 +562,51 @@ export function TerminalPane({
       clearPendingInput();
       resetShellIntegration();
       const info = readApiError(error, t("errors.unknown"));
-      reportState("error", info.message);
+      if (fromCredentialPrompt) {
+        setDialogError(info.message);
+        reportState("disconnected");
+      } else {
+        reportState("error", info.message);
+      }
     } finally {
       connectingRef.current = false;
     }
+  }
+
+  async function submitCredential() {
+    if (!credentialPrompt || credentialSubmitting) {
+      return;
+    }
+    if (!credentialValue) {
+      setDialogError(
+        credentialPrompt === "password"
+          ? t("sessions.credentialPasswordPrompt")
+          : t("sessions.credentialPassphrasePrompt"),
+      );
+      return;
+    }
+    setCredentialSubmitting(true);
+    setDialogError(null);
+    try {
+      if (rememberCredential) {
+        await api.setSessionCredential(session.id, credentialValue);
+        await onCredentialSavedRef.current();
+        await connectTerminal(undefined, true);
+      } else {
+        await connectTerminal(credentialValue, true);
+      }
+    } catch (error) {
+      setDialogError(resolveApiError(error, t("errors.unknown")));
+    } finally {
+      setCredentialSubmitting(false);
+    }
+  }
+
+  function closeCredentialPrompt() {
+    setCredentialPrompt(null);
+    setCredentialValue("");
+    setDialogError(null);
+    reportState("disconnected");
   }
 
   async function disconnectTerminal() {
@@ -624,6 +695,69 @@ export function TerminalPane({
           x={contextMenu.x}
           y={contextMenu.y}
         />
+      ) : null}
+
+      {credentialPrompt ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section aria-modal="true" className="dialog credential-dialog" role="dialog">
+            <header className="dialog-header">
+              <KeyRound size={20} />
+              <h2>{t("sessions.credentialRequired")}</h2>
+            </header>
+            <div className="credential-dialog-body">
+              <label>
+                <span>
+                  {credentialPrompt === "password"
+                    ? t("sessions.credentialPasswordPrompt")
+                    : t("sessions.credentialPassphrasePrompt")}
+                </span>
+                <TextInput
+                  autoComplete="current-password"
+                  autoFocus
+                  disabled={credentialSubmitting}
+                  onChange={(event) => setCredentialValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void submitCredential();
+                    }
+                  }}
+                  type="password"
+                  value={credentialValue}
+                />
+              </label>
+              <label className="credential-remember-row">
+                <input
+                  checked={rememberCredential}
+                  disabled={credentialSubmitting}
+                  onChange={(event) => setRememberCredential(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>{t("sessions.rememberCredential")}</span>
+              </label>
+              {!rememberCredential ? (
+                <small>{t("sessions.credentialUseOnceHint")}</small>
+              ) : null}
+            </div>
+            {dialogError ? <div className="form-error">{dialogError}</div> : null}
+            <footer className="dialog-actions">
+              <Button
+                disabled={credentialSubmitting}
+                onClick={closeCredentialPrompt}
+                variant="ghost"
+              >
+                {t("sessions.cancel")}
+              </Button>
+              <Button
+                disabled={credentialSubmitting}
+                onClick={() => void submitCredential()}
+                variant="primary"
+              >
+                {rememberCredential ? t("sessions.saveAndConnect") : t("sessions.connect")}
+              </Button>
+            </footer>
+          </section>
+        </div>
       ) : null}
 
       {hostKeyChallenge ? (

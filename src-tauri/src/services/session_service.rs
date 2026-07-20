@@ -1,9 +1,10 @@
 use crate::models::{
-    AppError, CreateSessionPayload, CredentialAction, CredentialState, SessionAuth,
-    SessionAuthInput, SessionGroup, SessionProfile, StoredSession, UpdateSessionPayload,
+    AppError, CreateSessionPayload, CredentialAction, CredentialState, PrivateKeyMaterialAction,
+    PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup, SessionProfile, StoredSession,
+    UpdateSessionPayload,
 };
 use crate::services::CredentialService;
-use russh::keys::load_secret_key;
+use russh::keys::{decode_secret_key, load_secret_key};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -20,6 +21,7 @@ const STORE_TEMP_FILE: &str = "sessions.v1.json.tmp";
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SESSIONS: usize = 500;
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
+const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +55,23 @@ enum SecretChange {
     Preserve,
     Set(Zeroizing<String>),
     Delete,
+}
+
+struct AuthChanges {
+    credential: SecretChange,
+    private_key: SecretChange,
+}
+
+struct SecretSnapshot {
+    credential: Option<Zeroizing<String>>,
+    private_key: Option<Zeroizing<String>>,
+}
+
+impl AuthChanges {
+    fn changed(&self) -> bool {
+        !matches!(self.credential, SecretChange::Preserve)
+            || !matches!(self.private_key, SecretChange::Preserve)
+    }
 }
 
 impl SessionService {
@@ -135,9 +154,10 @@ impl SessionService {
             &payload.group,
             &payload.tags,
         )?;
+        validate_auth_username(&payload.username, &payload.auth)?;
 
         let id = Uuid::new_v4().to_string();
-        let (auth, secret_change) =
+        let (auth, changes) =
             prepare_auth(&id, payload.auth, payload.credential, None, credentials).await?;
         let session = StoredSession {
             id: id.clone(),
@@ -149,16 +169,32 @@ impl SessionService {
             tags: normalize_tags(payload.tags),
             auth,
         };
-        let credential_state =
-            resolve_credential_state(&session, &secret_change, credentials).await?;
-
-        let secret_changed = !matches!(&secret_change, SecretChange::Preserve);
-        apply_secret_change(&id, secret_change, credentials).await?;
+        let snapshot = SecretSnapshot {
+            credential: None,
+            private_key: None,
+        };
+        if let Err(error) = apply_auth_changes(&id, &changes, &snapshot, credentials).await {
+            if credentials.delete_all(&id).await.is_err() {
+                self.queue_credential_cleanup(&id);
+                let _ = self.persist();
+            }
+            return Err(error);
+        }
+        let credential_state = match resolve_credential_state(&session, credentials).await {
+            Ok(state) => state,
+            Err(error) => {
+                if credentials.delete_all(&id).await.is_err() {
+                    self.queue_credential_cleanup(&id);
+                    let _ = self.persist();
+                }
+                return Err(error);
+            }
+        };
         let previous = self.store.clone();
         self.store.sessions.push(session.clone());
         if let Err(error) = self.persist() {
             self.store = previous;
-            if secret_changed && credentials.delete(&id).await.is_err() {
+            if changes.changed() && credentials.delete_all(&id).await.is_err() {
                 self.queue_credential_cleanup(&id);
                 let _ = self.persist();
             }
@@ -182,8 +218,9 @@ impl SessionService {
             &payload.group,
             &payload.tags,
         )?;
+        validate_auth_username(&payload.username, &payload.auth)?;
         let old_session = self.find(&payload.id)?;
-        let (auth, secret_change) = prepare_auth(
+        let (auth, changes) = prepare_auth(
             &payload.id,
             payload.auth,
             payload.credential,
@@ -191,13 +228,15 @@ impl SessionService {
             credentials,
         )
         .await?;
-        let secret_changed = !matches!(&secret_change, SecretChange::Preserve);
-        let old_secret = if secret_changed && old_session.requires_credential() {
-            credentials.get(&payload.id).await?
+        let snapshot = if changes.changed() {
+            snapshot_secrets(&payload.id, &changes, credentials).await?
         } else {
-            None
+            SecretSnapshot {
+                credential: None,
+                private_key: None,
+            }
         };
-        let connection_invalidated = secret_changed
+        let connection_invalidated = changes.changed()
             || old_session.host != payload.host.trim()
             || old_session.port != payload.port
             || old_session.username != payload.username.trim()
@@ -212,10 +251,20 @@ impl SessionService {
             tags: normalize_tags(payload.tags),
             auth,
         };
-        let credential_state =
-            resolve_credential_state(&updated, &secret_change, credentials).await?;
-
-        apply_secret_change(&payload.id, secret_change, credentials).await?;
+        apply_auth_changes(&payload.id, &changes, &snapshot, credentials).await?;
+        let credential_state = match resolve_credential_state(&updated, credentials).await {
+            Ok(state) => state,
+            Err(error) => {
+                if changes.changed() {
+                    restore_secrets(&payload.id, &snapshot, credentials)
+                        .await
+                        .map_err(|_| {
+                            AppError::Credential("无法读取新凭据状态，且旧凭据回滚失败".to_owned())
+                        })?;
+                }
+                return Err(error);
+            }
+        };
         let previous = self.store.clone();
         let target = self
             .store
@@ -226,8 +275,8 @@ impl SessionService {
         *target = updated.clone();
         if let Err(error) = self.persist() {
             self.store = previous;
-            if secret_changed {
-                restore_secret(&payload.id, old_secret, credentials)
+            if changes.changed() {
+                restore_secrets(&payload.id, &snapshot, credentials)
                     .await
                     .map_err(|_| {
                         AppError::Credential(
@@ -271,7 +320,7 @@ impl SessionService {
             return Err(error);
         }
 
-        if credentials.delete(session_id).await.is_ok() {
+        if credentials.delete_all(session_id).await.is_ok() {
             let before_cleanup = self.store.clone();
             self.store
                 .pending_credential_cleanup_ids
@@ -292,13 +341,39 @@ impl SessionService {
     ) -> Result<SessionProfile, AppError> {
         validate_id(session_id)?;
         let session = self.find(session_id)?;
-        if !session.requires_credential() {
+        if !matches!(
+            session.auth,
+            SessionAuth::Password
+                | SessionAuth::PrivateKey {
+                    passphrase_required: true,
+                    ..
+                }
+        ) {
             return Err(AppError::Validation(
                 "当前认证方式不需要保存口令".to_owned(),
             ));
         }
-        if let SessionAuth::PrivateKey { path, .. } = &session.auth {
-            validate_private_key(path, Some(&value)).await?;
+        if let SessionAuth::PrivateKey { source, path, .. } = &session.auth {
+            match source {
+                PrivateKeySource::File => {
+                    validate_private_key_file(
+                        path.as_deref()
+                            .ok_or_else(|| AppError::Persistence("私钥文件路径缺失".to_owned()))?,
+                        Some(&value),
+                    )
+                    .await?;
+                }
+                PrivateKeySource::Inline => {
+                    let private_key =
+                        credentials
+                            .get_private_key(session_id)
+                            .await?
+                            .ok_or_else(|| {
+                                AppError::Credential("已保存私钥缺失，请重新粘贴".to_owned())
+                            })?;
+                    validate_inline_private_key(private_key, Some(&value)).await?;
+                }
+            }
         }
         credentials.set(session_id, value).await?;
         Ok(profile_with_state(session, CredentialState::Stored))
@@ -309,13 +384,7 @@ impl SessionService {
         stored: StoredSession,
         credentials: &CredentialService,
     ) -> Result<SessionProfile, AppError> {
-        let credential_state = if !stored.requires_credential() {
-            CredentialState::NotRequired
-        } else if credentials.get(&stored.id).await?.is_some() {
-            CredentialState::Stored
-        } else {
-            CredentialState::Missing
-        };
+        let credential_state = resolve_credential_state(&stored, credentials).await?;
         let mut profile = SessionProfile::from(stored);
         profile.credential_state = credential_state;
         Ok(profile)
@@ -328,7 +397,7 @@ impl SessionService {
         let previous = self.store.clone();
         let mut remaining = Vec::new();
         for id in self.store.pending_credential_cleanup_ids.clone() {
-            if credentials.delete(&id).await.is_err() {
+            if credentials.delete_all(&id).await.is_err() {
                 remaining.push(id);
             }
         }
@@ -409,7 +478,7 @@ async fn prepare_auth(
     action: CredentialAction,
     old: Option<&StoredSession>,
     credentials: &CredentialService,
-) -> Result<(SessionAuth, SecretChange), AppError> {
+) -> Result<(SessionAuth, AuthChanges), AppError> {
     match input {
         SessionAuthInput::Password => {
             let same_auth = matches!(
@@ -425,17 +494,52 @@ async fn prepare_auth(
                     ))
                 }
                 CredentialAction::Clear => {
-                    // 允许保存空密码；连接时由 SSH 键盘交互流程处理认证输入。
+                    // 不保存密码时保持会话可用，连接前再统一询问。
                     SecretChange::Delete
                 }
+                CredentialAction::UseOnce { .. } => {
+                    return Err(AppError::Validation(
+                        "一次性凭据仅用于校验新私钥".to_owned(),
+                    ))
+                }
             };
-            Ok((SessionAuth::Password, change))
+            Ok((
+                SessionAuth::Password,
+                AuthChanges {
+                    credential: change,
+                    private_key: if matches!(
+                        old.map(|session| &session.auth),
+                        Some(SessionAuth::PrivateKey { .. })
+                    ) {
+                        SecretChange::Delete
+                    } else {
+                        SecretChange::Preserve
+                    },
+                },
+            ))
         }
-        SessionAuthInput::PrivateKey { path } => {
-            let canonical_path = validate_private_key_path(&path).await?;
+        SessionAuthInput::PrivateKey {
+            source: PrivateKeySource::File,
+            path,
+            material,
+        } => {
+            if material.is_some() {
+                return Err(AppError::Validation(
+                    "文件私钥不能包含粘贴私钥内容".to_owned(),
+                ));
+            }
+            let canonical_path = validate_private_key_path(
+                path.as_deref()
+                    .ok_or_else(|| AppError::Validation("请选择私钥文件".to_owned()))?,
+            )
+            .await?;
             let same_key = matches!(
                 old.map(|session| &session.auth),
-                Some(SessionAuth::PrivateKey { path, .. }) if path == &canonical_path
+                Some(SessionAuth::PrivateKey {
+                    source: PrivateKeySource::File,
+                    path: Some(path),
+                    ..
+                }) if path == &canonical_path
             );
             if matches!(&action, CredentialAction::Preserve) && old.is_some() && !same_key {
                 return Err(AppError::Validation(
@@ -443,34 +547,62 @@ async fn prepare_auth(
                 ));
             }
 
-            if validate_private_key(&canonical_path, None).await.is_ok() {
+            let private_key_change = if matches!(
+                old.map(|session| &session.auth),
+                Some(SessionAuth::PrivateKey {
+                    source: PrivateKeySource::Inline,
+                    ..
+                })
+            ) {
+                SecretChange::Delete
+            } else {
+                SecretChange::Preserve
+            };
+
+            if validate_private_key_file(&canonical_path, None)
+                .await
+                .is_ok()
+            {
                 return Ok((
                     SessionAuth::PrivateKey {
-                        path: canonical_path,
+                        source: PrivateKeySource::File,
+                        path: Some(canonical_path),
                         passphrase_required: false,
                     },
-                    if old.is_some_and(StoredSession::requires_credential) {
-                        SecretChange::Delete
-                    } else {
-                        SecretChange::Preserve
+                    AuthChanges {
+                        credential: if old.is_some()
+                            && (!same_key || old.is_some_and(StoredSession::requires_passphrase))
+                        {
+                            SecretChange::Delete
+                        } else {
+                            SecretChange::Preserve
+                        },
+                        private_key: private_key_change,
                     },
                 ));
             }
 
             let change = match action {
                 CredentialAction::Replace { value } => {
-                    validate_private_key(&canonical_path, Some(&value)).await?;
+                    validate_private_key_file(&canonical_path, Some(&value)).await?;
                     SecretChange::Set(value)
+                }
+                CredentialAction::UseOnce { value } => {
+                    validate_private_key_file(&canonical_path, Some(&value)).await?;
+                    SecretChange::Delete
                 }
                 CredentialAction::Preserve if same_key => {
                     let value = credentials.get(session_id).await?.ok_or_else(|| {
                         AppError::Credential("私钥口令缺失，请重新输入".to_owned())
                     })?;
-                    validate_private_key(&canonical_path, Some(&value)).await?;
+                    validate_private_key_file(&canonical_path, Some(&value)).await?;
                     SecretChange::Preserve
                 }
+                CredentialAction::Clear if same_key => SecretChange::Delete,
                 CredentialAction::Clear => {
-                    return Err(AppError::Credential("该私钥需要口令".to_owned()))
+                    return Err(AppError::Credential(
+                        "新私钥需要口令，请输入一次完成格式校验".to_owned(),
+                    ))
                 }
                 CredentialAction::Preserve => {
                     return Err(AppError::Credential("请填写私钥口令".to_owned()))
@@ -478,10 +610,112 @@ async fn prepare_auth(
             };
             Ok((
                 SessionAuth::PrivateKey {
-                    path: canonical_path,
+                    source: PrivateKeySource::File,
+                    path: Some(canonical_path),
                     passphrase_required: true,
                 },
-                change,
+                AuthChanges {
+                    credential: change,
+                    private_key: private_key_change,
+                },
+            ))
+        }
+        SessionAuthInput::PrivateKey {
+            source: PrivateKeySource::Inline,
+            path,
+            material,
+        } => {
+            if path.is_some() {
+                return Err(AppError::Validation("粘贴私钥不能包含文件路径".to_owned()));
+            }
+            let old_is_inline = matches!(
+                old.map(|session| &session.auth),
+                Some(SessionAuth::PrivateKey {
+                    source: PrivateKeySource::Inline,
+                    ..
+                })
+            );
+            let (private_key, private_key_change, material_preserved) = match material {
+                Some(PrivateKeyMaterialAction::Replace { value }) => {
+                    validate_inline_private_key_size(&value)?;
+                    (value.clone(), SecretChange::Set(value), false)
+                }
+                Some(PrivateKeyMaterialAction::Preserve) if old_is_inline => {
+                    let value =
+                        credentials
+                            .get_private_key(session_id)
+                            .await?
+                            .ok_or_else(|| {
+                                AppError::Credential("已保存私钥缺失，请重新粘贴".to_owned())
+                            })?;
+                    (value, SecretChange::Preserve, true)
+                }
+                Some(PrivateKeyMaterialAction::Preserve) => {
+                    return Err(AppError::Validation("请粘贴私钥内容".to_owned()))
+                }
+                None => return Err(AppError::Validation("粘贴私钥操作缺失".to_owned())),
+            };
+
+            if validate_inline_private_key(private_key.clone(), None)
+                .await
+                .is_ok()
+            {
+                return Ok((
+                    SessionAuth::PrivateKey {
+                        source: PrivateKeySource::Inline,
+                        path: None,
+                        passphrase_required: false,
+                    },
+                    AuthChanges {
+                        credential: if old.is_some()
+                            && (!material_preserved
+                                || old.is_some_and(StoredSession::requires_passphrase))
+                        {
+                            SecretChange::Delete
+                        } else {
+                            SecretChange::Preserve
+                        },
+                        private_key: private_key_change,
+                    },
+                ));
+            }
+
+            let credential_change = match action {
+                CredentialAction::Replace { value } => {
+                    validate_inline_private_key(private_key, Some(&value)).await?;
+                    SecretChange::Set(value)
+                }
+                CredentialAction::UseOnce { value } => {
+                    validate_inline_private_key(private_key, Some(&value)).await?;
+                    SecretChange::Delete
+                }
+                CredentialAction::Preserve if material_preserved => {
+                    let value = credentials.get(session_id).await?.ok_or_else(|| {
+                        AppError::Credential("私钥口令缺失，请重新输入".to_owned())
+                    })?;
+                    validate_inline_private_key(private_key, Some(&value)).await?;
+                    SecretChange::Preserve
+                }
+                CredentialAction::Clear if material_preserved => SecretChange::Delete,
+                CredentialAction::Clear => {
+                    return Err(AppError::Credential(
+                        "新私钥需要口令，请输入一次完成格式校验".to_owned(),
+                    ))
+                }
+                CredentialAction::Preserve => {
+                    return Err(AppError::Credential("请填写私钥口令".to_owned()))
+                }
+            };
+            Ok((
+                SessionAuth::PrivateKey {
+                    source: PrivateKeySource::Inline,
+                    path: None,
+                    passphrase_required: true,
+                },
+                AuthChanges {
+                    credential: credential_change,
+                    private_key: private_key_change,
+                },
             ))
         }
     }
@@ -509,7 +743,7 @@ async fn validate_private_key_path(path: &str) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Validation("私钥路径必须是有效 Unicode".to_owned()))
 }
 
-async fn validate_private_key(path: &str, passphrase: Option<&str>) -> Result<(), AppError> {
+async fn validate_private_key_file(path: &str, passphrase: Option<&str>) -> Result<(), AppError> {
     let path = path.to_owned();
     let passphrase = passphrase.map(|value| Zeroizing::new(value.to_owned()));
     task::spawn_blocking(move || {
@@ -521,45 +755,152 @@ async fn validate_private_key(path: &str, passphrase: Option<&str>) -> Result<()
     .map_err(|_| AppError::Validation("私钥无法解析或口令错误".to_owned()))
 }
 
-async fn apply_secret_change(
+fn validate_inline_private_key_size(value: &str) -> Result<(), AppError> {
+    if value.is_empty() || value.len() > MAX_INLINE_PRIVATE_KEY_BYTES {
+        return Err(AppError::Validation(
+            "粘贴私钥不能为空，且不能超过 16384 字节".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_inline_private_key(
+    private_key: Zeroizing<String>,
+    passphrase: Option<&str>,
+) -> Result<(), AppError> {
+    validate_inline_private_key_size(&private_key)?;
+    let passphrase = passphrase.map(|value| Zeroizing::new(value.to_owned()));
+    task::spawn_blocking(move || {
+        decode_secret_key(
+            &private_key,
+            passphrase.as_ref().map(|value| value.as_str()),
+        )
+    })
+    .await
+    .map_err(|_| AppError::Validation("私钥校验任务失败".to_owned()))?
+    .map(|_| ())
+    .map_err(|_| AppError::Validation("私钥无法解析或口令错误".to_owned()))
+}
+
+async fn apply_auth_changes(
     session_id: &str,
-    change: SecretChange,
+    changes: &AuthChanges,
+    snapshot: &SecretSnapshot,
+    credentials: &CredentialService,
+) -> Result<(), AppError> {
+    let result = async {
+        apply_private_key_change(session_id, &changes.private_key, credentials).await?;
+        apply_credential_change(session_id, &changes.credential, credentials).await
+    }
+    .await;
+    if let Err(error) = result {
+        restore_secrets(session_id, snapshot, credentials)
+            .await
+            .map_err(|_| {
+                AppError::Credential(
+                    "系统凭据更新失败，且旧凭据回滚失败，请重新检查凭据".to_owned(),
+                )
+            })?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn apply_credential_change(
+    session_id: &str,
+    change: &SecretChange,
     credentials: &CredentialService,
 ) -> Result<(), AppError> {
     match change {
         SecretChange::Preserve => Ok(()),
-        SecretChange::Set(value) => credentials.set(session_id, value).await,
+        SecretChange::Set(value) => credentials.set(session_id, value.clone()).await,
         SecretChange::Delete => credentials.delete(session_id).await,
     }
 }
 
-async fn restore_secret(
+async fn apply_private_key_change(
     session_id: &str,
-    old_secret: Option<Zeroizing<String>>,
+    change: &SecretChange,
     credentials: &CredentialService,
 ) -> Result<(), AppError> {
-    match old_secret {
-        Some(secret) => credentials.set(session_id, secret).await,
-        None => credentials.delete(session_id).await,
+    match change {
+        SecretChange::Preserve => Ok(()),
+        SecretChange::Set(value) => credentials.set_private_key(session_id, value.clone()).await,
+        SecretChange::Delete => credentials.delete_private_key(session_id).await,
     }
+}
+
+async fn snapshot_secrets(
+    session_id: &str,
+    changes: &AuthChanges,
+    credentials: &CredentialService,
+) -> Result<SecretSnapshot, AppError> {
+    let private_key = if matches!(changes.private_key, SecretChange::Preserve) {
+        credentials.get_private_key(session_id).await?
+    } else {
+        // 替换或删除时允许清除已损坏分块；其他凭据库错误仍必须阻止更新。
+        credentials.get_private_key_snapshot(session_id).await?
+    };
+    Ok(SecretSnapshot {
+        credential: credentials.get(session_id).await?,
+        private_key,
+    })
+}
+
+async fn restore_secrets(
+    session_id: &str,
+    snapshot: &SecretSnapshot,
+    credentials: &CredentialService,
+) -> Result<(), AppError> {
+    let private_key_result = match &snapshot.private_key {
+        Some(value) => credentials.set_private_key(session_id, value.clone()).await,
+        None => credentials.delete_private_key(session_id).await,
+    };
+    let credential_result = match &snapshot.credential {
+        Some(value) => credentials.set(session_id, value.clone()).await,
+        None => credentials.delete(session_id).await,
+    };
+    private_key_result.and(credential_result)
 }
 
 async fn resolve_credential_state(
     session: &StoredSession,
-    change: &SecretChange,
     credentials: &CredentialService,
 ) -> Result<CredentialState, AppError> {
-    if !session.requires_credential() {
-        return Ok(CredentialState::NotRequired);
-    }
-    match change {
-        SecretChange::Set(_) => Ok(CredentialState::Stored),
-        SecretChange::Preserve => Ok(if credentials.get(&session.id).await?.is_some() {
+    match &session.auth {
+        SessionAuth::Password => Ok(if credentials.get(&session.id).await?.is_some() {
             CredentialState::Stored
         } else {
             CredentialState::Missing
         }),
-        SecretChange::Delete => Ok(CredentialState::Missing),
+        SessionAuth::PrivateKey {
+            source: PrivateKeySource::File,
+            passphrase_required: false,
+            ..
+        } => Ok(CredentialState::NotRequired),
+        SessionAuth::PrivateKey {
+            source: PrivateKeySource::File,
+            passphrase_required: true,
+            ..
+        } => Ok(if credentials.get(&session.id).await?.is_some() {
+            CredentialState::Stored
+        } else {
+            CredentialState::Missing
+        }),
+        SessionAuth::PrivateKey {
+            source: PrivateKeySource::Inline,
+            passphrase_required,
+            ..
+        } => {
+            let has_private_key = credentials.private_key_is_complete(&session.id).await?;
+            let has_passphrase =
+                !passphrase_required || credentials.get(&session.id).await?.is_some();
+            Ok(if has_private_key && has_passphrase {
+                CredentialState::Stored
+            } else {
+                CredentialState::Missing
+            })
+        }
     }
 }
 
@@ -608,12 +949,14 @@ fn validate_store(store: &SessionStore) -> Result<(), AppError> {
         if !ids.insert(&session.id) {
             return Err(AppError::Persistence("会话 ID 重复".to_owned()));
         }
-        if let SessionAuth::PrivateKey { path, .. } = &session.auth {
-            if path.len() > 4096
-                || !Path::new(path).is_absolute()
-                || path.chars().any(char::is_control)
-            {
-                return Err(AppError::Persistence("私钥路径无效".to_owned()));
+        if let SessionAuth::PrivateKey { source, path, .. } = &session.auth {
+            match (source, path.as_deref()) {
+                (PrivateKeySource::File, Some(path))
+                    if path.len() <= 4096
+                        && Path::new(path).is_absolute()
+                        && !path.chars().any(char::is_control) => {}
+                (PrivateKeySource::Inline, None) => {}
+                _ => return Err(AppError::Persistence("私钥来源或路径无效".to_owned())),
             }
         }
     }
@@ -652,6 +995,14 @@ fn validate_common(
     }
     for tag in tags {
         validate_text("标签", tag, 64, false)?;
+    }
+    Ok(())
+}
+
+// 只限制新写入请求，不收紧存储加载校验，避免旧空账号私钥会话无法启动应用。
+fn validate_auth_username(username: &str, auth: &SessionAuthInput) -> Result<(), AppError> {
+    if matches!(auth, SessionAuthInput::PrivateKey { .. }) && username.trim().is_empty() {
+        return Err(AppError::Validation("私钥认证必须填写账号".to_owned()));
     }
     Ok(())
 }
@@ -698,6 +1049,38 @@ fn normalize_tags(tags: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::keys::ssh_key::rand_core::{TryCryptoRng, TryRng};
+    use std::convert::Infallible;
+
+    struct TestRng;
+
+    impl TryRng for TestRng {
+        type Error = Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            let bytes = Uuid::new_v4().into_bytes();
+            Ok(u32::from_le_bytes(
+                bytes[..4].try_into().expect("UUID 长度无效"),
+            ))
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            let bytes = Uuid::new_v4().into_bytes();
+            Ok(u64::from_le_bytes(
+                bytes[..8].try_into().expect("UUID 长度无效"),
+            ))
+        }
+
+        fn try_fill_bytes(&mut self, destination: &mut [u8]) -> Result<(), Self::Error> {
+            for chunk in destination.chunks_mut(16) {
+                let bytes = Uuid::new_v4().into_bytes();
+                chunk.copy_from_slice(&bytes[..chunk.len()]);
+            }
+            Ok(())
+        }
+    }
+
+    impl TryCryptoRng for TestRng {}
 
     fn test_directory(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("fstty-{name}-{}", Uuid::new_v4()))
@@ -738,11 +1121,89 @@ mod tests {
     }
 
     #[test]
+    fn requires_username_only_for_private_key_input() {
+        let private_key = SessionAuthInput::PrivateKey {
+            source: PrivateKeySource::Inline,
+            path: None,
+            material: Some(PrivateKeyMaterialAction::Preserve),
+        };
+        assert!(validate_auth_username("", &private_key).is_err());
+        assert!(validate_auth_username("  ", &private_key).is_err());
+        assert!(validate_auth_username("root", &private_key).is_ok());
+        assert!(validate_auth_username("", &SessionAuthInput::Password).is_ok());
+    }
+
+    #[test]
     fn normalizes_tags_without_changing_order() {
         assert_eq!(
             normalize_tags(vec![" Web ".to_owned(), "web".to_owned(), "DB".to_owned()]),
             vec!["Web".to_owned(), "DB".to_owned()]
         );
+    }
+
+    #[test]
+    fn loads_legacy_private_key_session_with_empty_username_without_migration() {
+        let directory = test_directory("legacy-private-key");
+        fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let session_id = Uuid::new_v4().to_string();
+        let private_key_path = directory.join("id_ed25519").to_string_lossy().to_string();
+        let legacy = serde_json::json!({
+            "version": STORE_VERSION,
+            "sessions": [{
+                "id": session_id,
+                "name": "旧私钥会话",
+                "host": "127.0.0.1",
+                "port": 22,
+                "username": "",
+                "group": "未分组",
+                "tags": [],
+                "auth": {
+                    "kind": "privateKey",
+                    "path": private_key_path,
+                    "passphrase_required": false
+                }
+            }],
+            "pendingCredentialCleanupIds": []
+        });
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec_pretty(&legacy).expect("无法生成旧会话数据"),
+        )
+        .expect("无法写入旧会话数据");
+
+        let service = SessionService::load(&directory);
+        assert!(service.blocked_error.is_none());
+        assert!(service.store.sessions[0].username.is_empty());
+        assert!(matches!(
+            service.store.sessions[0].auth,
+            SessionAuth::PrivateKey {
+                source: PrivateKeySource::File,
+                path: Some(_),
+                passphrase_required: false,
+            }
+        ));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn validates_inline_private_key_store_shape() {
+        let mut session = sample_session("粘贴私钥");
+        session.auth = SessionAuth::PrivateKey {
+            source: PrivateKeySource::Inline,
+            path: None,
+            passphrase_required: false,
+        };
+        let mut store = SessionStore {
+            version: STORE_VERSION,
+            sessions: vec![session],
+            pending_credential_cleanup_ids: vec![],
+        };
+        assert!(validate_store(&store).is_ok());
+
+        if let SessionAuth::PrivateKey { path, .. } = &mut store.sessions[0].auth {
+            *path = Some("不应出现路径".to_owned());
+        }
+        assert!(validate_store(&store).is_err());
     }
 
     #[test]
@@ -803,6 +1264,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validates_plain_and_encrypted_pasted_private_keys() {
+        use russh::keys::ssh_key::{Algorithm, LineEnding, PrivateKey};
+
+        // 运行时生成测试材料，仓库中不保存任何固定私钥。
+        let mut random = TestRng;
+        let private_key =
+            PrivateKey::random(&mut random, Algorithm::Ed25519).expect("无法生成测试私钥");
+        let plain = private_key
+            .to_openssh(LineEnding::LF)
+            .expect("无法编码测试私钥");
+        assert!(validate_inline_private_key(plain, None).await.is_ok());
+
+        let encrypted = private_key
+            .encrypt(&mut random, "正确口令")
+            .expect("无法加密测试私钥")
+            .to_openssh(LineEnding::LF)
+            .expect("无法编码加密测试私钥");
+        assert!(validate_inline_private_key(encrypted.clone(), None)
+            .await
+            .is_err());
+        assert!(
+            validate_inline_private_key(encrypted.clone(), Some("错误口令"))
+                .await
+                .is_err()
+        );
+        assert!(validate_inline_private_key(encrypted, Some("正确口令"))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
     #[ignore = "需要使用当前系统凭据库"]
     async fn credential_lifecycle_smoke() {
         let directory = test_directory("credential-store");
@@ -830,6 +1322,39 @@ mod tests {
         assert!(matches!(created.credential_state, CredentialState::Stored));
         let content = fs::read_to_string(directory.join(STORE_FILE)).expect("无法读取会话文件");
         assert!(!content.contains(initial_secret.as_str()));
+
+        let inline_private_key = Zeroizing::new("A".repeat(16 * 1024));
+        credentials
+            .set_private_key(&created.id, inline_private_key.clone())
+            .await
+            .expect("无法保存分块私钥");
+        assert_eq!(
+            credentials
+                .get_private_key(&created.id)
+                .await
+                .expect("无法读取分块私钥")
+                .expect("分块私钥意外丢失")
+                .as_str(),
+            inline_private_key.as_str()
+        );
+        let replacement_private_key = Zeroizing::new("B".repeat(2_049));
+        credentials
+            .set_private_key(&created.id, replacement_private_key.clone())
+            .await
+            .expect("无法替换分块私钥");
+        assert_eq!(
+            credentials
+                .get_private_key(&created.id)
+                .await
+                .expect("无法读取替换后的分块私钥")
+                .expect("替换后的分块私钥意外丢失")
+                .as_str(),
+            replacement_private_key.as_str()
+        );
+        let content_after_private_key =
+            fs::read_to_string(directory.join(STORE_FILE)).expect("无法重新读取会话文件");
+        assert!(!content_after_private_key.contains(inline_private_key.as_str()));
+        assert!(!content_after_private_key.contains(replacement_private_key.as_str()));
 
         let (_, preserve_invalidated) = service
             .update(
@@ -944,6 +1469,11 @@ mod tests {
             .get(&created.id)
             .await
             .expect("删除后读取凭据失败")
+            .is_none());
+        assert!(credentials
+            .get_private_key(&created.id)
+            .await
+            .expect("删除后读取私钥失败")
             .is_none());
         let _ = fs::remove_dir_all(directory);
     }

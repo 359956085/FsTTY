@@ -1,15 +1,18 @@
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, KeyRound, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type KeyboardEvent, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
 import type {
+  CredentialAction,
   CreateSessionPayload,
+  SessionAuthInput,
   Session,
   UpdateSessionPayload,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
+import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
 
 interface SessionFormDialogProps {
@@ -19,6 +22,129 @@ interface SessionFormDialogProps {
   saveError?: string | null;
   onClose: () => void;
   onSave: (payload: CreateSessionPayload | UpdateSessionPayload) => Promise<void>;
+}
+
+type AuthKind = "password" | "privateKey";
+type PrivateKeySource = "file" | "inline";
+
+interface FormSelectOption<Value extends string> {
+  label: string;
+  value: Value;
+}
+
+interface FormSelectProps<Value extends string> {
+  ariaLabel: string;
+  onChange: (value: Value) => void;
+  options: Array<FormSelectOption<Value>>;
+  value: Value;
+}
+
+function FormSelect<Value extends string>({
+  ariaLabel,
+  onChange,
+  options,
+  value,
+}: FormSelectProps<Value>) {
+  const listboxId = useId();
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option.value === value),
+  );
+  const [activeIndex, setActiveIndex] = useState(selectedIndex);
+  const [open, setOpen] = useState(false);
+
+  function openMenu() {
+    setActiveIndex(selectedIndex);
+    setOpen(true);
+  }
+
+  function selectOption(index: number) {
+    const option = options[index];
+    setActiveIndex(index);
+    setOpen(false);
+    if (option.value !== value) {
+      onChange(option.value);
+    }
+  }
+
+  function moveActive(step: number) {
+    if (!open) {
+      openMenu();
+      return;
+    }
+    setActiveIndex((index) => (index + step + options.length) % options.length);
+  }
+
+  // 焦点保留在触发按钮，通过活动选项关联菜单，避免选项关闭后焦点丢失。
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(-1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) {
+        selectOption(activeIndex);
+      } else {
+        openMenu();
+      }
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setOpen(false);
+    }
+  }
+
+  const selectedOption = options[selectedIndex];
+
+  return (
+    <div
+      className="form-select"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        aria-activedescendant={open ? `${listboxId}-option-${activeIndex}` : undefined}
+        aria-controls={listboxId}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className="text-input form-select-trigger"
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={handleKeyDown}
+        role="combobox"
+        type="button"
+      >
+        <span>{selectedOption.label}</span>
+        <ChevronDown size={16} />
+      </button>
+      {open ? (
+        <div className="form-select-menu" id={listboxId} role="listbox">
+          {options.map((option, index) => {
+            const active = index === activeIndex;
+            const selected = option.value === value;
+            return (
+              <SelectableOption
+                active={active}
+                className="form-select-option"
+                id={`${listboxId}-option-${index}`}
+                key={option.value}
+                label={option.label}
+                onClick={() => selectOption(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(index)}
+                selected={selected}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function SessionFormDialog({
@@ -35,8 +161,22 @@ export function SessionFormDialog({
   const [port, setPort] = useState(String(session?.port ?? 22));
   const [username, setUsername] = useState(session?.username ?? "");
   const [group, setGroup] = useState(session?.group ?? "未分组");
+  const [groupActiveIndex, setGroupActiveIndex] = useState(0);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [authKind, setAuthKind] = useState<AuthKind>(
+    session?.auth.kind ?? "password",
+  );
+  const [privateKeySource, setPrivateKeySource] = useState<PrivateKeySource>(
+    session?.auth.kind === "privateKey" ? session.auth.source : "file",
+  );
+  const [privateKeyPath, setPrivateKeyPath] = useState(
+    session?.auth.kind === "privateKey" && session.auth.source === "file"
+      ? session.auth.path
+      : "",
+  );
+  const [privateKeyContent, setPrivateKeyContent] = useState("");
   const [credential, setCredential] = useState("");
+  const [rememberCredential, setRememberCredential] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hostKeyMessage, setHostKeyMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -52,6 +192,84 @@ export function SessionFormDialog({
       ),
     [groupOptions],
   );
+  const selectedGroupIndex = availableGroups.findIndex((option) => option === group);
+
+  function openGroupMenu() {
+    setGroupActiveIndex(selectedGroupIndex >= 0 ? selectedGroupIndex : 0);
+    setGroupMenuOpen(true);
+  }
+
+  function moveGroupActive(step: number) {
+    if (!groupMenuOpen) {
+      openGroupMenu();
+      return;
+    }
+    setGroupActiveIndex(
+      (index) => (index + step + availableGroups.length) % availableGroups.length,
+    );
+  }
+
+  function selectGroupOption(index: number) {
+    const option = availableGroups[index];
+    if (!option) {
+      return;
+    }
+    setGroup(option);
+    setGroupActiveIndex(index);
+    setGroupMenuOpen(false);
+  }
+
+  function handleGroupInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveGroupActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveGroupActive(-1);
+    } else if (event.key === "Enter" && groupMenuOpen) {
+      event.preventDefault();
+      selectGroupOption(groupActiveIndex);
+    } else if (event.key === "Escape" && groupMenuOpen) {
+      event.preventDefault();
+      setGroupMenuOpen(false);
+    }
+  }
+
+  function handleGroupToggleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveGroupActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveGroupActive(-1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (groupMenuOpen) {
+        selectGroupOption(groupActiveIndex);
+      } else {
+        openGroupMenu();
+      }
+    } else if (event.key === "Escape" && groupMenuOpen) {
+      event.preventDefault();
+      setGroupMenuOpen(false);
+    }
+  }
+
+  async function choosePrivateKey() {
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: t("sessions.selectPrivateKey"),
+      });
+      if (selected) {
+        setPrivateKeyPath(selected);
+        setError(null);
+      }
+    } catch (nextError) {
+      setError(resolveApiError(nextError, t("errors.unknown")));
+    }
+  }
 
   async function forgetHostKey() {
     if (!session) {
@@ -85,6 +303,7 @@ export function SessionFormDialog({
     const normalizedPort = Number(port);
     const normalizedUsername = username.trim();
     const normalizedGroup = group.trim();
+    const normalizedKeyPath = privateKeyPath.trim();
 
     if (!normalizedHost) {
       setError(t("sessions.validationRequired"));
@@ -94,12 +313,87 @@ export function SessionFormDialog({
       setError(t("sessions.validationPort"));
       return;
     }
-    const sameAuth = mode === "edit" && session?.auth.kind === "password";
-    const credentialAction = credential
-      ? { mode: "replace" as const, value: credential }
-      : sameAuth
-        ? { mode: "preserve" as const }
-        : { mode: "clear" as const };
+    if (authKind === "privateKey" && !normalizedUsername) {
+      setError(t("sessions.validationPrivateKeyUsername"));
+      return;
+    }
+    const samePassword = mode === "edit" && session?.auth.kind === "password";
+    const samePrivateKey =
+      mode === "edit" &&
+      session?.auth.kind === "privateKey" &&
+      session.auth.source === privateKeySource &&
+      (session.auth.source === "inline" || session.auth.path === normalizedKeyPath);
+    const replacingInlineKey =
+      authKind === "privateKey" &&
+      privateKeySource === "inline" &&
+      privateKeyContent.length > 0;
+
+    if (authKind === "privateKey" && privateKeySource === "file" && !normalizedKeyPath) {
+      setError(t("sessions.validationPrivateKey"));
+      return;
+    }
+    if (
+      authKind === "privateKey" &&
+      privateKeySource === "inline" &&
+      !replacingInlineKey &&
+      !samePrivateKey
+    ) {
+      setError(t("sessions.validationInlinePrivateKey"));
+      return;
+    }
+
+    let credentialAction: CredentialAction;
+    if (authKind === "password") {
+      if (!rememberCredential) {
+        credentialAction = { mode: "clear" };
+      } else if (credential) {
+        credentialAction = { mode: "replace", value: credential };
+      } else if (samePassword && session?.credentialState === "stored") {
+        credentialAction = { mode: "preserve" };
+      } else {
+        setError(t("sessions.validationPassword"));
+        return;
+      }
+    } else if (credential) {
+      credentialAction = rememberCredential
+        ? { mode: "replace", value: credential }
+        : samePrivateKey && !replacingInlineKey
+          ? { mode: "clear" }
+          : { mode: "useOnce", value: credential };
+    } else if (
+      rememberCredential &&
+      samePrivateKey &&
+      !replacingInlineKey &&
+      session?.credentialState !== "missing"
+    ) {
+      credentialAction = { mode: "preserve" };
+    } else if (
+      rememberCredential &&
+      samePrivateKey &&
+      !replacingInlineKey &&
+      session?.auth.kind === "privateKey" &&
+      session.auth.passphraseRequired
+    ) {
+      setError(t("sessions.validationPassphrase"));
+      return;
+    } else {
+      credentialAction = { mode: "clear" };
+    }
+
+    let auth: SessionAuthInput;
+    if (authKind === "password") {
+      auth = { kind: "password" };
+    } else if (privateKeySource === "file") {
+      auth = { kind: "privateKey", source: "file", path: normalizedKeyPath };
+    } else {
+      auth = {
+        kind: "privateKey",
+        source: "inline",
+        material: replacingInlineKey
+          ? { mode: "replace", value: privateKeyContent }
+          : { mode: "preserve" },
+      };
+    }
     const payload: CreateSessionPayload = {
       name: normalizedName,
       host: normalizedHost,
@@ -108,7 +402,7 @@ export function SessionFormDialog({
       group: normalizedGroup,
       // 表单不再编辑标签；编辑旧会话时保留已有值，避免保存其他字段时意外丢失数据。
       tags: session?.tags ?? [],
-      auth: { kind: "password" },
+      auth,
       credential: credentialAction,
     };
     setError(null);
@@ -142,6 +436,14 @@ export function SessionFormDialog({
 
         <div className="form-grid">
           <label>
+            <span>{t("sessions.host")} *</span>
+            <TextInput onChange={(event) => setHost(event.target.value)} value={host} />
+          </label>
+          <label>
+            <span>{t("sessions.port")} *</span>
+            <TextInput onChange={(event) => setPort(event.target.value)} value={port} />
+          </label>
+          <label>
             <span>{t("sessions.name")}</span>
             <TextInput onChange={(event) => setName(event.target.value)} value={name} />
           </label>
@@ -156,83 +458,189 @@ export function SessionFormDialog({
               }}
             >
               <TextInput
+                aria-activedescendant={
+                  groupMenuOpen ? `session-group-option-${groupActiveIndex}` : undefined
+                }
                 aria-autocomplete="list"
                 aria-controls="session-group-options"
                 aria-expanded={groupMenuOpen}
                 className="group-combobox-input"
                 onChange={(event) => {
-                  setGroup(event.target.value);
+                  const nextGroup = event.target.value;
+                  const nextIndex = availableGroups.findIndex((option) => option === nextGroup);
+                  setGroup(nextGroup);
+                  setGroupActiveIndex(nextIndex >= 0 ? nextIndex : 0);
                   setGroupMenuOpen(true);
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setGroupMenuOpen(true);
-                  } else if (event.key === "Escape") {
-                    setGroupMenuOpen(false);
-                  }
-                }}
+                onKeyDown={handleGroupInputKeyDown}
                 role="combobox"
                 value={group}
               />
               <button
+                aria-controls="session-group-options"
+                aria-expanded={groupMenuOpen}
+                aria-haspopup="listbox"
                 aria-label={t("sessions.selectGroup")}
                 className="group-combobox-toggle"
-                onClick={() => setGroupMenuOpen((open) => !open)}
-                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => (groupMenuOpen ? setGroupMenuOpen(false) : openGroupMenu())}
+                onKeyDown={handleGroupToggleKeyDown}
                 type="button"
               >
                 <ChevronDown size={16} />
               </button>
               {groupMenuOpen ? (
                 <div className="group-combobox-menu" id="session-group-options" role="listbox">
-                  {availableGroups.map((option) => (
-                    <button
-                      aria-selected={option === group}
-                      className={
-                        option === group
-                          ? "group-combobox-option selected"
-                          : "group-combobox-option"
-                      }
+                  {availableGroups.map((option, index) => (
+                    <SelectableOption
+                      active={index === groupActiveIndex}
+                      className="group-combobox-option"
+                      id={`session-group-option-${index}`}
                       key={option}
-                      onClick={() => {
-                        setGroup(option);
-                        setGroupMenuOpen(false);
-                      }}
-                      role="option"
-                      type="button"
-                    >
-                      {option}
-                    </button>
+                      label={option}
+                      onClick={() => selectGroupOption(index)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setGroupActiveIndex(index)}
+                      selected={option === group}
+                    />
                   ))}
                 </div>
               ) : null}
             </div>
           </label>
+          <div className="form-field">
+            <span>{t("sessions.authType")}</span>
+            <FormSelect<AuthKind>
+              ariaLabel={t("sessions.authType")}
+              onChange={(nextAuthKind) => {
+                setAuthKind(nextAuthKind);
+                setCredential("");
+                setError(null);
+              }}
+              options={[
+                { value: "password", label: t("sessions.passwordAuth") },
+                { value: "privateKey", label: t("sessions.privateKeyAuth") },
+              ]}
+              value={authKind}
+            />
+          </div>
           <label>
-            <span>{t("sessions.host")} *</span>
-            <TextInput onChange={(event) => setHost(event.target.value)} value={host} />
-          </label>
-          <label>
-            <span>{t("sessions.port")} *</span>
-            <TextInput onChange={(event) => setPort(event.target.value)} value={port} />
-          </label>
-          <label>
-            <span>{t("sessions.username")}</span>
+            <span>
+              {t("sessions.username")}
+              {authKind === "privateKey" ? " *" : ""}
+            </span>
             <TextInput
               onChange={(event) => setUsername(event.target.value)}
+              required={authKind === "privateKey"}
               value={username}
             />
           </label>
-          <label>
-            <span>{t("sessions.password")}</span>
-            <TextInput
-              autoComplete="new-password"
-              onChange={(event) => setCredential(event.target.value)}
-              placeholder={mode === "edit" ? t("sessions.keepCredential") : ""}
-              type="password"
-              value={credential}
+
+          {authKind === "password" ? (
+            rememberCredential ? (
+              <label className="form-wide">
+                <span>{t("sessions.password")}</span>
+                <TextInput
+                  autoComplete="new-password"
+                  onChange={(event) => setCredential(event.target.value)}
+                  placeholder={
+                    mode === "edit" &&
+                    session?.auth.kind === "password" &&
+                    session.credentialState === "stored"
+                      ? t("sessions.keepCredential")
+                      : ""
+                  }
+                  type="password"
+                  value={credential}
+                />
+              </label>
+            ) : null
+          ) : (
+            <>
+              <div className="form-field">
+                <span>{t("sessions.privateKeySource")}</span>
+                <FormSelect<PrivateKeySource>
+                  ariaLabel={t("sessions.privateKeySource")}
+                  onChange={(nextPrivateKeySource) => {
+                    setPrivateKeySource(nextPrivateKeySource);
+                    setCredential("");
+                    setError(null);
+                  }}
+                  options={[
+                    { value: "file", label: t("sessions.privateKeyFile") },
+                    { value: "inline", label: t("sessions.privateKeyInline") },
+                  ]}
+                  value={privateKeySource}
+                />
+              </div>
+              <label>
+                <span>{t("sessions.passphrase")}</span>
+                <TextInput
+                  autoComplete="new-password"
+                  onChange={(event) => setCredential(event.target.value)}
+                  placeholder={
+                    mode === "edit" &&
+                    session?.auth.kind === "privateKey" &&
+                    session.auth.source === privateKeySource
+                      ? t("sessions.keepCredential")
+                      : t("sessions.optionalPassphrase")
+                  }
+                  type="password"
+                  value={credential}
+                />
+              </label>
+              {privateKeySource === "file" ? (
+                <label className="form-wide">
+                  <span>{t("sessions.privateKey")} *</span>
+                  <span className="file-picker-row">
+                    <TextInput readOnly value={privateKeyPath} />
+                    <Button
+                      className="file-picker-button"
+                      onClick={() => void choosePrivateKey()}
+                      variant="ghost"
+                    >
+                      {t("sessions.browse")}
+                    </Button>
+                  </span>
+                </label>
+              ) : (
+                <label className="form-wide">
+                  <span>{t("sessions.privateKeyInline")} *</span>
+                  <textarea
+                    className="text-input private-key-content"
+                    maxLength={16 * 1024}
+                    onChange={(event) => setPrivateKeyContent(event.target.value)}
+                    placeholder={
+                      mode === "edit" &&
+                      session?.auth.kind === "privateKey" &&
+                      session.auth.source === "inline"
+                        ? t("sessions.keepPrivateKey")
+                        : t("sessions.pastePrivateKey")
+                    }
+                    spellCheck={false}
+                    value={privateKeyContent}
+                  />
+                  <small>{t("sessions.inlinePrivateKeyStoredHint")}</small>
+                </label>
+              )}
+            </>
+          )}
+          <label className="credential-remember-row form-wide">
+            <input
+              checked={rememberCredential}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setRememberCredential(checked);
+                if (!checked && authKind === "password") {
+                  setCredential("");
+                }
+              }}
+              type="checkbox"
             />
+            <span>
+              {authKind === "password"
+                ? t("sessions.rememberPassword")
+                : t("sessions.rememberPassphrase")}
+            </span>
           </label>
         </div>
 

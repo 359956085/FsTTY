@@ -161,7 +161,9 @@ export function useSessionsPageState({
         id: crypto.randomUUID(),
         sessionId,
         autoConnect:
-          autoConnect && Boolean(session.username.trim()) && session.credentialState === "stored",
+          autoConnect &&
+          Boolean(session.username.trim()) &&
+          session.credentialState !== "missing",
       };
       applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
     },
@@ -225,7 +227,7 @@ export function useSessionsPageState({
           id: crypto.randomUUID(),
           sessionId: created.id,
           autoConnect:
-            Boolean(created.username.trim()) && created.credentialState === "stored",
+            Boolean(created.username.trim()) && created.credentialState !== "missing",
         };
         applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
       }

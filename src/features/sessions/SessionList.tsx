@@ -11,11 +11,12 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type KeyboardEvent, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SessionGroup } from "../../shared/api/types";
-import { TextInput } from "../../shared/ui/TextInput";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import { SelectableOption } from "../../shared/ui/SelectableOption";
+import { TextInput } from "../../shared/ui/TextInput";
 
 export type SessionFilter = "all" | "favorites";
 
@@ -59,6 +60,7 @@ export function SessionList({
   query,
 }: SessionListProps) {
   const { t } = useTranslation();
+  const [filterActiveIndex, setFilterActiveIndex] = useState(0);
   const [filterOpen, setFilterOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -94,6 +96,55 @@ export function SessionList({
     { value: "all", label: t("sessions.filterAll") },
     { value: "favorites", label: t("sessions.filterFavorites") },
   ];
+  const selectedFilterIndex = Math.max(
+    0,
+    filterOptions.findIndex((option) => option.value === filter),
+  );
+
+  function openFilterMenu() {
+    setFilterActiveIndex(selectedFilterIndex);
+    setFilterOpen(true);
+  }
+
+  function moveFilterActive(step: number) {
+    if (!filterOpen) {
+      openFilterMenu();
+      return;
+    }
+    setFilterActiveIndex(
+      (index) => (index + step + filterOptions.length) % filterOptions.length,
+    );
+  }
+
+  function selectFilterOption(index: number) {
+    const option = filterOptions[index];
+    if (!option) {
+      return;
+    }
+    onFilterChange(option.value);
+    setFilterActiveIndex(index);
+    setFilterOpen(false);
+  }
+
+  function handleFilterKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveFilterActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveFilterActive(-1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (filterOpen) {
+        selectFilterOption(filterActiveIndex);
+      } else {
+        openFilterMenu();
+      }
+    } else if (event.key === "Escape" && filterOpen) {
+      event.preventDefault();
+      setFilterOpen(false);
+    }
+  }
 
   return (
     <aside className="session-sidebar" onContextMenu={(event) => event.preventDefault()}>
@@ -119,30 +170,48 @@ export function SessionList({
             value={query}
           />
         </label>
-        <div className="menu-anchor">
+        <div
+          className="menu-anchor"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setFilterOpen(false);
+            }
+          }}
+        >
           <button
+            aria-activedescendant={
+              filterOpen ? `session-filter-option-${filterActiveIndex}` : undefined
+            }
+            aria-controls="session-filter-options"
             aria-expanded={filterOpen}
-            aria-label={t("sessions.filter")}
+            aria-haspopup="listbox"
+            aria-label={`${t("sessions.filter")}: ${filterOptions[selectedFilterIndex].label}`}
             className={filter === "all" ? "icon-button" : "icon-button icon-button-active"}
-            onClick={() => setFilterOpen((open) => !open)}
+            onClick={() => (filterOpen ? setFilterOpen(false) : openFilterMenu())}
+            onKeyDown={handleFilterKeyDown}
+            role="combobox"
             type="button"
           >
             <Filter size={17} />
           </button>
           {filterOpen ? (
-            <div className="popup-menu popup-menu-right">
-              {filterOptions.map((option) => (
-                <button
-                  className={filter === option.value ? "popup-menu-active" : ""}
+            <div
+              className="popup-menu popup-menu-right"
+              id="session-filter-options"
+              role="listbox"
+            >
+              {filterOptions.map((option, index) => (
+                <SelectableOption
+                  active={index === filterActiveIndex}
+                  className="popup-menu-option"
+                  id={`session-filter-option-${index}`}
                   key={option.value}
-                  onClick={() => {
-                    onFilterChange(option.value);
-                    setFilterOpen(false);
-                  }}
-                  type="button"
-                >
-                  {option.label}
-                </button>
+                  label={option.label}
+                  onClick={() => selectFilterOption(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setFilterActiveIndex(index)}
+                  selected={filter === option.value}
+                />
               ))}
             </div>
           ) : null}

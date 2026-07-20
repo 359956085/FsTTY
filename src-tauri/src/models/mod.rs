@@ -7,12 +7,14 @@ mod settings;
 
 pub use app_error::AppError;
 pub use connection::{
-    ConnectResult, HostKeyChallenge, HostKeyChange, SshConnection, TerminalEvent, TransferEvent,
+    ConnectResult, CredentialKind, HostKeyChallenge, HostKeyChange, SshConnection, TerminalEvent,
+    TransferEvent,
 };
 pub use device::DeviceStatus;
 pub use file::{FileEntry, FileKind};
 pub use session::{
-    CreateSessionPayload, CredentialAction, CredentialState, SessionAuth, SessionAuthInput,
-    SessionGroup, SessionProfile, StoredSession, UpdateSessionPayload,
+    CreateSessionPayload, CredentialAction, CredentialState, PrivateKeyMaterialAction,
+    PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup, SessionProfile, StoredSession,
+    UpdateSessionPayload,
 };
 pub use settings::{AppSettings, Language};

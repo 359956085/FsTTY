@@ -91,11 +91,19 @@ pub async fn connect_session(
     columns: u32,
     rows: u32,
     on_event: Channel<TerminalEvent>,
+    one_time_credential: Option<Zeroizing<String>>,
 ) -> Result<ConnectResult, AppError> {
     let session = state.session_service.lock().await.find(&session_id)?;
     state
         .connection_manager
-        .connect(session, columns, rows, on_event, &state.credential_service)
+        .connect(
+            session,
+            columns,
+            rows,
+            on_event,
+            &state.credential_service,
+            one_time_credential,
+        )
         .await
 }
 

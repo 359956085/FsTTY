@@ -10,11 +10,23 @@ pub struct SshConnection {
 }
 
 #[derive(Clone, Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ConnectResult {
     Connected { connection: SshConnection },
     HostKeyRequired { challenge: HostKeyChallenge },
     HostKeyChanged { change: HostKeyChange },
+    CredentialRequired { credential_kind: CredentialKind },
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialKind {
+    Password,
+    PrivateKeyPassphrase,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -108,5 +120,16 @@ mod tests {
         assert_eq!(transfer["transferredBytes"], 1);
         assert_eq!(transfer["totalBytes"], 2);
         assert!(transfer.get("transfer_id").is_none());
+    }
+
+    #[test]
+    fn serializes_credential_required_result_as_camel_case() {
+        let value = serde_json::to_value(ConnectResult::CredentialRequired {
+            credential_kind: CredentialKind::PrivateKeyPassphrase,
+        })
+        .expect("凭据询问结果应能序列化");
+        assert_eq!(value["kind"], "credentialRequired");
+        assert_eq!(value["credentialKind"], "privateKeyPassphrase");
+        assert!(value.get("credential_kind").is_none());
     }
 }

@@ -15,17 +15,33 @@ export type SessionAuth =
   | { kind: "password" }
   | {
       kind: "privateKey";
+      source: "file";
       path: string;
+      passphraseRequired: boolean;
+    }
+  | {
+      kind: "privateKey";
+      source: "inline";
       passphraseRequired: boolean;
     };
 
+export type PrivateKeyMaterialAction =
+  | { mode: "preserve" }
+  | { mode: "replace"; value: string };
+
 export type SessionAuthInput =
   | { kind: "password" }
-  | { kind: "privateKey"; path: string };
+  | { kind: "privateKey"; source: "file"; path: string }
+  | {
+      kind: "privateKey";
+      source: "inline";
+      material: PrivateKeyMaterialAction;
+    };
 
 export type CredentialAction =
   | { mode: "preserve" }
   | { mode: "replace"; value: string }
+  | { mode: "useOnce"; value: string }
   | { mode: "clear" };
 
 export interface Session {
@@ -89,7 +105,11 @@ export interface HostKeyChange {
 export type ConnectResult =
   | { kind: "connected"; connection: SshConnection }
   | { kind: "hostKeyRequired"; challenge: HostKeyChallenge }
-  | { kind: "hostKeyChanged"; change: HostKeyChange };
+  | { kind: "hostKeyChanged"; change: HostKeyChange }
+  | {
+      kind: "credentialRequired";
+      credentialKind: "password" | "privateKeyPassphrase";
+    };
 
 export type TerminalEvent =
   | { kind: "data"; connectionId: string; data: string }

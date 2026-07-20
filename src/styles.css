@@ -49,7 +49,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -70,6 +71,7 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 [role="separator"]:focus-visible {
   outline: 2px solid rgba(210, 216, 222, 0.9);
   outline-offset: -2px;
@@ -365,11 +367,6 @@ select:focus-visible,
   border-radius: 4px;
   background: transparent;
   text-align: left;
-}
-
-.popup-menu button:hover,
-.popup-menu-active {
-  background: rgba(255, 255, 255, 0.07) !important;
 }
 
 .popup-menu-danger {
@@ -1403,11 +1400,13 @@ select:focus-visible,
   padding: 20px 22px 21px;
 }
 
-.session-dialog .form-grid label {
+.session-dialog .form-grid label,
+.session-dialog .form-grid .form-field {
   gap: 7px;
 }
 
-.session-dialog .form-grid label > span {
+.session-dialog .form-grid label > span,
+.session-dialog .form-grid .form-field > span {
   color: #afb4b9;
 }
 
@@ -1423,6 +1422,33 @@ select:focus-visible,
   border-color: rgba(210, 216, 222, 0.34);
 }
 
+.session-dialog textarea.private-key-content {
+  min-height: 132px;
+  height: 132px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  line-height: 1.45;
+}
+
+.session-dialog .form-grid small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-dialog .form-grid .credential-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.credential-remember-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #318be4;
+}
+
 .session-dialog .group-combobox-input {
   padding-right: 40px;
 }
@@ -1431,10 +1457,28 @@ select:focus-visible,
   width: 40px;
 }
 
-.session-dialog .group-combobox-menu {
+.session-dialog .group-combobox-menu,
+.session-dialog .form-select-menu {
   z-index: 30;
   border-color: rgba(190, 196, 202, 0.24);
   background: #242628;
+}
+
+.session-dialog .file-picker-button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-color: rgba(190, 196, 202, 0.22);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+}
+
+.session-dialog .file-picker-button:hover:not(:disabled) {
+  border-color: rgba(210, 216, 222, 0.42);
+  background: var(--surface-hover);
+}
+
+.session-dialog .file-picker-button > span {
+  color: inherit;
 }
 
 .session-dialog .dialog-secondary-action {
@@ -1493,12 +1537,14 @@ select:focus-visible,
   padding: 16px;
 }
 
-.form-grid label {
+.form-grid label,
+.form-grid .form-field {
   display: grid;
   gap: 6px;
 }
 
-.form-grid label span {
+.form-grid label span,
+.form-grid .form-field > span {
   color: var(--muted);
 }
 
@@ -1506,9 +1552,36 @@ select:focus-visible,
   grid-column: 1 / -1;
 }
 
-.group-combobox {
+.group-combobox,
+.form-select {
   position: relative;
   min-width: 0;
+}
+
+.form-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  text-align: left;
+}
+
+.form-select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-select-trigger > svg {
+  flex: none;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.form-select-trigger[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
 }
 
 .group-combobox-input {
@@ -1533,7 +1606,8 @@ select:focus-visible,
   color: var(--text);
 }
 
-.group-combobox-menu {
+.group-combobox-menu,
+.form-select-menu {
   position: absolute;
   z-index: 20;
   top: calc(100% + 4px);
@@ -1549,7 +1623,8 @@ select:focus-visible,
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
 }
 
-.group-combobox-option {
+.group-combobox-option,
+.form-select-option {
   min-width: 0;
   padding: 7px 8px;
   overflow: hidden;
@@ -1562,9 +1637,32 @@ select:focus-visible,
   white-space: nowrap;
 }
 
-.group-combobox-option:hover,
-.group-combobox-option:focus-visible,
-.group-combobox-option.selected {
+.selectable-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.selectable-option-indicator {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--accent);
+}
+
+.selectable-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.selectable-option.active {
   background: var(--surface-selected);
 }
 
@@ -1600,6 +1698,59 @@ select:focus-visible,
 
 .security-dialog .dialog-header svg {
   color: var(--warning);
+}
+
+.credential-dialog .dialog-header svg {
+  color: var(--accent);
+}
+
+.credential-dialog-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.credential-dialog-body > label:first-child {
+  display: grid;
+  gap: 7px;
+}
+
+.credential-dialog-body > label:first-child > span,
+.credential-dialog-body small {
+  color: var(--muted);
+}
+
+.credential-dialog-body .credential-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.credential-dialog .dialog-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.credential-dialog .dialog-actions .button {
+  min-width: 78px;
+  min-height: 38px;
+  padding: 0 14px;
+}
+
+.credential-dialog .dialog-actions .button-primary {
+  border: 1px solid #3b91e8;
+  background: #318be4;
+  color: #f4f8fc;
+}
+
+.credential-dialog .dialog-actions .button-primary:hover:not(:disabled) {
+  border-color: #4b9def;
+  background: #3b95ec;
+}
+
+.credential-dialog .dialog-actions .button-ghost:hover:not(:disabled) {
+  border-color: rgba(210, 216, 222, 0.42);
+  background: var(--surface-hover);
 }
 
 .security-details {

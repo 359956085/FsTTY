@@ -30,6 +30,7 @@ interface WorkspaceProps {
   onDismissTransfer: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onConnected: (tabId: string, connection: SshConnection) => void;
+  onCredentialSaved: () => Promise<void> | void;
   onCreateSession: () => void;
   onDirectoryChange: (tabId: string, path: string) => void;
   onDownload: (tabId: string, file: FileEntry) => void;
@@ -55,6 +56,7 @@ export function Workspace({
   onDismissTransfer,
   onCloseTab,
   onConnected,
+  onCredentialSaved,
   onCreateSession,
   onDirectoryChange,
   onDownload,
@@ -163,6 +165,7 @@ export function Workspace({
                   connectionState={runtime?.connectionState ?? "disconnected"}
                   directoryRequest={runtime?.terminalDirectoryRequest ?? null}
                   onConnected={onConnected}
+                  onCredentialSaved={onCredentialSaved}
                   onDirectoryChange={onDirectoryChange}
                   onStateChange={onTerminalState}
                   runtimeId={tab.id}

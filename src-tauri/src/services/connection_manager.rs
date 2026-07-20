@@ -1,12 +1,13 @@
 use crate::models::{
-    AppError, ConnectResult, FileEntry, FileKind, HostKeyChallenge, HostKeyChange, SessionAuth,
-    SshConnection, StoredSession, TerminalEvent, TransferEvent,
+    AppError, ConnectResult, CredentialKind, FileEntry, FileKind, HostKeyChallenge, HostKeyChange,
+    PrivateKeySource, SessionAuth, SshConnection, StoredSession, TerminalEvent, TransferEvent,
 };
 use crate::services::CredentialService;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use russh::client;
 use russh::client::KeyboardInteractiveAuthResponse;
 use russh::keys::{
+    decode_secret_key,
     known_hosts::{check_known_hosts_path, known_host_keys_path, learn_known_hosts_path},
     load_secret_key,
     ssh_key::{HashAlg, PublicKey},
@@ -29,6 +30,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::time;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -42,6 +44,7 @@ const MAX_PENDING_TERMINAL_MESSAGES: usize = 256;
 const MAX_EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
 const TRANSFER_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_REMOTE_PATH_BYTES: usize = 4096;
+const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 #[derive(Clone)]
 pub struct ConnectionManager {
     inner: Arc<ConnectionManagerInner>,
@@ -80,6 +83,11 @@ struct ActiveTransfer {
 struct ConnectCancellation {
     cancelled: AtomicBool,
     notify: Notify,
+}
+
+struct ConnectionCredentialInput<'a> {
+    service: &'a CredentialService,
+    one_time: Option<Zeroizing<String>>,
 }
 
 impl ConnectCancellation {
@@ -141,6 +149,11 @@ enum TerminalEnd {
     },
     Error(String),
     ClientGone,
+}
+
+enum AuthenticationOutcome {
+    Authenticated,
+    CredentialRequired(CredentialKind),
 }
 
 #[derive(Clone, Debug)]
@@ -244,8 +257,14 @@ impl ConnectionManager {
         rows: u32,
         events: Channel<TerminalEvent>,
         credentials: &CredentialService,
+        one_time_credential: Option<Zeroizing<String>>,
     ) -> Result<ConnectResult, AppError> {
         validate_terminal_size(columns, rows)?;
+        if session.username.trim().is_empty() {
+            return Err(AppError::Validation(
+                "当前会话缺少用户名，请先编辑会话".to_owned(),
+            ));
+        }
         let cancellation = {
             let mut connecting = self.inner.connecting_sessions.lock().await;
             let cancellation = Arc::new(ConnectCancellation::new());
@@ -262,7 +281,10 @@ impl ConnectionManager {
                 columns,
                 rows,
                 events,
-                credentials,
+                ConnectionCredentialInput {
+                    service: credentials,
+                    one_time: one_time_credential,
+                },
                 &cancellation,
             ) => result,
             () = cancellation.cancelled() => Err(AppError::Connection("连接已取消".to_owned())),
@@ -283,7 +305,7 @@ impl ConnectionManager {
         columns: u32,
         rows: u32,
         events: Channel<TerminalEvent>,
-        credentials: &CredentialService,
+        credential_input: ConnectionCredentialInput<'_>,
         cancellation: &Arc<ConnectCancellation>,
     ) -> Result<ConnectResult, AppError> {
         let observation = Arc::new(StdMutex::new(None));
@@ -338,7 +360,22 @@ impl ConnectionManager {
             }
         };
 
-        authenticate(&mut handle, &session, credentials).await?;
+        match authenticate(
+            &mut handle,
+            &session,
+            credential_input.service,
+            credential_input.one_time,
+        )
+        .await?
+        {
+            AuthenticationOutcome::Authenticated => {}
+            AuthenticationOutcome::CredentialRequired(credential_kind) => {
+                let _ = handle
+                    .disconnect(Disconnect::ByApplication, "", "zh-CN")
+                    .await;
+                return Ok(ConnectResult::CredentialRequired { credential_kind });
+            }
+        }
 
         let mut terminal = time::timeout(SFTP_TIMEOUT, handle.channel_open_session())
             .await
@@ -1002,10 +1039,11 @@ async fn authenticate(
     handle: &mut client::Handle<SshClient>,
     session: &StoredSession,
     credentials: &CredentialService,
-) -> Result<(), AppError> {
+    one_time_credential: Option<Zeroizing<String>>,
+) -> Result<AuthenticationOutcome, AppError> {
     time::timeout(
         AUTH_TIMEOUT,
-        authenticate_inner(handle, session, credentials),
+        authenticate_inner(handle, session, credentials, one_time_credential),
     )
     .await
     .map_err(|_| AppError::Authentication("SSH 认证超时".to_owned()))?
@@ -1015,18 +1053,15 @@ async fn authenticate_inner(
     handle: &mut client::Handle<SshClient>,
     session: &StoredSession,
     credentials: &CredentialService,
-) -> Result<(), AppError> {
-    let expected_method = match &session.auth {
-        SessionAuth::Password => MethodKind::Password,
-        SessionAuth::PrivateKey { .. } => MethodKind::PublicKey,
-    };
+    one_time_credential: Option<Zeroizing<String>>,
+) -> Result<AuthenticationOutcome, AppError> {
     // OpenSSH 客户端会先用 none 查询可用方法。部分受限服务端依赖该顺序，直接提交密码会被拒绝。
-    match handle
+    let remaining_methods = match handle
         .authenticate_none(session.username.clone())
         .await
         .map_err(|_| AppError::Authentication("无法查询 SSH 认证方式".to_owned()))?
     {
-        client::AuthResult::Success => return Ok(()),
+        client::AuthResult::Success => return Ok(AuthenticationOutcome::Authenticated),
         client::AuthResult::Failure {
             remaining_methods,
             partial_success,
@@ -1036,20 +1071,47 @@ async fn authenticate_inner(
                     "SSH 需要继续认证，当前版本不支持多因素认证".to_owned(),
                 ));
             }
-            if !remaining_methods.contains(&expected_method) {
-                return Err(authentication_method_unavailable(expected_method));
+            remaining_methods
+        }
+    };
+
+    let expected_method = match &session.auth {
+        SessionAuth::Password => {
+            if remaining_methods.contains(&MethodKind::Password) {
+                MethodKind::Password
+            } else if remaining_methods.contains(&MethodKind::KeyboardInteractive) {
+                MethodKind::KeyboardInteractive
+            } else {
+                return Err(authentication_method_unavailable(MethodKind::Password));
             }
         }
-    }
+        SessionAuth::PrivateKey { .. } => {
+            if !remaining_methods.contains(&MethodKind::PublicKey) {
+                return Err(authentication_method_unavailable(MethodKind::PublicKey));
+            }
+            MethodKind::PublicKey
+        }
+    };
 
     let result = match &session.auth {
         SessionAuth::Password => {
-            let secret = credentials.get(&session.id).await?;
-            if session.username.is_empty() || secret.is_none() {
+            let secret = match one_time_credential {
+                Some(value) => value,
+                None => match credentials.get(&session.id).await? {
+                    Some(value) => value,
+                    None => {
+                        return Ok(AuthenticationOutcome::CredentialRequired(
+                            CredentialKind::Password,
+                        ))
+                    }
+                },
+            };
+            if expected_method == MethodKind::KeyboardInteractive {
                 let mut response = handle
                     .authenticate_keyboard_interactive_start(&session.username, None::<String>)
                     .await
                     .map_err(|_| AppError::Authentication("SSH 交互认证失败".to_owned()))?;
+                let mut prompt_rounds = 0_u8;
                 loop {
                     response = match response {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1059,17 +1121,19 @@ async fn authenticate_inner(
                             return Err(AppError::Authentication("SSH 交互认证失败".to_owned()))
                         }
                         KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                            let password = secret
-                                .as_ref()
-                                .map(|value| value.to_string())
-                                .unwrap_or_default();
+                            if prompt_rounds > 0 {
+                                return Err(AppError::Authentication(
+                                    "SSH 需要连续交互认证，当前版本不支持多因素认证".to_owned(),
+                                ));
+                            }
+                            prompt_rounds += 1;
                             let responses = prompts
                                 .into_iter()
                                 .map(|prompt| {
                                     if prompt.echo {
                                         session.username.clone()
                                     } else {
-                                        password.clone()
+                                        secret.as_str().to_owned()
                                     }
                                 })
                                 .collect();
@@ -1084,30 +1148,83 @@ async fn authenticate_inner(
                 }
             } else {
                 handle
-                    .authenticate_password(session.username.clone(), secret.unwrap().to_string())
+                    .authenticate_password(session.username.clone(), secret.as_str().to_owned())
                     .await
                     .map_err(|_| AppError::Authentication("SSH 密码认证失败".to_owned()))?
             }
         }
         SessionAuth::PrivateKey {
+            source,
             path,
             passphrase_required,
         } => {
-            let passphrase =
-                if *passphrase_required {
-                    Some(credentials.get(&session.id).await?.ok_or_else(|| {
-                        AppError::Credential("私钥口令缺失，请重新输入".to_owned())
-                    })?)
-                } else {
-                    None
-                };
-            let key_path = path.clone();
-            let key = tokio::task::spawn_blocking(move || {
-                load_secret_key(key_path, passphrase.as_ref().map(|value| value.as_str()))
-            })
-            .await
-            .map_err(|_| AppError::Credential("私钥加载任务失败".to_owned()))?
-            .map_err(|_| AppError::Credential("无法加载私钥或口令错误".to_owned()))?;
+            if *source == PrivateKeySource::File {
+                let key_path = path
+                    .as_deref()
+                    .ok_or_else(|| AppError::Persistence("私钥文件路径缺失".to_owned()))?;
+                let metadata = tokio::fs::metadata(key_path)
+                    .await
+                    .map_err(|_| AppError::Credential("私钥文件不存在或无法读取".to_owned()))?;
+                if !metadata.is_file() || metadata.len() > MAX_PRIVATE_KEY_BYTES {
+                    return Err(AppError::Credential(
+                        "私钥文件必须是小于 1 MiB 的普通文件".to_owned(),
+                    ));
+                }
+            }
+            let inline_key = if *source == PrivateKeySource::Inline {
+                Some(
+                    credentials
+                        .get_private_key(&session.id)
+                        .await?
+                        .ok_or_else(|| {
+                            AppError::Credential("已保存私钥缺失，请重新粘贴".to_owned())
+                        })?,
+                )
+            } else {
+                None
+            };
+            let passphrase = if *passphrase_required {
+                match one_time_credential {
+                    Some(value) => Some(value),
+                    None => match credentials.get(&session.id).await? {
+                        Some(value) => Some(value),
+                        None => {
+                            return Ok(AuthenticationOutcome::CredentialRequired(
+                                CredentialKind::PrivateKeyPassphrase,
+                            ))
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+            let key = match source {
+                PrivateKeySource::File => {
+                    let key_path = path
+                        .clone()
+                        .ok_or_else(|| AppError::Persistence("私钥文件路径缺失".to_owned()))?;
+                    tokio::task::spawn_blocking(move || {
+                        load_secret_key(key_path, passphrase.as_ref().map(|value| value.as_str()))
+                    })
+                    .await
+                    .map_err(|_| AppError::Credential("私钥加载任务失败".to_owned()))?
+                    .map_err(|_| AppError::Credential("无法加载私钥或口令错误".to_owned()))?
+                }
+                PrivateKeySource::Inline => {
+                    let inline_key = inline_key.ok_or_else(|| {
+                        AppError::Credential("已保存私钥缺失，请重新粘贴".to_owned())
+                    })?;
+                    tokio::task::spawn_blocking(move || {
+                        decode_secret_key(
+                            &inline_key,
+                            passphrase.as_ref().map(|value| value.as_str()),
+                        )
+                    })
+                    .await
+                    .map_err(|_| AppError::Credential("私钥加载任务失败".to_owned()))?
+                    .map_err(|_| AppError::Credential("无法加载私钥或口令错误".to_owned()))?
+                }
+            };
             let hash = handle
                 .best_supported_rsa_hash()
                 .await
@@ -1124,7 +1241,7 @@ async fn authenticate_inner(
     };
 
     match result {
-        client::AuthResult::Success => Ok(()),
+        client::AuthResult::Success => Ok(AuthenticationOutcome::Authenticated),
         client::AuthResult::Failure {
             partial_success: true,
             ..
@@ -1149,7 +1266,7 @@ async fn authenticate_inner(
 
 fn authentication_method_unavailable(method: MethodKind) -> AppError {
     let message = match method {
-        MethodKind::Password => "服务器未启用密码认证",
+        MethodKind::Password | MethodKind::KeyboardInteractive => "服务器未启用密码认证",
         MethodKind::PublicKey => "服务器未启用私钥认证",
         _ => "服务器未启用所选认证方式",
     };
@@ -1788,6 +1905,7 @@ mod tests {
                 30,
                 Channel::<TerminalEvent>::new(|_| Ok(())),
                 &credentials,
+                None,
             )
             .await
             .expect("首次 SSH 握手失败");
@@ -1816,7 +1934,14 @@ mod tests {
             Ok(())
         });
         let connected = manager
-            .connect(session.clone(), 100, 30, terminal_events, &credentials)
+            .connect(
+                session.clone(),
+                100,
+                30,
+                terminal_events,
+                &credentials,
+                None,
+            )
             .await
             .expect("SSH 密码连接失败");
         let connection = match connected {
@@ -1993,6 +2118,7 @@ mod tests {
                 24,
                 Channel::<TerminalEvent>::new(|_| Ok(())),
                 &credentials,
+                None,
             )
             .await
             .expect("并发 SSH 连接失败");
@@ -2034,6 +2160,7 @@ mod tests {
                     24,
                     Channel::<TerminalEvent>::new(|_| Ok(())),
                     &credentials,
+                    None,
                 )
                 .await,
             Err(AppError::Authentication(_))
@@ -2061,7 +2188,8 @@ mod tests {
                 group: "测试".to_owned(),
                 tags: vec![],
                 auth: SessionAuth::PrivateKey {
-                    path: private_key_path,
+                    source: PrivateKeySource::File,
+                    path: Some(private_key_path),
                     passphrase_required: false,
                 },
             };
@@ -2072,6 +2200,7 @@ mod tests {
                     30,
                     Channel::<TerminalEvent>::new(|_| Ok(())),
                     &credentials,
+                    None,
                 )
                 .await
                 .expect("SSH 无口令私钥连接失败");
@@ -2099,7 +2228,8 @@ mod tests {
                 group: "测试".to_owned(),
                 tags: vec![],
                 auth: SessionAuth::PrivateKey {
-                    path: private_key_path,
+                    source: PrivateKeySource::File,
+                    path: Some(private_key_path),
                     passphrase_required: true,
                 },
             };
@@ -2114,6 +2244,7 @@ mod tests {
                     30,
                     Channel::<TerminalEvent>::new(|_| Ok(())),
                     &credentials,
+                    None,
                 )
                 .await
                 .expect("SSH 加密私钥连接失败");
@@ -2139,7 +2270,8 @@ mod tests {
                 group: "测试".to_owned(),
                 tags: vec![],
                 auth: SessionAuth::PrivateKey {
-                    path: bad_key_path,
+                    source: PrivateKeySource::File,
+                    path: Some(bad_key_path),
                     passphrase_required: true,
                 },
             };
@@ -2158,6 +2290,7 @@ mod tests {
                         30,
                         Channel::<TerminalEvent>::new(|_| Ok(())),
                         &credentials,
+                        None,
                     )
                     .await,
                 Err(AppError::Credential(_))
@@ -2179,6 +2312,7 @@ mod tests {
                 30,
                 Channel::<TerminalEvent>::new(|_| Ok(())),
                 &credentials,
+                None,
             )
             .await
             .expect("忘记密钥后的握手失败");
@@ -2212,6 +2346,7 @@ mod tests {
                     30,
                     Channel::<TerminalEvent>::new(|_| Ok(())),
                     &credentials,
+                    None,
                 )
                 .await
                 .expect("主机密钥变化握手失败");
