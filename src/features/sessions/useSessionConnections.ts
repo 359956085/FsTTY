@@ -16,6 +16,8 @@ export interface TransferProgress {
   id: string;
   direction: "upload" | "download";
   fileName: string;
+  batchIndex?: number;
+  batchTotal?: number;
   transferredBytes: number;
   totalBytes: number;
   state: "running" | "completed" | "cancelled";
@@ -47,6 +49,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const runtimesRef = useRef(runtimes);
   const fileRequestIds = useRef(new Map<string, number>());
   const deviceRequestIds = useRef(new Map<string, number>());
+  // 后端继续处理单文件；批次令牌只负责前端串行排队和整批取消。
+  const uploadBatchTokens = useRef(new Map<string, string>());
   const terminalDirectoryRequestId = useRef(0);
 
   useEffect(() => {
@@ -147,6 +151,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const handleTerminalState = useCallback(
     (sessionId: string, state: ConnectionState, error: string | null = null) => {
       if (state === "disconnected" || state === "error") {
+        uploadBatchTokens.current.delete(sessionId);
         fileRequestIds.current.set(
           sessionId,
           (fileRequestIds.current.get(sessionId) ?? 0) + 1,
@@ -242,6 +247,59 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [loadFiles],
   );
 
+  const runRemoteMutation = useCallback(
+    async (
+      sessionId: string,
+      mutation: (connectionId: string, currentPath: string) => Promise<void>,
+    ) => {
+      const runtime = runtimesRef.current[sessionId];
+      if (!runtime?.connection?.sftpAvailable) {
+        throw new Error("当前会话无法使用 SFTP");
+      }
+      if (runtime.filesLoading || runtime.transfer?.state === "running") {
+        throw new Error("当前会话正在处理文件操作");
+      }
+      const connectionId = runtime.connection.connectionId;
+      const currentPath = runtime.currentPath;
+      try {
+        await mutation(connectionId, currentPath);
+      } finally {
+        const latest = runtimesRef.current[sessionId];
+        if (
+          latest?.connection?.connectionId === connectionId &&
+          latest.currentPath === currentPath
+        ) {
+          await loadFiles(sessionId, connectionId, currentPath);
+        }
+      }
+    },
+    [loadFiles],
+  );
+
+  const createRemoteDirectory = useCallback(
+    (sessionId: string, name: string) =>
+      runRemoteMutation(sessionId, (connectionId, currentPath) =>
+        api.createRemoteDirectory(connectionId, currentPath, name),
+      ),
+    [runRemoteMutation],
+  );
+
+  const renameRemoteEntry = useCallback(
+    (sessionId: string, path: string, newName: string) =>
+      runRemoteMutation(sessionId, (connectionId) =>
+        api.renameRemoteEntry(connectionId, path, newName),
+      ),
+    [runRemoteMutation],
+  );
+
+  const deleteRemoteEntry = useCallback(
+    (sessionId: string, path: string) =>
+      runRemoteMutation(sessionId, (connectionId) =>
+        api.deleteRemoteEntry(connectionId, path),
+      ),
+    [runRemoteMutation],
+  );
+
   const refreshSession = useCallback(
     async (sessionId: string) => {
       const runtime = runtimesRef.current[sessionId];
@@ -290,6 +348,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const removeRuntime = useCallback((sessionId: string) => {
     fileRequestIds.current.delete(sessionId);
     deviceRequestIds.current.delete(sessionId);
+    uploadBatchTokens.current.delete(sessionId);
     setRuntimes((current) => {
       const next = { ...current };
       delete next[sessionId];
@@ -308,6 +367,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       }
       fileRequestIds.current.delete(sessionId);
       deviceRequestIds.current.delete(sessionId);
+      uploadBatchTokens.current.delete(sessionId);
     }
     if (invalid.length > 0) {
       setRuntimes((current) => {
@@ -319,11 +379,141 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     }
   }, []);
 
+  const uploadFiles = useCallback(
+    async (sessionId: string, localPaths: string[]) => {
+      const paths = localPaths.filter(Boolean);
+      const runtime = runtimesRef.current[sessionId];
+      if (
+        paths.length === 0 ||
+        !runtime?.connection?.sftpAvailable ||
+        runtime.transfer?.state === "running" ||
+        uploadBatchTokens.current.has(sessionId)
+      ) {
+        return;
+      }
+
+      const connectionId = runtime.connection.connectionId;
+      const remoteDirectory = runtime.currentPath;
+      const batchToken = crypto.randomUUID();
+      uploadBatchTokens.current.set(sessionId, batchToken);
+      let uploaded = 0;
+      let skipped = 0;
+      let failed = 0;
+      let cancelled = false;
+
+      const batchIsActive = () =>
+        uploadBatchTokens.current.get(sessionId) === batchToken &&
+        runtimesRef.current[sessionId]?.connection?.connectionId === connectionId;
+      const clearTransfer = (transferId: string) => {
+        updateRuntime(sessionId, (current) => ({
+          ...current,
+          transfer: current.transfer?.id === transferId ? null : current.transfer,
+        }));
+      };
+
+      try {
+        for (const [index, localPath] of paths.entries()) {
+          if (!batchIsActive()) {
+            cancelled = true;
+            break;
+          }
+          const fileName = fileNameFromPath(localPath);
+          const run = async (
+            overwrite: boolean,
+          ): Promise<"uploaded" | "skipped" | "failed" | "cancelled"> => {
+            const transferId = crypto.randomUUID();
+            const progress = createTransferChannel(
+              sessionId,
+              transferId,
+              "upload",
+              fileName,
+              updateRuntime,
+              index + 1,
+              paths.length,
+            );
+            try {
+              await api.uploadFile(
+                connectionId,
+                transferId,
+                localPath,
+                remoteDirectory,
+                overwrite,
+                progress,
+              );
+              return batchIsActive() ? "uploaded" : "cancelled";
+            } catch (error) {
+              const info = readApiError(error, errorFallback);
+              if (info.kind === "conflict" && !overwrite) {
+                let accepted = false;
+                try {
+                  accepted = await confirm(`远程文件“${fileName}”已存在，确认覆盖？`, {
+                    title: "覆盖确认",
+                    kind: "warning",
+                    okLabel: "覆盖",
+                    cancelLabel: "跳过",
+                  });
+                } catch {
+                  clearTransfer(transferId);
+                  return "failed";
+                }
+                if (!batchIsActive()) {
+                  clearTransfer(transferId);
+                  return "cancelled";
+                }
+                if (accepted) {
+                  return run(true);
+                }
+                clearTransfer(transferId);
+                return "skipped";
+              }
+              clearTransfer(transferId);
+              return "failed";
+            }
+          };
+
+          const result = await run(false);
+          if (result === "cancelled") {
+            cancelled = true;
+            break;
+          }
+          if (result === "uploaded") uploaded += 1;
+          if (result === "skipped") skipped += 1;
+          if (result === "failed") failed += 1;
+        }
+      } finally {
+        const ownsBatch = uploadBatchTokens.current.get(sessionId) === batchToken;
+        if (ownsBatch) {
+          uploadBatchTokens.current.delete(sessionId);
+        }
+        const latest = runtimesRef.current[sessionId];
+        let refreshSucceeded = true;
+        if (
+          (ownsBatch || cancelled) &&
+          latest?.connection?.connectionId === connectionId &&
+          latest.currentPath === remoteDirectory
+        ) {
+          refreshSucceeded = await loadFiles(sessionId, connectionId, remoteDirectory);
+        }
+        if (ownsBatch && refreshSucceeded && (skipped > 0 || failed > 0)) {
+          updateRuntime(sessionId, (current) => ({
+            ...current,
+            error: `上传结束：成功 ${uploaded}，跳过 ${skipped}，失败 ${failed}`,
+          }));
+        }
+      }
+    },
+    [errorFallback, loadFiles, updateRuntime],
+  );
+
   const uploadFile = useCallback(
     async (sessionId: string) => {
       try {
         const runtime = runtimesRef.current[sessionId];
-        if (!runtime?.connection?.sftpAvailable || runtime.transfer?.state === "running") {
+        if (
+          !runtime?.connection?.sftpAvailable ||
+          runtime.transfer?.state === "running" ||
+          uploadBatchTokens.current.has(sessionId)
+        ) {
           return;
         }
         const selected = await open({
@@ -331,61 +521,9 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           multiple: false,
           title: "选择上传文件",
         });
-        if (!selected) {
-          return;
+        if (selected) {
+          await uploadFiles(sessionId, [selected]);
         }
-        const selectedRuntime = runtimesRef.current[sessionId];
-        if (
-          !selectedRuntime?.connection?.sftpAvailable ||
-          selectedRuntime.transfer?.state === "running"
-        ) {
-          return;
-        }
-        const connectionId = selectedRuntime.connection.connectionId;
-        const remoteDirectory = selectedRuntime.currentPath;
-        const fileName = fileNameFromPath(selected);
-
-        const run = async (overwrite: boolean): Promise<void> => {
-          const transferId = crypto.randomUUID();
-          const progress = createTransferChannel(
-            sessionId,
-            transferId,
-            "upload",
-            fileName,
-            updateRuntime,
-          );
-          try {
-            await api.uploadFile(
-              connectionId,
-              transferId,
-              selected,
-              remoteDirectory,
-              overwrite,
-              progress,
-            );
-            refreshFiles(sessionId);
-          } catch (error) {
-            const info = readApiError(error, errorFallback);
-            if (info.kind === "conflict" && !overwrite) {
-              const accepted = await confirm("远程文件已存在，确认覆盖？", {
-                title: "覆盖确认",
-                kind: "warning",
-                okLabel: "覆盖",
-                cancelLabel: "取消",
-              });
-              if (accepted) {
-                await run(true);
-                return;
-              }
-            }
-            updateRuntime(sessionId, (current) => ({
-              ...current,
-              transfer: current.transfer?.id === transferId ? null : current.transfer,
-              error: info.message,
-            }));
-          }
-        };
-        await run(false);
       } catch (error) {
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
@@ -394,7 +532,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }));
       }
     },
-    [errorFallback, refreshFiles, updateRuntime],
+    [errorFallback, updateRuntime, uploadFiles],
   );
 
   const downloadFile = useCallback(
@@ -477,6 +615,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const cancelTransfer = useCallback(
     async (sessionId: string) => {
+      uploadBatchTokens.current.delete(sessionId);
       const transfer = runtimesRef.current[sessionId]?.transfer;
       if (!transfer || transfer.state !== "running") {
         return;
@@ -506,6 +645,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   return {
     cancelTransfer,
+    createRemoteDirectory,
+    deleteRemoteEntry,
     dismissTransfer,
     disconnect,
     downloadFile,
@@ -516,9 +657,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     pruneRuntimes,
     refreshFiles,
     refreshSession,
+    renameRemoteEntry,
     removeRuntime,
     runtimes,
     uploadFile,
+    uploadFiles,
   };
 }
 
@@ -545,6 +688,8 @@ function createTransferChannel(
     sessionId: string,
     update: (runtime: SessionRuntime) => SessionRuntime,
   ) => void,
+  batchIndex?: number,
+  batchTotal?: number,
 ) {
   const channel = new Channel<TransferEvent>();
   channel.onmessage = (event) => {
@@ -557,6 +702,8 @@ function createTransferChannel(
         id: transferId,
         direction,
         fileName,
+        batchIndex,
+        batchTotal,
         transferredBytes: event.transferredBytes,
         totalBytes: event.totalBytes,
         state:
@@ -575,6 +722,8 @@ function createTransferChannel(
       id: transferId,
       direction,
       fileName,
+      batchIndex,
+      batchTotal,
       transferredBytes: 0,
       totalBytes: 0,
       state: "running",

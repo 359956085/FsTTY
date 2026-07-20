@@ -62,6 +62,15 @@ export const api = {
   listRemoteFiles(connectionId: string, path: string) {
     return invoke<FileEntry[]>("list_remote_files", { connectionId, path });
   },
+  createRemoteDirectory(connectionId: string, parentPath: string, name: string) {
+    return invoke<void>("create_remote_directory", { connectionId, parentPath, name });
+  },
+  renameRemoteEntry(connectionId: string, path: string, newName: string) {
+    return invoke<void>("rename_remote_entry", { connectionId, path, newName });
+  },
+  deleteRemoteEntry(connectionId: string, path: string) {
+    return invoke<void>("delete_remote_entry", { connectionId, path });
+  },
   uploadFile(
     connectionId: string,
     transferId: string,

@@ -31,11 +31,14 @@ interface WorkspaceProps {
   onCloseTab: (tabId: string) => void;
   onConnected: (tabId: string, connection: SshConnection) => void;
   onCredentialSaved: () => Promise<void> | void;
+  onCreateRemoteDirectory: (tabId: string, name: string) => Promise<void>;
   onCreateSession: () => void;
+  onDeleteRemoteEntry: (tabId: string, path: string) => Promise<void>;
   onDirectoryChange: (tabId: string, path: string) => void;
   onDownload: (tabId: string, file: FileEntry) => void;
   onOpenPath: (tabId: string, path: string) => void;
   onRefreshFiles: (tabId: string) => void;
+  onRenameRemoteEntry: (tabId: string, path: string, newName: string) => Promise<void>;
   onSelectTab: (tabId: string) => void;
   onTerminalState: (
     tabId: string,
@@ -44,6 +47,7 @@ interface WorkspaceProps {
   ) => void;
   onToggleRight: () => void;
   onUpload: (tabId: string) => void;
+  onUploadFiles: (tabId: string, localPaths: string[]) => void;
 }
 
 export function Workspace({
@@ -57,15 +61,19 @@ export function Workspace({
   onCloseTab,
   onConnected,
   onCredentialSaved,
+  onCreateRemoteDirectory,
   onCreateSession,
+  onDeleteRemoteEntry,
   onDirectoryChange,
   onDownload,
   onOpenPath,
   onRefreshFiles,
+  onRenameRemoteEntry,
   onSelectTab,
   onTerminalState,
   onToggleRight,
   onUpload,
+  onUploadFiles,
   openTabs,
   rightCollapsed,
   rightResizeHandle,
@@ -194,6 +202,7 @@ export function Workspace({
           <FilesPane
             currentPath={activeRuntime.currentPath}
             files={activeRuntime.files}
+            key={activeTabId ?? "no-session"}
             loading={activeRuntime.filesLoading}
             onCancelTransfer={() =>
               activeTabId && onCancelTransfer(activeTabId)
@@ -202,6 +211,14 @@ export function Workspace({
               activeTabId && onDismissTransfer(activeTabId)
             }
             onCollapse={onToggleRight}
+            onCreateDirectory={(name) =>
+              activeTabId
+                ? onCreateRemoteDirectory(activeTabId, name)
+                : Promise.resolve()
+            }
+            onDeleteEntry={(path) =>
+              activeTabId ? onDeleteRemoteEntry(activeTabId, path) : Promise.resolve()
+            }
             onDownload={(file) =>
               activeTabId && onDownload(activeTabId, file)
             }
@@ -211,7 +228,15 @@ export function Workspace({
             onRefresh={() =>
               activeTabId && onRefreshFiles(activeTabId)
             }
+            onRenameEntry={(path, newName) =>
+              activeTabId
+                ? onRenameRemoteEntry(activeTabId, path, newName)
+                : Promise.resolve()
+            }
             onUpload={() => activeTabId && onUpload(activeTabId)}
+            onUploadFiles={(localPaths) =>
+              activeTabId && onUploadFiles(activeTabId, localPaths)
+            }
             sftpAvailable={Boolean(activeRuntime.connection?.sftpAvailable)}
             transfer={activeRuntime.transfer}
           />

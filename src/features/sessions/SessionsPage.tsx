@@ -139,17 +139,23 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={connections.handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}
+        onCreateRemoteDirectory={connections.createRemoteDirectory}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
+        onDeleteRemoteEntry={connections.deleteRemoteEntry}
         onDirectoryChange={connections.handleTerminalDirectory}
         onDownload={(sessionId, file) =>
           void connections.downloadFile(sessionId, file)
         }
         onOpenPath={connections.openPath}
         onRefreshFiles={connections.refreshFiles}
+        onRenameRemoteEntry={connections.renameRemoteEntry}
         onSelectTab={sessionsState.selectTab}
         onTerminalState={connections.handleTerminalState}
         onToggleRight={toggleRightCollapsed}
         onUpload={(sessionId) => void connections.uploadFile(sessionId)}
+        onUploadFiles={(sessionId, localPaths) =>
+          void connections.uploadFiles(sessionId, localPaths)
+        }
         openTabs={sessionsState.openSessionTabs}
         rightCollapsed={layout.rightCollapsed}
         rightResizeHandle={

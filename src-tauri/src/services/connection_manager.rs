@@ -653,6 +653,97 @@ impl ConnectionManager {
         Ok(files)
     }
 
+    pub async fn create_remote_directory(
+        &self,
+        connection_id: &str,
+        parent_path: &str,
+        name: &str,
+    ) -> Result<(), AppError> {
+        let target = resolve_remote_child(parent_path, name)?;
+        let sftp = self.mutable_browser_sftp(connection_id).await?;
+        if sftp
+            .try_exists(target.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法检查远程目录是否存在".to_owned()))?
+        {
+            return Err(AppError::Conflict("远程目标已存在".to_owned()));
+        }
+        sftp.create_dir(target)
+            .await
+            .map_err(|_| AppError::Sftp("无法创建远程目录".to_owned()))
+    }
+
+    pub async fn rename_remote_entry(
+        &self,
+        connection_id: &str,
+        path: &str,
+        new_name: &str,
+    ) -> Result<(), AppError> {
+        let source = normalize_mutable_remote_path(path, "禁止重命名远程根目录")?;
+        let parent = remote_parent_path(&source);
+        let target = resolve_remote_child(&parent, new_name)?;
+        if source == target {
+            return Ok(());
+        }
+
+        let sftp = self.mutable_browser_sftp(connection_id).await?;
+        if sftp
+            .try_exists(target.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法检查远程重命名目标".to_owned()))?
+        {
+            return Err(AppError::Conflict("远程目标已存在".to_owned()));
+        }
+        sftp.rename(source, target)
+            .await
+            .map_err(|_| AppError::Sftp("无法重命名远程文件".to_owned()))
+    }
+
+    pub async fn delete_remote_entry(
+        &self,
+        connection_id: &str,
+        path: &str,
+    ) -> Result<(), AppError> {
+        let root = normalize_mutable_remote_path(path, "禁止删除远程根目录")?;
+        let sftp = self.mutable_browser_sftp(connection_id).await?;
+        let mut pending = vec![(root, false)];
+
+        // 后序遍历确保先删除子项，再删除目录；符号链接始终按文件处理。
+        while let Some((path, directory_visited)) = pending.pop() {
+            if directory_visited {
+                sftp.remove_dir(path).await.map_err(|_| {
+                    AppError::Sftp("递归删除远程目录失败，部分内容可能已删除".to_owned())
+                })?;
+                continue;
+            }
+
+            let metadata = sftp.symlink_metadata(path.clone()).await.map_err(|_| {
+                AppError::Sftp("无法读取远程删除目标，部分内容可能已删除".to_owned())
+            })?;
+            if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                let directory = sftp.read_dir(path.clone()).await.map_err(|_| {
+                    AppError::Sftp("无法读取待删除目录，部分内容可能已删除".to_owned())
+                })?;
+                pending.push((path.clone(), true));
+                for entry in directory {
+                    let name = entry.file_name();
+                    validate_remote_name(&name).map_err(|_| {
+                        AppError::Sftp("待删除目录包含无效文件名，部分内容可能已删除".to_owned())
+                    })?;
+                    let child = checked_join_remote_path(&path, &name).map_err(|_| {
+                        AppError::Sftp("待删除目录路径无效，部分内容可能已删除".to_owned())
+                    })?;
+                    pending.push((child, false));
+                }
+            } else {
+                sftp.remove_file(path).await.map_err(|_| {
+                    AppError::Sftp("删除远程文件失败，部分内容可能已删除".to_owned())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn upload_file(
         &self,
         connection_id: &str,
@@ -985,6 +1076,27 @@ impl ConnectionManager {
             },
         );
         Ok(cancelled)
+    }
+
+    async fn mutable_browser_sftp(
+        &self,
+        connection_id: &str,
+    ) -> Result<Arc<SftpSession>, AppError> {
+        let entry = self.entry(connection_id).await?;
+        if self
+            .inner
+            .transfers
+            .lock()
+            .await
+            .values()
+            .any(|transfer| transfer.connection_id == connection_id)
+        {
+            return Err(AppError::Busy("当前会话正在传输文件".to_owned()));
+        }
+        entry
+            .browser_sftp
+            .clone()
+            .ok_or_else(|| AppError::Sftp("服务器不支持 SFTP".to_owned()))
     }
 
     async fn end_transfer(&self, transfer_id: &str) {
@@ -1590,6 +1702,27 @@ fn checked_join_remote_path(directory: &str, name: &str) -> Result<String, AppEr
     normalize_remote_path(&join_remote_path(directory, name))
 }
 
+fn resolve_remote_child(parent_path: &str, name: &str) -> Result<String, AppError> {
+    validate_remote_name(name)?;
+    let parent_path = normalize_remote_path(parent_path)?;
+    checked_join_remote_path(&parent_path, name)
+}
+
+fn normalize_mutable_remote_path(path: &str, root_error: &str) -> Result<String, AppError> {
+    let path = normalize_remote_path(path)?;
+    if path == "/" {
+        return Err(AppError::Validation(root_error.to_owned()));
+    }
+    Ok(path)
+}
+
+fn remote_parent_path(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+        .unwrap_or("/")
+        .to_owned()
+}
+
 async fn validate_upload_source(path: &str) -> Result<PathBuf, AppError> {
     let path = validate_local_path(path, "本地文件路径无效")?;
     let metadata = tokio::fs::symlink_metadata(&path)
@@ -1771,6 +1904,20 @@ mod tests {
             "/folder/with space "
         );
         assert!(checked_join_remote_path(&format!("/{}", "a".repeat(4091)), "file").is_err());
+    }
+
+    #[test]
+    fn resolves_remote_mutation_targets_safely() {
+        assert_eq!(
+            resolve_remote_child("/var/www", "assets").unwrap(),
+            "/var/www/assets"
+        );
+        assert!(resolve_remote_child("/var/www", "../assets").is_err());
+        assert!(resolve_remote_child("/var/www", "bad/name").is_err());
+        assert!(normalize_mutable_remote_path("/", "禁止删除").is_err());
+        assert!(normalize_mutable_remote_path("/folder/..", "禁止删除").is_err());
+        assert_eq!(remote_parent_path("/file.txt"), "/");
+        assert_eq!(remote_parent_path("/var/file.txt"), "/var");
     }
 
     #[test]
@@ -2077,6 +2224,63 @@ mod tests {
             file.name != format!(".fstty-{cancelled_transfer_id}.part")
                 && file.name != format!("cancel-{cancelled_transfer_id}.bin")
         }));
+
+        let operations_directory_name = format!("fstty-ops-{test_id}");
+        manager
+            .create_remote_directory(
+                &connection.connection_id,
+                &connection.home_path,
+                &operations_directory_name,
+            )
+            .await
+            .expect("创建远程测试目录失败");
+        let operations_directory =
+            join_remote_path(&connection.home_path, &operations_directory_name);
+        manager
+            .create_remote_directory(&connection.connection_id, &operations_directory, "nested")
+            .await
+            .expect("创建远程嵌套目录失败");
+        let nested_directory = join_remote_path(&operations_directory, "nested");
+        manager
+            .upload_file(
+                &connection.connection_id,
+                &Uuid::new_v4().to_string(),
+                upload_source.to_str().expect("测试路径无效"),
+                &nested_directory,
+                false,
+                Channel::<TransferEvent>::new(|_| Ok(())),
+            )
+            .await
+            .expect("上传递归删除测试文件失败");
+        let renamed_directory_name = format!("fstty-ops-renamed-{test_id}");
+        manager
+            .rename_remote_entry(
+                &connection.connection_id,
+                &operations_directory,
+                &renamed_directory_name,
+            )
+            .await
+            .expect("重命名远程测试目录失败");
+        let renamed_directory = join_remote_path(&connection.home_path, &renamed_directory_name);
+        manager
+            .delete_remote_entry(&connection.connection_id, &renamed_directory)
+            .await
+            .expect("递归删除远程测试目录失败");
+        assert!(manager
+            .delete_remote_entry(&connection.connection_id, "/")
+            .await
+            .is_err());
+        assert!(manager
+            .list_files(&connection.connection_id, &connection.home_path)
+            .await
+            .expect("文件操作后目录浏览失败")
+            .iter()
+            .all(|file| file.name != renamed_directory_name));
+        manager
+            .delete_remote_entry(&connection.connection_id, &remote_path)
+            .await
+            .expect("清理远程上传测试文件失败");
+
         assert!(
             DeviceService
                 .status(&manager, &connection.connection_id)

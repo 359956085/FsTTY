@@ -1,3 +1,5 @@
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Ban,
   Clipboard,
@@ -9,8 +11,11 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   Link as LinkIcon,
+  Pencil,
   RefreshCw,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -25,8 +30,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
+import { resolveApiError } from "../../shared/api/errors";
+import { Button } from "../../shared/ui/Button";
 import type { TransferProgress } from "./useSessionConnections";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import { TextInput } from "../../shared/ui/TextInput";
 import { ResizeHandle } from "./ResizeHandle";
 import {
   FILE_COLUMN_LIMITS,
@@ -61,11 +69,24 @@ interface FilesPaneProps {
   onCancelTransfer: () => void;
   onDismissTransfer: () => void;
   onCollapse: () => void;
+  onCreateDirectory: (name: string) => Promise<void>;
+  onDeleteEntry: (path: string) => Promise<void>;
   onDownload: (file: FileEntry) => void;
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
+  onRenameEntry: (path: string, newName: string) => Promise<void>;
   onUpload: () => void;
+  onUploadFiles: (localPaths: string[]) => void;
 }
+
+type FileContextMenu =
+  | { kind: "directory"; x: number; y: number }
+  | { kind: "entry"; x: number; y: number; file: FileEntry };
+
+type FileOperationDialog =
+  | { kind: "create"; value: string; error: string | null }
+  | { kind: "rename"; file: FileEntry; value: string; error: string | null }
+  | { kind: "delete"; file: FileEntry; error: string | null };
 
 export function FilesPane({
   currentPath,
@@ -74,14 +95,19 @@ export function FilesPane({
   onCancelTransfer,
   onDismissTransfer,
   onCollapse,
+  onCreateDirectory,
+  onDeleteEntry,
   onDownload,
   onOpenPath,
   onRefresh,
+  onRenameEntry,
   onUpload,
+  onUploadFiles,
   sftpAvailable,
   transfer,
 }: FilesPaneProps) {
   const { t } = useTranslation();
+  const panelRef = useRef<HTMLElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const [fileColumns, setFileColumns] = useState<FileColumnPreferences>(
     () => readWorkspacePreferences().fileColumns,
@@ -89,8 +115,15 @@ export function FilesPane({
   const fileColumnsRef = useRef(fileColumns);
   const removeColumnDragListenersRef = useRef<() => void>(() => undefined);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileEntry } | null>(null);
+  const [contextMenu, setContextMenu] = useState<FileContextMenu | null>(null);
+  const [fileOperation, setFileOperation] = useState<FileOperationDialog | null>(null);
+  const [operationPending, setOperationPending] = useState(false);
+  const [dragUploadActive, setDragUploadActive] = useState(false);
   const transferRunning = transfer?.state === "running";
+  const operationBlocked =
+    !sftpAvailable || loading || transferRunning || operationPending || fileOperation !== null;
+  const dragUploadRef = useRef({ enabled: !operationBlocked, onUploadFiles });
+  dragUploadRef.current = { enabled: !operationBlocked, onUploadFiles };
 
   useLayoutEffect(() => {
     fileColumnsRef.current = fileColumns;
@@ -111,6 +144,70 @@ export function FilesPane({
   );
 
   useEffect(() => {
+    if (operationBlocked) {
+      setDragUploadActive(false);
+    }
+  }, [operationBlocked]);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeDragDropListener: () => void = () => undefined;
+    let removeScaleListener: () => void = () => undefined;
+
+    void (async () => {
+      const appWindow = getCurrentWindow();
+      // Tauri 提供物理坐标，DOM 使用逻辑坐标；监听缩放变化避免跨屏后命中错误。
+      let scaleFactor = await appWindow.scaleFactor();
+      const stopScaleListener = await appWindow.onScaleChanged((event) => {
+        scaleFactor = event.payload.scaleFactor;
+      });
+      if (disposed) {
+        stopScaleListener();
+        return;
+      }
+      removeScaleListener = stopScaleListener;
+      const stopDragDropListener = await getCurrentWebview().onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "leave") {
+          setDragUploadActive(false);
+          return;
+        }
+
+        const position = payload.position.toLogical(scaleFactor);
+        const bounds = panelRef.current?.getBoundingClientRect();
+        const inside = Boolean(
+          bounds &&
+            position.x >= bounds.left &&
+            position.x <= bounds.right &&
+            position.y >= bounds.top &&
+            position.y <= bounds.bottom,
+        );
+        const dragUpload = dragUploadRef.current;
+        if (payload.type === "drop") {
+          setDragUploadActive(false);
+          if (inside && dragUpload.enabled && payload.paths.length > 0) {
+            dragUpload.onUploadFiles(payload.paths);
+          }
+          return;
+        }
+        setDragUploadActive(inside && dragUpload.enabled);
+      });
+
+      if (disposed) {
+        stopDragDropListener();
+      } else {
+        removeDragDropListener = stopDragDropListener;
+      }
+    })().catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeDragDropListener();
+      removeScaleListener();
+    };
+  }, []);
+
+  useEffect(() => {
     setSelectedPath((current) => {
       if (current && files.some((file) => file.path === current)) {
         return current;
@@ -128,9 +225,49 @@ export function FilesPane({
   const progressPercent = transfer?.totalBytes
     ? Math.min(100, Math.round((transfer.transferredBytes / transfer.totalBytes) * 100))
     : 0;
+  const operationTitle =
+    fileOperation?.kind === "create"
+      ? t("sessions.createDirectory")
+      : fileOperation?.kind === "rename"
+        ? t("sessions.renameRemoteEntry")
+        : t("sessions.deleteRemoteEntry");
 
   async function copyPath(path: string) {
     await navigator.clipboard.writeText(path).catch(() => undefined);
+  }
+
+  function updateOperationValue(value: string) {
+    setFileOperation((current) =>
+      current && current.kind !== "delete" ? { ...current, value, error: null } : current,
+    );
+  }
+
+  async function submitFileOperation() {
+    if (!fileOperation || operationPending) {
+      return;
+    }
+    if (fileOperation.kind !== "delete" && !fileOperation.value.trim()) {
+      setFileOperation({ ...fileOperation, error: t("sessions.remoteNameRequired") });
+      return;
+    }
+
+    setOperationPending(true);
+    setFileOperation({ ...fileOperation, error: null });
+    try {
+      if (fileOperation.kind === "create") {
+        await onCreateDirectory(fileOperation.value.trim());
+      } else if (fileOperation.kind === "rename") {
+        await onRenameEntry(fileOperation.file.path, fileOperation.value.trim());
+      } else {
+        await onDeleteEntry(fileOperation.file.path);
+      }
+      setFileOperation(null);
+    } catch (error) {
+      const message = resolveApiError(error, t("errors.unknown"));
+      setFileOperation((current) => (current ? { ...current, error: message } : current));
+    } finally {
+      setOperationPending(false);
+    }
   }
 
   const commitFileColumn = useCallback(
@@ -216,14 +353,18 @@ export function FilesPane({
   );
 
   return (
-    <section className="files-panel" onContextMenu={(event) => event.preventDefault()}>
+    <section
+      className="files-panel"
+      onContextMenu={(event) => event.preventDefault()}
+      ref={panelRef}
+    >
       <header className="panel-title">
         <h2>{t("sessions.files")}</h2>
         <span className="panel-title-actions">
           <button
             aria-label={t("sessions.upload")}
             className="icon-button"
-            disabled={!sftpAvailable || loading || transferRunning}
+            disabled={operationBlocked}
             onClick={onUpload}
             type="button"
           >
@@ -276,7 +417,14 @@ export function FilesPane({
         </button>
       </div>
 
-      <div className="file-table" ref={tableRef}>
+      <div
+        className="file-table"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({ kind: "directory", x: event.clientX, y: event.clientY });
+        }}
+        ref={tableRef}
+      >
         <div className="file-row file-head">
           {(["name", "size", "modified"] as const).map((column) => {
             const limits = FILE_COLUMN_LIMITS[column];
@@ -324,8 +472,14 @@ export function FilesPane({
               onDoubleClick={() => file.kind === "folder" && onOpenPath(file.path)}
               onContextMenu={(event) => {
                 event.preventDefault();
+                event.stopPropagation();
                 setSelectedPath(file.path);
-                setContextMenu({ x: event.clientX, y: event.clientY, file });
+                setContextMenu({
+                  kind: "entry",
+                  x: event.clientX,
+                  y: event.clientY,
+                  file,
+                });
               }}
               type="button"
             >
@@ -341,26 +495,195 @@ export function FilesPane({
         })}
       </div>
 
+      {dragUploadActive ? (
+        <div className="file-drop-overlay">
+          <Upload size={28} />
+          <strong>{t("sessions.dropFilesToUpload")}</strong>
+          <span>{currentPath}</span>
+        </div>
+      ) : null}
+
       {contextMenu ? (
         <ContextMenu
-          items={[
-            ...(contextMenu.file.kind === "folder"
-              ? [{ id: "open", label: t("sessions.contextOpenFolder"), icon: <FolderOpen size={15} />, onSelect: () => onOpenPath(contextMenu.file.path) }]
-              : [{ id: "download", label: t("sessions.download"), icon: <Download size={15} />, disabled: transferRunning, onSelect: () => onDownload(contextMenu.file) }]),
-            { id: "copy", label: t("sessions.contextCopyPath"), icon: <Clipboard size={15} />, onSelect: () => void copyPath(contextMenu.file.path) },
-            { id: "refresh", label: t("sessions.refresh"), icon: <RefreshCw size={15} />, disabled: loading, onSelect: onRefresh },
-          ]}
+          items={
+            contextMenu.kind === "directory"
+              ? [
+                  {
+                    id: "createDirectory",
+                    label: t("sessions.createDirectory"),
+                    icon: <FolderPlus size={15} />,
+                    disabled: operationBlocked,
+                    onSelect: () =>
+                      setFileOperation({ kind: "create", value: "", error: null }),
+                  },
+                  {
+                    id: "upload",
+                    label: t("sessions.upload"),
+                    icon: <Upload size={15} />,
+                    disabled: operationBlocked,
+                    onSelect: onUpload,
+                  },
+                  {
+                    id: "refresh",
+                    label: t("sessions.refresh"),
+                    icon: <RefreshCw size={15} />,
+                    disabled: !sftpAvailable || loading,
+                    onSelect: onRefresh,
+                  },
+                ]
+              : [
+                  ...(contextMenu.file.kind === "folder"
+                    ? [
+                        {
+                          id: "open",
+                          label: t("sessions.contextOpenFolder"),
+                          icon: <FolderOpen size={15} />,
+                          onSelect: () => onOpenPath(contextMenu.file.path),
+                        },
+                      ]
+                    : contextMenu.file.kind === "file"
+                      ? [
+                          {
+                            id: "download",
+                            label: t("sessions.download"),
+                            icon: <Download size={15} />,
+                            disabled: transferRunning,
+                            onSelect: () => onDownload(contextMenu.file),
+                          },
+                        ]
+                      : []),
+                  {
+                    id: "rename",
+                    label: t("sessions.renameRemoteEntry"),
+                    icon: <Pencil size={15} />,
+                    disabled: operationBlocked,
+                    onSelect: () =>
+                      setFileOperation({
+                        kind: "rename",
+                        file: contextMenu.file,
+                        value: contextMenu.file.name,
+                        error: null,
+                      }),
+                  },
+                  {
+                    id: "delete",
+                    label: t("sessions.deleteRemoteEntry"),
+                    icon: <Trash2 size={15} />,
+                    danger: true,
+                    disabled: operationBlocked,
+                    onSelect: () =>
+                      setFileOperation({
+                        kind: "delete",
+                        file: contextMenu.file,
+                        error: null,
+                      }),
+                  },
+                  {
+                    id: "copy",
+                    label: t("sessions.contextCopyPath"),
+                    icon: <Clipboard size={15} />,
+                    onSelect: () => void copyPath(contextMenu.file.path),
+                  },
+                  {
+                    id: "refresh",
+                    label: t("sessions.refresh"),
+                    icon: <RefreshCw size={15} />,
+                    disabled: !sftpAvailable || loading,
+                    onSelect: onRefresh,
+                  },
+                ]
+          }
           onClose={() => setContextMenu(null)}
           x={contextMenu.x}
           y={contextMenu.y}
         />
       ) : null}
 
+      {fileOperation ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section
+            aria-modal="true"
+            className="dialog file-operation-dialog"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !operationPending) {
+                event.preventDefault();
+                setFileOperation(null);
+              }
+            }}
+            role="dialog"
+          >
+            <header className="dialog-header">
+              <h2>{operationTitle}</h2>
+            </header>
+            <div className="file-operation-body">
+              {fileOperation.kind === "delete" ? (
+                <>
+                  <p>
+                    {t(
+                      fileOperation.file.kind === "folder"
+                        ? "sessions.confirmDeleteRemoteDirectory"
+                        : "sessions.confirmDeleteRemoteEntry",
+                      { name: fileOperation.file.name },
+                    )}
+                  </p>
+                  <code>{fileOperation.file.path}</code>
+                </>
+              ) : (
+                <label>
+                  <span>
+                    {fileOperation.kind === "create"
+                      ? t("sessions.directoryName")
+                      : t("sessions.newName")}
+                  </span>
+                  <TextInput
+                    autoFocus
+                    disabled={operationPending}
+                    onChange={(event) => updateOperationValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        void submitFileOperation();
+                      }
+                    }}
+                    value={fileOperation.value}
+                  />
+                </label>
+              )}
+            </div>
+            {fileOperation.error ? <div className="form-error">{fileOperation.error}</div> : null}
+            <footer className="dialog-actions">
+              <Button
+                autoFocus={fileOperation.kind === "delete"}
+                disabled={operationPending}
+                onClick={() => setFileOperation(null)}
+                variant="ghost"
+              >
+                {t("sessions.cancel")}
+              </Button>
+              <Button
+                disabled={operationPending}
+                onClick={() => void submitFileOperation()}
+                variant={fileOperation.kind === "delete" ? "danger" : "primary"}
+              >
+                {fileOperation.kind === "delete"
+                  ? t("sessions.deleteRemoteEntry")
+                  : t("sessions.save")}
+              </Button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
       {transfer ? (
         <section className={`transfer-bar transfer-${transfer.state}`}>
           <span>
             {transfer.direction === "upload" ? <Upload size={15} /> : <Download size={15} />}
-            <strong>{transfer.fileName}</strong>
+            <strong>
+              {transfer.fileName}
+              {transfer.batchTotal && transfer.batchTotal > 1
+                ? ` (${transfer.batchIndex}/${transfer.batchTotal})`
+                : ""}
+            </strong>
           </span>
           <span className="transfer-track">
             <span style={{ width: `${progressPercent}%` }} />

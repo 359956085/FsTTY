@@ -174,6 +174,44 @@ pub async fn list_remote_files(
         .await
 }
 
+#[tauri::command]
+pub async fn create_remote_directory(
+    state: State<'_, AppState>,
+    connection_id: String,
+    parent_path: String,
+    name: String,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .create_remote_directory(&connection_id, &parent_path, &name)
+        .await
+}
+
+#[tauri::command]
+pub async fn rename_remote_entry(
+    state: State<'_, AppState>,
+    connection_id: String,
+    path: String,
+    new_name: String,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .rename_remote_entry(&connection_id, &path, &new_name)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_remote_entry(
+    state: State<'_, AppState>,
+    connection_id: String,
+    path: String,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .delete_remote_entry(&connection_id, &path)
+        .await
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn upload_file(
