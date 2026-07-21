@@ -1220,7 +1220,7 @@ async fn authenticate_inner(
     let remaining_methods = match handle
         .authenticate_none(session.username.clone())
         .await
-        .map_err(|_| AppError::Authentication("无法查询 SSH 认证方式".to_owned()))?
+        .map_err(|error| map_authentication_exchange_error(error, "无法查询 SSH 认证方式"))?
     {
         client::AuthResult::Success => return Ok(AuthenticationOutcome::Authenticated),
         client::AuthResult::Failure {
@@ -1271,15 +1271,25 @@ async fn authenticate_inner(
                 let mut response = handle
                     .authenticate_keyboard_interactive_start(&session.username, None::<String>)
                     .await
-                    .map_err(|_| AppError::Authentication("SSH 交互认证失败".to_owned()))?;
+                    .map_err(|error| {
+                        map_authentication_exchange_error(error, "SSH 交互认证失败")
+                    })?;
                 let mut prompt_rounds = 0_u8;
                 loop {
                     response = match response {
                         KeyboardInteractiveAuthResponse::Success => {
                             break client::AuthResult::Success;
                         }
+                        KeyboardInteractiveAuthResponse::Failure {
+                            partial_success: true,
+                            ..
+                        } => {
+                            return Err(AppError::Authentication(
+                                "SSH 需要继续认证，当前版本不支持多因素认证".to_owned(),
+                            ))
+                        }
                         KeyboardInteractiveAuthResponse::Failure { .. } => {
-                            return Err(AppError::Authentication("SSH 交互认证失败".to_owned()))
+                            return Err(authentication_rejected(expected_method))
                         }
                         KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
                             if prompt_rounds > 0 {
@@ -1301,8 +1311,8 @@ async fn authenticate_inner(
                             handle
                                 .authenticate_keyboard_interactive_respond(responses)
                                 .await
-                                .map_err(|_| {
-                                    AppError::Authentication("SSH 交互认证失败".to_owned())
+                                .map_err(|error| {
+                                    map_authentication_exchange_error(error, "SSH 交互认证失败")
                                 })?
                         }
                     };
@@ -1311,7 +1321,7 @@ async fn authenticate_inner(
                 handle
                     .authenticate_password(session.username.clone(), secret.as_str().to_owned())
                     .await
-                    .map_err(|_| AppError::Authentication("SSH 密码认证失败".to_owned()))?
+                    .map_err(|error| map_authentication_exchange_error(error, "SSH 密码认证失败"))?
             }
         }
         SessionAuth::PrivateKey {
@@ -1389,7 +1399,7 @@ async fn authenticate_inner(
             let hash = handle
                 .best_supported_rsa_hash()
                 .await
-                .map_err(|_| AppError::Authentication("无法协商私钥算法".to_owned()))?
+                .map_err(|error| map_authentication_exchange_error(error, "无法协商私钥算法"))?
                 .flatten();
             handle
                 .authenticate_publickey(
@@ -1397,7 +1407,7 @@ async fn authenticate_inner(
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash),
                 )
                 .await
-                .map_err(|_| AppError::Authentication("SSH 私钥认证失败".to_owned()))?
+                .map_err(|error| map_authentication_exchange_error(error, "SSH 私钥认证失败"))?
         }
     };
 
@@ -1409,20 +1419,43 @@ async fn authenticate_inner(
         } => Err(AppError::Authentication(
             "SSH 需要继续认证，当前版本不支持多因素认证".to_owned(),
         )),
-        client::AuthResult::Failure {
-            remaining_methods, ..
-        } if !remaining_methods.contains(&expected_method) => {
-            Err(authentication_method_unavailable(expected_method))
-        }
-        client::AuthResult::Failure { .. } => {
-            let message = match expected_method {
-                MethodKind::Password => "SSH 密码认证失败",
-                MethodKind::PublicKey => "SSH 私钥认证失败",
-                _ => "SSH 认证失败",
-            };
-            Err(AppError::Authentication(message.to_owned()))
-        }
+        client::AuthResult::Failure { .. } => Err(authentication_rejected(expected_method)),
     }
+}
+
+fn map_authentication_exchange_error(error: russh::Error, fallback: &str) -> AppError {
+    if is_authentication_interruption(&error) {
+        AppError::AuthenticationInterrupted("SSH 认证连接中断，请重试".to_owned())
+    } else {
+        AppError::Authentication(fallback.to_owned())
+    }
+}
+
+fn is_authentication_interruption(error: &russh::Error) -> bool {
+    match error {
+        russh::Error::HUP
+        | russh::Error::Disconnect
+        | russh::Error::SendError
+        | russh::Error::RecvError => true,
+        russh::Error::IO(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::NotConnected
+        ),
+        _ => false,
+    }
+}
+
+fn authentication_rejected(method: MethodKind) -> AppError {
+    let message = match method {
+        MethodKind::Password | MethodKind::KeyboardInteractive => "服务器拒绝密码认证",
+        MethodKind::PublicKey => "服务器拒绝私钥认证",
+        _ => "服务器拒绝 SSH 认证",
+    };
+    AppError::AuthenticationRejected(message.to_owned())
 }
 
 fn authentication_method_unavailable(method: MethodKind) -> AppError {
@@ -1951,6 +1984,51 @@ mod tests {
     use super::*;
     use crate::services::DeviceService;
     use zeroize::Zeroizing;
+
+    #[test]
+    fn classifies_only_closed_authentication_connections_as_interruptions() {
+        for error in [
+            russh::Error::HUP,
+            russh::Error::Disconnect,
+            russh::Error::SendError,
+            russh::Error::RecvError,
+        ] {
+            assert!(is_authentication_interruption(&error));
+        }
+        for kind in [
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            assert!(is_authentication_interruption(&russh::Error::IO(
+                std::io::Error::from(kind)
+            )));
+        }
+        assert!(!is_authentication_interruption(
+            &russh::Error::ConnectionTimeout
+        ));
+        assert!(!is_authentication_interruption(&russh::Error::IO(
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+        )));
+    }
+
+    #[test]
+    fn distinguishes_authentication_rejection_from_exchange_failure() {
+        assert!(matches!(
+            authentication_rejected(MethodKind::Password),
+            AppError::AuthenticationRejected(_)
+        ));
+        assert!(matches!(
+            map_authentication_exchange_error(russh::Error::HUP, "认证失败"),
+            AppError::AuthenticationInterrupted(_)
+        ));
+        assert!(matches!(
+            map_authentication_exchange_error(russh::Error::PacketAuth, "认证失败"),
+            AppError::Authentication(_)
+        ));
+    }
 
     #[test]
     fn normalizes_remote_paths_without_escaping_root() {

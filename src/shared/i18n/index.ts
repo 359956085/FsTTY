@@ -140,6 +140,9 @@ void i18n.use(initReactI18next).init({
           rememberCredential: "保存到系统凭据库",
           credentialUseOnceHint: "取消保存后，凭据仅用于本次连接。",
           usernameRequired: "当前会话缺少用户名，请先编辑会话",
+          authenticationInterrupted: "SSH 认证连接中断，请重试",
+          passwordAuthenticationRejected: "服务器拒绝密码认证，请检查账号、密码或服务器策略",
+          privateKeyAuthenticationRejected: "服务器拒绝私钥认证，请检查账号、私钥或服务器策略",
           saveAndConnect: "保存并连接",
           upload: "上传文件",
           selectUploadFile: "选择上传文件",
@@ -348,6 +351,11 @@ void i18n.use(initReactI18next).init({
           rememberCredential: "Save to the system credential vault",
           credentialUseOnceHint: "Clear this option to use the credential for this connection only.",
           usernameRequired: "This session has no username. Edit the session first.",
+          authenticationInterrupted: "SSH authentication was interrupted. Try again.",
+          passwordAuthenticationRejected:
+            "The server rejected password authentication. Check the username, password, or server policy.",
+          privateKeyAuthenticationRejected:
+            "The server rejected private key authentication. Check the username, private key, or server policy.",
           saveAndConnect: "Save and connect",
           upload: "Upload file",
           selectUploadFile: "Select file to upload",

@@ -19,6 +19,7 @@ import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
 import { hasControlCharacter } from "../../shared/validation/text";
 import type { TerminalDirectoryRequest } from "./useSessionConnections";
+import { retryInterruptedAuthentication } from "./authenticationRetry";
 
 const SHELL_OSC_IDENTIFIER = 777;
 
@@ -87,6 +88,7 @@ export function TerminalPane({
   >(() => undefined);
   const sendImmediateInputRef = useRef<(data: string) => void>(() => undefined);
   const translateRef = useRef(t);
+  const activeRef = useRef(active);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
@@ -108,6 +110,7 @@ export function TerminalPane({
   reportStateRef.current = reportState;
   sendImmediateInputRef.current = sendImmediateInput;
   translateRef.current = t;
+  activeRef.current = active;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -489,48 +492,64 @@ export function TerminalPane({
     setDialogError(null);
     setHostKeyChange(null);
     reportState("connecting");
-    const channel = new Channel<TerminalEvent>();
-    channel.onmessage = (event) => {
-      if (
-        !mountedRef.current ||
-        connectionAttemptRef.current !== attemptId ||
-        (connectionRef.current &&
-          event.connectionId !== connectionRef.current.connectionId)
-      ) {
-        return;
-      }
-      if (event.kind === "data") {
-        terminalRef.current?.write(decodeBase64(event.data));
-        return;
-      }
-      if (event.kind === "error") {
+    const isCurrentAttempt = () =>
+      mountedRef.current && connectionAttemptRef.current === attemptId;
+    const canRetryAttempt = () => isCurrentAttempt() && activeRef.current;
+    const runConnectAttempt = () => {
+      const channel = new Channel<TerminalEvent>();
+      channel.onmessage = (event) => {
+        if (
+          !isCurrentAttempt() ||
+          eventChannelRef.current !== channel ||
+          (connectionRef.current &&
+            event.connectionId !== connectionRef.current.connectionId)
+        ) {
+          return;
+        }
+        if (event.kind === "data") {
+          terminalRef.current?.write(decodeBase64(event.data));
+          return;
+        }
+        if (event.kind === "error") {
+          connectionAttemptRef.current += 1;
+          connectionRef.current = null;
+          eventChannelRef.current = null;
+          clearPendingInput();
+          resetShellIntegration();
+          terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
+          reportState("error", event.message);
+          return;
+        }
         connectionAttemptRef.current += 1;
         connectionRef.current = null;
         eventChannelRef.current = null;
         clearPendingInput();
         resetShellIntegration();
         terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
-        reportState("error", event.message);
-        return;
-      }
-      connectionAttemptRef.current += 1;
-      connectionRef.current = null;
-      eventChannelRef.current = null;
-      clearPendingInput();
-      resetShellIntegration();
-      terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
-      reportState("disconnected");
-    };
-    eventChannelRef.current = channel;
-
-    try {
-      const result = await api.connectSession(
+        reportState("disconnected");
+      };
+      eventChannelRef.current = channel;
+      return api.connectSession(
         session.id,
         Math.max(1, terminal.cols),
         Math.max(1, terminal.rows),
         channel,
         oneTimeCredential,
       );
+    };
+
+    try {
+      const result = await retryInterruptedAuthentication(
+        runConnectAttempt,
+        canRetryAttempt,
+      );
+      if (!result) {
+        eventChannelRef.current = null;
+        clearPendingInput();
+        resetShellIntegration();
+        reportState("disconnected");
+        return;
+      }
       if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
         if (result.kind === "connected") {
           await api
@@ -580,11 +599,21 @@ export function TerminalPane({
       clearPendingInput();
       resetShellIntegration();
       const info = readApiError(error, t("errors.unknown"));
+      const message =
+        info.kind === "authenticationInterrupted"
+          ? t("sessions.authenticationInterrupted")
+          : info.kind === "authenticationRejected"
+            ? t(
+                session.auth.kind === "password"
+                  ? "sessions.passwordAuthenticationRejected"
+                  : "sessions.privateKeyAuthenticationRejected",
+              )
+            : info.message;
       if (fromCredentialPrompt) {
-        setDialogError(info.message);
+        setDialogError(message);
         reportState("disconnected");
       } else {
-        reportState("error", info.message);
+        reportState("error", message);
       }
     } finally {
       connectingRef.current = false;
