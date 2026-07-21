@@ -2,6 +2,7 @@ import { Download } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../shared/ui/Button";
+import { selectLocalizedReleaseNotes } from "./releaseNotes";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 interface UpdateDialogProps {
@@ -45,6 +46,10 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
   const releaseDate = update.date
     ? formatReleaseDate(update.date, i18n.language)
     : null;
+  const releaseNotes = selectLocalizedReleaseNotes(
+    update.body,
+    i18n.resolvedLanguage ?? i18n.language,
+  );
 
   return (
     <div className="dialog-backdrop update-dialog-backdrop">
@@ -66,7 +71,7 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
           ) : null}
           <div className="update-release-notes">
             <h3>{t("settings.releaseNotes")}</h3>
-            <div>{update.body?.trim() || t("settings.noReleaseNotes")}</div>
+            <div>{releaseNotes || t("settings.noReleaseNotes")}</div>
           </div>
           {updater.phase === "downloading" || updater.phase === "installing" ? (
             <div aria-live="polite" className="update-progress">
@@ -112,7 +117,11 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
             </Button>
           ) : null}
           {updater.phase === "available" || updater.phase === "error" ? (
-            <Button onClick={() => void updater.installUpdate()}>
+            <Button
+              className="update-action-button"
+              icon={updater.phase === "available" ? <Download aria-hidden="true" size={16} /> : undefined}
+              onClick={() => void updater.installUpdate()}
+            >
               {updater.phase === "error" ? t("settings.retryUpdate") : t("settings.updateNow")}
             </Button>
           ) : null}

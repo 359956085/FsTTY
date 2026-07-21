@@ -16,6 +16,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: 提取更新说明
+        id: release_notes
+        shell: pwsh
+        run: node scripts/extract-release-notes.mjs "$env:GITHUB_REF_NAME"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -49,7 +53,7 @@ jobs:
           tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
           releaseName: FsTTY ${{ github.ref_name }}
-          releaseBody: 自动构建的 Windows 安装包
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true

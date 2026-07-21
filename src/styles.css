@@ -1624,6 +1624,40 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.update-dialog .update-action-button {
+  min-width: 112px;
+  min-height: 38px;
+  border: 1px solid #3b91e8;
+  background: #318be4;
+  box-shadow: 0 4px 14px rgba(49, 139, 228, 0.18);
+  color: #f4f8fc;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.update-dialog .update-action-button:hover:not(:disabled) {
+  border-color: #4b9def;
+  background: #3b95ec;
+  box-shadow: 0 5px 16px rgba(49, 139, 228, 0.26);
+}
+
+.update-dialog .update-action-button:active:not(:disabled) {
+  background: #287fd6;
+  box-shadow: 0 2px 8px rgba(49, 139, 228, 0.2);
+  transform: translateY(1px);
+}
+
+.update-dialog .update-action-button:focus-visible {
+  outline: 2px solid rgba(72, 159, 247, 0.78);
+  outline-offset: 2px;
+}
+
+.update-dialog .update-action-button:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.5;
+}
+
 .form-success {
   color: #8fd3a5;
   font-size: 13px;
