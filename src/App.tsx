@@ -60,10 +60,11 @@ export function App() {
     [t],
   );
 
-  const windowLabels =
-    settings.language === "zh-CN"
-      ? { minimize: "最小化", maximize: "最大化或还原", close: "关闭" }
-      : { minimize: "Minimize", maximize: "Maximize or restore", close: "Close" };
+  const windowLabels = {
+    minimize: t("nav.minimize"),
+    maximize: t("nav.maximize"),
+    close: t("nav.closeWindow"),
+  };
 
   async function handleWindowAction(action: "minimize" | "maximize" | "close") {
     try {

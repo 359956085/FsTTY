@@ -17,6 +17,7 @@ import type {
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
+import { hasControlCharacter } from "../../shared/validation/text";
 import type { TerminalDirectoryRequest } from "./useSessionConnections";
 
 const SHELL_OSC_IDENTIFIER = 777;
@@ -78,6 +79,14 @@ export function TerminalPane({
   const onCredentialSavedRef = useRef(onCredentialSaved);
   const shellAtPromptRef = useRef(false);
   const shellIntegrationRef = useRef<ShellIntegration | null>(null);
+  const autoConnectRef = useRef(autoConnect);
+  const connectTerminalRef = useRef<() => Promise<void>>(async () => undefined);
+  const handleShellOscRef = useRef<(data: string) => boolean>(() => true);
+  const reportStateRef = useRef<
+    (state: ConnectionState, error?: string | null) => void
+  >(() => undefined);
+  const sendImmediateInputRef = useRef<(data: string) => void>(() => undefined);
+  const translateRef = useRef(t);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
@@ -92,6 +101,13 @@ export function TerminalPane({
 
   onDirectoryChangeRef.current = onDirectoryChange;
   onCredentialSavedRef.current = onCredentialSaved;
+  // 终端实例只挂载一次；通过 ref 读取最新回调，避免属性变化时销毁现有 SSH 连接。
+  autoConnectRef.current = autoConnect;
+  connectTerminalRef.current = connectTerminal;
+  handleShellOscRef.current = handleShellOsc;
+  reportStateRef.current = reportState;
+  sendImmediateInputRef.current = sendImmediateInput;
+  translateRef.current = t;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -372,7 +388,7 @@ export function TerminalPane({
       terminal.open(container);
       oscHandler = terminal.parser.registerOscHandler(
         SHELL_OSC_IDENTIFIER,
-        handleShellOsc,
+        (data) => handleShellOscRef.current(data),
       );
       terminal.onData((data) => {
         // 收到目录信号后，只要用户开始输入就不再视为干净提示符，避免自动 cd 污染命令行。
@@ -385,13 +401,13 @@ export function TerminalPane({
       observer = new ResizeObserver(fitAndResize);
       observer.observe(container);
       fitAndResize();
-      if (autoConnect && !disposed) {
-        void connectTerminal();
+      if (autoConnectRef.current && !disposed) {
+        void connectTerminalRef.current();
       }
     }
 
     void mountTerminal().catch(() => {
-      reportState("error", t("sessions.terminalNotReady"));
+      reportStateRef.current("error", translateRef.current("sessions.terminalNotReady"));
     });
     return () => {
       disposed = true;
@@ -432,7 +448,9 @@ export function TerminalPane({
       return;
     }
     shellAtPromptRef.current = false;
-    sendImmediateInput(` builtin cd -- ${quoteShellPath(directoryRequest.path)}\r`);
+    sendImmediateInputRef.current(
+      ` builtin cd -- ${quoteShellPath(directoryRequest.path)}\r`,
+    );
   }, [connectionState, directoryRequest]);
 
   useEffect(() => {
@@ -828,7 +846,7 @@ function createShellIntegrationCommand(
   // 只修改当前 Shell 进程的提示符钩子，不写入用户远程配置文件。
   const reportDirectory = `printf '\\033]${SHELL_OSC_IDENTIFIER};fstty-cwd:${integration.token}:%s\\007' "$PWD"`;
   if (shellName === "bash") {
-    return ` ${integration.functionName}(){ ${reportDirectory}; }; case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "declare -a"*) PROMPT_COMMAND+=(${integration.functionName});; *) PROMPT_COMMAND="${integration.functionName}\${PROMPT_COMMAND:+;\$PROMPT_COMMAND}";; esac\r`;
+    return ` ${integration.functionName}(){ ${reportDirectory}; }; case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "declare -a"*) PROMPT_COMMAND+=(${integration.functionName});; *) PROMPT_COMMAND="${integration.functionName}\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac\r`;
   }
   if (shellName === "zsh") {
     return ` ${integration.functionName}(){ ${reportDirectory}; }; precmd_functions+=(${integration.functionName})\r`;
@@ -840,7 +858,7 @@ function isValidRemotePath(path: string) {
   return (
     path.startsWith("/") &&
     new TextEncoder().encode(path).byteLength <= 4096 &&
-    !/[\u0000-\u001f\u007f-\u009f]/u.test(path)
+    !hasControlCharacter(path)
   );
 }
 

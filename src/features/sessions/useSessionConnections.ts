@@ -3,6 +3,8 @@ import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
 import { readApiError, resolveApiError } from "../../shared/api/errors";
+import i18n from "../../shared/i18n";
+import { hasControlCharacter } from "../../shared/validation/text";
 import type {
   ConnectionState,
   DeviceStatus,
@@ -254,10 +256,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     ) => {
       const runtime = runtimesRef.current[sessionId];
       if (!runtime?.connection?.sftpAvailable) {
-        throw new Error("当前会话无法使用 SFTP");
+        throw new Error(i18n.t("sessions.sftpOperationUnavailable"));
       }
       if (runtime.filesLoading || runtime.transfer?.state === "running") {
-        throw new Error("当前会话正在处理文件操作");
+        throw new Error(i18n.t("sessions.fileOperationBusy"));
       }
       const connectionId = runtime.connection.connectionId;
       const currentPath = runtime.currentPath;
@@ -454,12 +456,15 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
               if (info.kind === "conflict" && !overwrite) {
                 let accepted = false;
                 try {
-                  accepted = await confirm(`远程文件“${fileName}”已存在，确认覆盖？`, {
-                    title: "覆盖确认",
-                    kind: "warning",
-                    okLabel: "覆盖",
-                    cancelLabel: "跳过",
-                  });
+                  accepted = await confirm(
+                    i18n.t("sessions.remoteOverwriteConfirm", { name: fileName }),
+                    {
+                      title: i18n.t("sessions.overwriteTitle"),
+                      kind: "warning",
+                      okLabel: i18n.t("sessions.overwrite"),
+                      cancelLabel: i18n.t("sessions.skip"),
+                    },
+                  );
                 } catch {
                   clearTransfer(transferId);
                   return "failed";
@@ -505,7 +510,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         if (ownsBatch && refreshSucceeded && (skipped > 0 || failed > 0)) {
           updateRuntime(sessionId, (current) => ({
             ...current,
-            error: `上传结束：成功 ${uploaded}，跳过 ${skipped}，失败 ${failed}`,
+            error: i18n.t("sessions.batchUploadSummary", {
+              uploaded,
+              skipped,
+              failed,
+            }),
           }));
         }
       }
@@ -527,7 +536,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         const selected = await open({
           directory: false,
           multiple: false,
-          title: "选择上传文件",
+          title: i18n.t("sessions.selectUploadFile"),
         });
         if (selected) {
           await uploadFiles(sessionId, [selected]);
@@ -556,7 +565,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }
         const selected = await save({
           defaultPath: file.name,
-          title: "保存下载文件",
+          title: i18n.t("sessions.saveDownloadFile"),
         });
         if (!selected) {
           return;
@@ -591,11 +600,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           } catch (error) {
             const info = readApiError(error, errorFallback);
             if (info.kind === "conflict" && !overwrite) {
-              const accepted = await confirm("本地文件已存在，确认覆盖？", {
-                title: "覆盖确认",
+              const accepted = await confirm(i18n.t("sessions.localOverwriteConfirm"), {
+                title: i18n.t("sessions.overwriteTitle"),
                 kind: "warning",
-                okLabel: "覆盖",
-                cancelLabel: "取消",
+                okLabel: i18n.t("sessions.overwrite"),
+                cancelLabel: i18n.t("sessions.cancel"),
               });
               if (accepted) {
                 await run(true);
@@ -742,14 +751,14 @@ function createTransferChannel(
 }
 
 function fileNameFromPath(path: string) {
-  return path.split(/[\\/]/).pop() || "文件";
+  return path.split(/[\\/]/).pop() || i18n.t("sessions.fallbackFileName");
 }
 
 function normalizeRemotePath(path: string) {
   if (
     !path.startsWith("/") ||
     new TextEncoder().encode(path).byteLength > 4096 ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(path)
+    hasControlCharacter(path)
   ) {
     return null;
   }

@@ -138,7 +138,7 @@ function isSessionId(value: unknown): value is string {
     value.length > 0 &&
     value.length <= MAX_SESSION_ID_LENGTH &&
     value.trim() === value &&
-    !/[\u0000-\u001f\u007f]/.test(value)
+    !hasControlCharacter(value, false)
   );
 }
 
@@ -280,3 +280,4 @@ export function updateWorkspacePreferences(
 
   return next;
 }
+import { hasControlCharacter } from "../../shared/validation/text";

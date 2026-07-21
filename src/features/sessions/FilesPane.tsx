@@ -37,6 +37,15 @@ import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
 import { ResizeHandle } from "./ResizeHandle";
 import {
+  buildBreadcrumbs,
+  canMoveRemoteEntry,
+  createModifiedTimeFormatter,
+  formatModifiedTime,
+  formatSize,
+  isRemoteMoveCandidate,
+  remoteParentPath,
+} from "./fileUtils";
+import {
   FILE_COLUMN_LIMITS,
   readWorkspacePreferences,
   updateWorkspacePreferences,
@@ -126,7 +135,7 @@ export function FilesPane({
   sftpAvailable,
   transfer,
 }: FilesPaneProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const panelRef = useRef<HTMLElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const [fileColumns, setFileColumns] = useState<FileColumnPreferences>(
@@ -145,17 +154,36 @@ export function FilesPane({
   const moveOperationIdRef = useRef(0);
   const moveSuccessTimerRef = useRef<number | null>(null);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
+  const [moveRequestPending, setMoveRequestPending] = useState(false);
   const transferRunning = transfer?.state === "running";
-  const movePending = moveStatus?.kind === "moving";
   const operationBlocked =
     !sftpAvailable ||
     loading ||
     transferRunning ||
     operationPending ||
-    movePending ||
+    moveRequestPending ||
     fileOperation !== null;
   const dragUploadRef = useRef({ enabled: !operationBlocked, onUploadFiles });
   dragUploadRef.current = { enabled: !operationBlocked, onUploadFiles };
+
+  const clearMoveFeedback = useCallback(() => {
+    moveOperationIdRef.current += 1;
+    if (moveSuccessTimerRef.current !== null) {
+      window.clearTimeout(moveSuccessTimerRef.current);
+      moveSuccessTimerRef.current = null;
+    }
+    setMoveStatus(null);
+  }, []);
+
+  const finishRemoteDrag = useCallback(() => {
+    const drag = remotePointerDragRef.current;
+    remotePointerDragRef.current = null;
+    if (drag?.captureTarget.hasPointerCapture(drag.pointerId)) {
+      drag.captureTarget.releasePointerCapture(drag.pointerId);
+    }
+    setRemoteDrag(null);
+    setDragUploadActive(false);
+  }, []);
 
   useLayoutEffect(() => {
     fileColumnsRef.current = fileColumns;
@@ -179,12 +207,12 @@ export function FilesPane({
     if (operationBlocked) {
       finishRemoteDrag();
     }
-  }, [operationBlocked]);
+  }, [finishRemoteDrag, operationBlocked]);
 
   useEffect(() => {
     finishRemoteDrag();
     clearMoveFeedback();
-  }, [currentPath, sftpAvailable]);
+  }, [clearMoveFeedback, currentPath, finishRemoteDrag, sftpAvailable]);
 
   useEffect(() => {
     let disposed = false;
@@ -252,7 +280,7 @@ export function FilesPane({
         moveSuccessTimerRef.current = null;
       }
     };
-  }, []);
+  }, [finishRemoteDrag]);
 
   useEffect(() => {
     setSelectedPath((current) => {
@@ -268,7 +296,11 @@ export function FilesPane({
     [files, selectedPath],
   );
   const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath), [currentPath]);
-  const parentPath = currentPath.split("/").slice(0, -1).join("/") || "/";
+  const modifiedTimeFormatter = useMemo(
+    () => createModifiedTimeFormatter(i18n.resolvedLanguage ?? i18n.language),
+    [i18n.language, i18n.resolvedLanguage],
+  );
+  const parentPath = remoteParentPath(currentPath);
   const progressPercent = transfer?.totalBytes
     ? Math.min(100, Math.round((transfer.transferredBytes / transfer.totalBytes) * 100))
     : 0;
@@ -281,25 +313,6 @@ export function FilesPane({
 
   async function copyPath(path: string) {
     await navigator.clipboard.writeText(path).catch(() => undefined);
-  }
-
-  function clearMoveFeedback() {
-    moveOperationIdRef.current += 1;
-    if (moveSuccessTimerRef.current !== null) {
-      window.clearTimeout(moveSuccessTimerRef.current);
-      moveSuccessTimerRef.current = null;
-    }
-    setMoveStatus(null);
-  }
-
-  function finishRemoteDrag() {
-    const drag = remotePointerDragRef.current;
-    remotePointerDragRef.current = null;
-    if (drag?.captureTarget.hasPointerCapture(drag.pointerId)) {
-      drag.captureTarget.releasePointerCapture(drag.pointerId);
-    }
-    setRemoteDrag(null);
-    setDragUploadActive(false);
   }
 
   function beginRemotePointerDrag(
@@ -382,6 +395,7 @@ export function FilesPane({
 
     const operationId = moveOperationIdRef.current + 1;
     moveOperationIdRef.current = operationId;
+    setMoveRequestPending(true);
     setMoveStatus({
       kind: "moving",
       sourceName: source.name,
@@ -411,6 +425,9 @@ export function FilesPane({
             message: resolveApiError(error, t("sessions.moveRemoteEntryFailed")),
           });
         }
+      })
+      .finally(() => {
+        setMoveRequestPending(false);
       });
   }
 
@@ -659,7 +676,7 @@ export function FilesPane({
         {files.map((file) => {
           const Icon = fileIcon(file);
           const size = file.size == null ? "--" : formatSize(file.size);
-          const modified = formatModifiedTime(file.modifiedAt);
+          const modified = formatModifiedTime(file.modifiedAt, modifiedTimeFormatter);
           const permissions = file.permissions.split(" ")[0];
           return (
             <button
@@ -957,25 +974,6 @@ function fileIcon(file: FileEntry) {
   return file.name.endsWith(".html") ? FileCode2 : FileText;
 }
 
-function isRemoteMoveCandidate(file: FileEntry) {
-  return file.kind === "file" || file.kind === "folder";
-}
-
-function canMoveRemoteEntry(source: FileEntry, targetDirectory: string) {
-  if (remoteParentPath(source.path) === targetDirectory) {
-    return false;
-  }
-  return !(
-    source.kind === "folder" &&
-    (targetDirectory === source.path || targetDirectory.startsWith(`${source.path}/`))
-  );
-}
-
-function remoteParentPath(path: string) {
-  const separator = path.lastIndexOf("/");
-  return separator <= 0 ? "/" : path.slice(0, separator);
-}
-
 function findRemoteDropTarget(
   clientX: number,
   clientY: number,
@@ -1036,38 +1034,4 @@ function breadcrumbTargetClassName(
     return "breadcrumb-drop-target";
   }
   return undefined;
-}
-
-function formatSize(size: number) {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  if (size < 1024 * 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(1)} MB`;
-  }
-  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
-}
-
-function formatModifiedTime(value?: number | null) {
-  if (!value) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(new Date(value));
-}
-
-function buildBreadcrumbs(path: string) {
-  const segments = path.split("/").filter(Boolean);
-  return [
-    { label: "/", path: "/" },
-    ...segments.map((segment, index) => ({
-      label: segment,
-      path: `/${segments.slice(0, index + 1).join("/")}`,
-    })),
-  ];
 }

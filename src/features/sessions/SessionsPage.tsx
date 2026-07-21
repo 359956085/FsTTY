@@ -26,6 +26,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
   const connections = useSessionConnections({
     errorFallback: t("errors.unknown"),
   });
+  const { pruneRuntimes } = connections;
   const {
     adjustResize,
     beginResize,
@@ -40,8 +41,8 @@ export function SessionsPage({ visible }: SessionsPageProps) {
   );
 
   useEffect(() => {
-    connections.pruneRuntimes(validRuntimeIds);
-  }, [connections.pruneRuntimes, validRuntimeIds]);
+    pruneRuntimes(validRuntimeIds);
+  }, [pruneRuntimes, validRuntimeIds]);
 
   const connectionStates = useMemo(
     () =>

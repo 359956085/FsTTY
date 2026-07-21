@@ -15,6 +15,7 @@ import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
+import { DEFAULT_SESSION_GROUP } from "./constants";
 
 interface SessionFormDialogProps {
   mode: "create" | "edit";
@@ -41,7 +42,9 @@ export function SessionFormDialog({
   const [host, setHost] = useState(session?.host ?? "");
   const [port, setPort] = useState(String(session?.port ?? 22));
   const [username, setUsername] = useState(session?.username ?? "");
-  const [group, setGroup] = useState(session?.group ?? "未分组");
+  const [group, setGroup] = useState(
+    session?.group === DEFAULT_SESSION_GROUP ? "" : (session?.group ?? ""),
+  );
   const [groupActiveIndex, setGroupActiveIndex] = useState(0);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
   const [authKind, setAuthKind] = useState<AuthKind>(
@@ -69,7 +72,12 @@ export function SessionFormDialog({
   const availableGroups = useMemo(
     () =>
       Array.from(
-        new Set(["未分组", ...groupOptions.map((option) => option.trim()).filter(Boolean)]),
+        new Set([
+          "",
+          ...groupOptions
+            .map((option) => option.trim())
+            .filter((option) => option && option !== DEFAULT_SESSION_GROUP),
+        ]),
       ),
     [groupOptions],
   );
@@ -92,7 +100,7 @@ export function SessionFormDialog({
 
   function selectGroupOption(index: number) {
     const option = availableGroups[index];
-    if (!option) {
+    if (option === undefined) {
       return;
     }
     setGroup(option);
@@ -354,6 +362,7 @@ export function SessionFormDialog({
                   setGroupMenuOpen(true);
                 }}
                 onKeyDown={handleGroupInputKeyDown}
+                placeholder={t("sessions.ungrouped")}
                 role="combobox"
                 value={group}
               />
@@ -377,7 +386,7 @@ export function SessionFormDialog({
                       className="group-combobox-option"
                       id={`session-group-option-${index}`}
                       key={option}
-                      label={option}
+                      label={option || t("sessions.ungrouped")}
                       onClick={() => selectGroupOption(index)}
                       onMouseDown={(event) => event.preventDefault()}
                       onMouseEnter={() => setGroupActiveIndex(index)}

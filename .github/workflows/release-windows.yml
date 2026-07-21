@@ -21,7 +21,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: npm ci
-      - run: npm run typecheck
+      - run: npm run verify
       - run: npm run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       - name: 注入更新公钥

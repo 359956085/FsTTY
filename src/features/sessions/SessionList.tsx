@@ -17,6 +17,7 @@ import type { SessionGroup } from "../../shared/api/types";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
+import { DEFAULT_SESSION_GROUP } from "./constants";
 
 export type SessionFilter = "all" | "favorites";
 
@@ -234,7 +235,9 @@ export function SessionList({
                 type="button"
               >
                 {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                <span>{group.name}</span>
+                <span>
+                  {group.name === DEFAULT_SESSION_GROUP ? t("sessions.ungrouped") : group.name}
+                </span>
                 <strong>{group.sessions.length}</strong>
               </button>
 

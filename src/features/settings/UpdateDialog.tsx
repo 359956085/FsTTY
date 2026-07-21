@@ -17,22 +17,23 @@ function formatReleaseDate(value: string, locale: string) {
 
 export function UpdateDialog({ updater }: UpdateDialogProps) {
   const { i18n, t } = useTranslation();
+  const { dialogOpen, dismissUpdate } = updater;
   const update = updater.availableUpdate;
   const busy = updater.phase === "downloading" || updater.phase === "installing";
 
   useEffect(() => {
-    if (!updater.dialogOpen || busy) {
+    if (!dialogOpen || busy) {
       return;
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        void updater.dismissUpdate();
+        void dismissUpdate();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, updater.dialogOpen, updater.dismissUpdate]);
+  }, [busy, dialogOpen, dismissUpdate]);
 
   if (!updater.dialogOpen || !update) {
     return null;
