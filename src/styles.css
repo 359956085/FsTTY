@@ -944,6 +944,62 @@ textarea:focus-visible,
   color: #fff;
 }
 
+.breadcrumb button.breadcrumb-drop-target {
+  outline: 1px solid rgba(91, 170, 255, 0.85);
+  background: rgba(91, 170, 255, 0.18);
+  color: #e8f4ff;
+  cursor: move;
+}
+
+.breadcrumb button.breadcrumb-move-success {
+  outline: 1px solid rgba(69, 207, 88, 0.8);
+  background: rgba(69, 207, 88, 0.16);
+  color: #c8f7cf;
+}
+
+.file-move-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 10px 5px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(9, 19, 28, 0.92);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-move-error {
+  border-color: rgba(255, 107, 107, 0.45);
+  color: #ffc1c1;
+}
+
+.file-move-success {
+  border-color: rgba(69, 207, 88, 0.42);
+  background: rgba(22, 65, 31, 0.45);
+  color: #b9f0c1;
+}
+
+.file-move-error span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-move-error button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
 .file-table {
   --file-column-name: 140px;
   --file-column-size: 72px;
@@ -1017,6 +1073,34 @@ textarea:focus-visible,
 
 .file-row:not(.file-head):hover {
   background: rgba(255, 255, 255, 0.035);
+}
+
+.file-row-movable {
+  cursor: grab;
+}
+
+.files-panel.remote-entry-dragging,
+.files-panel.remote-entry-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.file-row-dragging {
+  opacity: 0.42;
+  cursor: grabbing !important;
+}
+
+.file-row-drop-target {
+  outline: 1px solid rgba(91, 170, 255, 0.85);
+  background: rgba(91, 170, 255, 0.18) !important;
+  color: #e8f4ff;
+  cursor: move !important;
+}
+
+.file-row.file-row-move-success {
+  outline: 1px solid rgba(69, 207, 88, 0.8);
+  background: rgba(69, 207, 88, 0.16) !important;
+  color: #d4f8d9;
 }
 
 .file-row-active {

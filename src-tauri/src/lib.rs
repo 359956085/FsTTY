@@ -5,9 +5,9 @@ mod services;
 use commands::{
     cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
     delete_session, disconnect_session, download_file, forget_host_key, get_app_settings,
-    get_device_status, list_remote_files, list_sessions, rename_remote_entry, resize_terminal,
-    set_language, set_session_credential, trust_host_key, update_app_settings, update_session,
-    upload_file, write_terminal,
+    get_device_status, list_remote_files, list_sessions, move_remote_entry, rename_remote_entry,
+    resize_terminal, set_language, set_session_credential, trust_host_key, update_app_settings,
+    update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -95,6 +95,7 @@ pub fn run() {
             list_remote_files,
             create_remote_directory,
             rename_remote_entry,
+            move_remote_entry,
             delete_remote_entry,
             upload_file,
             download_file,

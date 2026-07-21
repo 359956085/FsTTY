@@ -146,6 +146,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
         onDownload={(sessionId, file) =>
           void connections.downloadFile(sessionId, file)
         }
+        onMoveRemoteEntry={connections.moveRemoteEntry}
         onOpenPath={connections.openPath}
         onRefreshFiles={connections.refreshFiles}
         onRenameRemoteEntry={connections.renameRemoteEntry}

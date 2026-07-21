@@ -292,6 +292,14 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [runRemoteMutation],
   );
 
+  const moveRemoteEntry = useCallback(
+    (sessionId: string, sourcePath: string, targetDirectory: string) =>
+      runRemoteMutation(sessionId, (connectionId) =>
+        api.moveRemoteEntry(connectionId, sourcePath, targetDirectory),
+      ),
+    [runRemoteMutation],
+  );
+
   const deleteRemoteEntry = useCallback(
     (sessionId: string, path: string) =>
       runRemoteMutation(sessionId, (connectionId) =>
@@ -653,6 +661,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     handleConnected,
     handleTerminalDirectory,
     handleTerminalState,
+    moveRemoteEntry,
     openPath,
     pruneRuntimes,
     refreshFiles,

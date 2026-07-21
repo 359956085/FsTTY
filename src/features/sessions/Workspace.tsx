@@ -36,6 +36,11 @@ interface WorkspaceProps {
   onDeleteRemoteEntry: (tabId: string, path: string) => Promise<void>;
   onDirectoryChange: (tabId: string, path: string) => void;
   onDownload: (tabId: string, file: FileEntry) => void;
+  onMoveRemoteEntry: (
+    tabId: string,
+    sourcePath: string,
+    targetDirectory: string,
+  ) => Promise<void>;
   onOpenPath: (tabId: string, path: string) => void;
   onRefreshFiles: (tabId: string) => void;
   onRenameRemoteEntry: (tabId: string, path: string, newName: string) => Promise<void>;
@@ -66,6 +71,7 @@ export function Workspace({
   onDeleteRemoteEntry,
   onDirectoryChange,
   onDownload,
+  onMoveRemoteEntry,
   onOpenPath,
   onRefreshFiles,
   onRenameRemoteEntry,
@@ -221,6 +227,11 @@ export function Workspace({
             }
             onDownload={(file) =>
               activeTabId && onDownload(activeTabId, file)
+            }
+            onMoveEntry={(sourcePath, targetDirectory) =>
+              activeTabId
+                ? onMoveRemoteEntry(activeTabId, sourcePath, targetDirectory)
+                : Promise.resolve()
             }
             onOpenPath={(path) =>
               activeTabId && onOpenPath(activeTabId, path)

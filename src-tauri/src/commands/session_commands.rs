@@ -201,6 +201,19 @@ pub async fn rename_remote_entry(
 }
 
 #[tauri::command]
+pub async fn move_remote_entry(
+    state: State<'_, AppState>,
+    connection_id: String,
+    source_path: String,
+    target_directory: String,
+) -> Result<(), AppError> {
+    state
+        .connection_manager
+        .move_remote_entry(&connection_id, &source_path, &target_directory)
+        .await
+}
+
+#[tauri::command]
 pub async fn delete_remote_entry(
     state: State<'_, AppState>,
     connection_id: String,

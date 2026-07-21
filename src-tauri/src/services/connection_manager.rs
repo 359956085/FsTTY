@@ -699,6 +699,55 @@ impl ConnectionManager {
             .map_err(|_| AppError::Sftp("无法重命名远程文件".to_owned()))
     }
 
+    pub async fn move_remote_entry(
+        &self,
+        connection_id: &str,
+        source_path: &str,
+        target_directory: &str,
+    ) -> Result<(), AppError> {
+        let (source, target_directory, target) =
+            resolve_remote_move_target(source_path, target_directory)?;
+        if source == target {
+            return Ok(());
+        }
+
+        let sftp = self.mutable_browser_sftp(connection_id).await?;
+        let source_metadata = sftp
+            .symlink_metadata(source.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法读取远程移动源".to_owned()))?;
+        let target_metadata = sftp
+            .symlink_metadata(target_directory.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法读取远程目标目录".to_owned()))?;
+        if source_metadata.file_type().is_symlink()
+            || (!source_metadata.file_type().is_file() && !source_metadata.file_type().is_dir())
+        {
+            return Err(AppError::Validation("只能移动普通文件或文件夹".to_owned()));
+        }
+        if target_metadata.file_type().is_symlink() || !target_metadata.file_type().is_dir() {
+            return Err(AppError::Validation("远程移动目标不是普通目录".to_owned()));
+        }
+        if source_metadata.file_type().is_dir()
+            && is_same_or_remote_descendant(&target_directory, &source)
+        {
+            return Err(AppError::Validation(
+                "不能将远程文件夹移动到自身或其子目录".to_owned(),
+            ));
+        }
+        if sftp
+            .try_exists(target.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法检查远程移动目标".to_owned()))?
+        {
+            return Err(AppError::Conflict("远程目标已存在".to_owned()));
+        }
+
+        sftp.rename(source, target)
+            .await
+            .map_err(|_| AppError::Sftp("无法移动远程条目".to_owned()))
+    }
+
     pub async fn delete_remote_entry(
         &self,
         connection_id: &str,
@@ -1708,6 +1757,21 @@ fn resolve_remote_child(parent_path: &str, name: &str) -> Result<String, AppErro
     checked_join_remote_path(&parent_path, name)
 }
 
+fn resolve_remote_move_target(
+    source_path: &str,
+    target_directory: &str,
+) -> Result<(String, String, String), AppError> {
+    let source = normalize_mutable_remote_path(source_path, "禁止移动远程根目录")?;
+    let target_directory = normalize_remote_path(target_directory)?;
+    let name = source
+        .rsplit('/')
+        .next()
+        .ok_or_else(|| AppError::Validation("远程移动源无效".to_owned()))?;
+    validate_remote_name(name)?;
+    let target = checked_join_remote_path(&target_directory, name)?;
+    Ok((source, target_directory, target))
+}
+
 fn normalize_mutable_remote_path(path: &str, root_error: &str) -> Result<String, AppError> {
     let path = normalize_remote_path(path)?;
     if path == "/" {
@@ -1721,6 +1785,10 @@ fn remote_parent_path(path: &str) -> String {
         .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
         .unwrap_or("/")
         .to_owned()
+}
+
+fn is_same_or_remote_descendant(path: &str, directory: &str) -> bool {
+    path == directory || path.starts_with(&format!("{directory}/"))
 }
 
 async fn validate_upload_source(path: &str) -> Result<PathBuf, AppError> {
@@ -1918,6 +1986,41 @@ mod tests {
         assert!(normalize_mutable_remote_path("/folder/..", "禁止删除").is_err());
         assert_eq!(remote_parent_path("/file.txt"), "/");
         assert_eq!(remote_parent_path("/var/file.txt"), "/var");
+    }
+
+    #[test]
+    fn resolves_remote_move_targets_safely() {
+        assert_eq!(
+            resolve_remote_move_target("/var/www/report.txt", "/archive").unwrap(),
+            (
+                "/var/www/report.txt".to_owned(),
+                "/archive".to_owned(),
+                "/archive/report.txt".to_owned(),
+            )
+        );
+        assert_eq!(
+            resolve_remote_move_target("/var/www/report.txt", "/var/www").unwrap(),
+            (
+                "/var/www/report.txt".to_owned(),
+                "/var/www".to_owned(),
+                "/var/www/report.txt".to_owned(),
+            )
+        );
+        assert!(resolve_remote_move_target("/", "/archive").is_err());
+        assert!(resolve_remote_move_target("/folder/..", "/archive").is_err());
+        assert!(resolve_remote_move_target("/report.txt", "archive").is_err());
+        assert!(resolve_remote_move_target(
+            "/report.txt",
+            &format!("/{}", "a".repeat(MAX_REMOTE_PATH_BYTES))
+        )
+        .is_err());
+        assert!(is_same_or_remote_descendant("/folder", "/folder"));
+        assert!(is_same_or_remote_descendant(
+            "/folder/nested/archive",
+            "/folder"
+        ));
+        assert!(!is_same_or_remote_descendant("/folder-two", "/folder"));
+        assert!(!is_same_or_remote_descendant("/", "/folder"));
     }
 
     #[test]
@@ -2252,6 +2355,46 @@ mod tests {
             )
             .await
             .expect("上传递归删除测试文件失败");
+        assert!(manager
+            .move_remote_entry(&connection.connection_id, &remote_path, &nested_directory)
+            .await
+            .is_err());
+        assert!(manager
+            .move_remote_entry(
+                &connection.connection_id,
+                &operations_directory,
+                &nested_directory,
+            )
+            .await
+            .is_err());
+        let nested_file = join_remote_path(&nested_directory, &file_name);
+        manager
+            .move_remote_entry(
+                &connection.connection_id,
+                &nested_file,
+                &operations_directory,
+            )
+            .await
+            .expect("移动远程测试文件失败");
+        manager
+            .create_remote_directory(
+                &connection.connection_id,
+                &operations_directory,
+                "move-target",
+            )
+            .await
+            .expect("创建远程移动目标目录失败");
+        let move_target = join_remote_path(&operations_directory, "move-target");
+        manager
+            .move_remote_entry(&connection.connection_id, &nested_directory, &move_target)
+            .await
+            .expect("移动远程测试目录失败");
+        assert!(manager
+            .list_files(&connection.connection_id, &move_target)
+            .await
+            .expect("读取远程移动目标失败")
+            .iter()
+            .any(|file| file.name == "nested"));
         let renamed_directory_name = format!("fstty-ops-renamed-{test_id}");
         manager
             .rename_remote_entry(

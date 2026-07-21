@@ -68,6 +68,9 @@ export const api = {
   renameRemoteEntry(connectionId: string, path: string, newName: string) {
     return invoke<void>("rename_remote_entry", { connectionId, path, newName });
   },
+  moveRemoteEntry(connectionId: string, sourcePath: string, targetDirectory: string) {
+    return invoke<void>("move_remote_entry", { connectionId, sourcePath, targetDirectory });
+  },
   deleteRemoteEntry(connectionId: string, path: string) {
     return invoke<void>("delete_remote_entry", { connectionId, path });
   },

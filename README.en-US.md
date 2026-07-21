@@ -24,7 +24,7 @@ FsTTY brings SSH terminals, session management, SFTP file operations, and device
 | SSH authentication | Passwords, private key files, and pasted private key content |
 | Host verification | Confirms host key fingerprints on first connection and blocks changed keys |
 | Remote terminal | Interactive xterm.js terminal with copy, paste, clear, and reconnect actions |
-| File management | SFTP browsing, uploads, multi-file drag and drop, downloads, directory creation, rename, and recursive delete |
+| File management | SFTP browsing, uploads, downloads, remote drag-to-move, directory creation, rename, and recursive delete |
 | Device status | Shows OS, CPU, memory, disk, and uptime when available on the remote host |
 | App settings | Chinese/English, manual update checks, startup update checks, and an update proxy |
 
@@ -71,6 +71,7 @@ After connecting to a server with SFTP support, the File Manager panel on the ri
 
 - Select the upload button to choose one local file.
 - Drag multiple regular files into the file list to upload them sequentially to the current directory. Local directories are not uploaded recursively.
+- Drag a remote file or directory onto a directory row or path breadcrumb to move it. Existing same-name targets are never overwritten.
 - Right-click a file to download, rename, delete, or copy its path.
 - Right-click a directory to open, rename, recursively delete, or copy its path.
 - Right-click an empty area to create a directory, upload a file, or refresh.
