@@ -35,6 +35,8 @@ Open [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) and d
 - The `*-setup.exe` NSIS installer is recommended for most users.
 - Use the `*.msi` package for enterprise deployment or MSI-based installation.
 
+The NSIS installer supports Simplified Chinese and English and follows the Windows display language automatically. Other system languages fall back to Simplified Chinese. The MSI installer remains in English to preserve compatibility with existing enterprise deployments and upgrades.
+
 Run the installer and follow the prompts. Current release packages do not use Windows Authenticode code signing, so Windows SmartScreen may display a warning. Verify that the installer came from this repository's Releases page before continuing.
 
 ## Usage

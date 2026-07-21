@@ -35,6 +35,8 @@ FsTTY 将 SSH 终端、会话管理、SFTP 文件操作和设备状态集中在�
 - 普通用户推荐下载 `*-setup.exe`（NSIS）。
 - 企业部署或需要 MSI 的场景可下载 `*.msi`。
 
+NSIS 安装包支持简体中文和英文，并自动跟随 Windows 显示语言；其他系统语言默认使用简体中文。为保持现有企业部署和升级兼容，MSI 安装包继续使用英文界面。
+
 运行安装包并按提示完成安装。当前发布包未配置 Windows Authenticode 代码签名，Windows SmartScreen 可能显示安全提示；请确认安装包来自本仓库的 Releases 页面。
 
 ## 使用说明
