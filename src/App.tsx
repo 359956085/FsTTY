@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
+import { UpdateDialog } from "./features/settings/UpdateDialog";
+import { useAppUpdater } from "./features/settings/useAppUpdater";
 import { api } from "./shared/api/client";
 import { resolveApiError } from "./shared/api/errors";
 import type { AppSettings } from "./shared/api/types";
@@ -21,18 +23,34 @@ export function App() {
     updateProxy: "",
   });
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const updater = useAppUpdater({
+    autoUpdate: settings.autoUpdate,
+    proxy: settings.updateProxy,
+    startupReady: settingsLoaded,
+  });
 
   useEffect(() => {
+    let active = true;
     api
       .getAppSettings()
       .then((nextSettings) => {
+        if (!active) {
+          return;
+        }
         setSettings(nextSettings);
+        setSettingsLoaded(true);
         void i18n.changeLanguage(nextSettings.language);
       })
       .catch((error: unknown) => {
-        setLoadError(resolveApiError(error, t("errors.unknown")));
+        if (active) {
+          setLoadError(resolveApiError(error, i18n.t("errors.unknown")));
+        }
       });
-  }, [i18n, t]);
+    return () => {
+      active = false;
+    };
+  }, [i18n]);
 
   const navItems = useMemo(
     () => [
@@ -138,6 +156,7 @@ export function App() {
         {view === "settings" ? (
           <SettingsPage
             settings={settings}
+            updater={updater}
             onChange={(nextSettings) => {
               setSettings(nextSettings);
               void i18n.changeLanguage(nextSettings.language);
@@ -145,6 +164,7 @@ export function App() {
           />
         ) : null}
       </main>
+      <UpdateDialog updater={updater} />
     </div>
   );
 }

@@ -40,3 +40,5 @@ jobs:
           releaseBody: 自动构建的 Windows 安装包
           releaseDraft: false
           prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true

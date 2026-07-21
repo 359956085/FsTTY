@@ -29,7 +29,7 @@ impl AppState {
             credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new(&app_data_dir),
             device_service: DeviceService,
-            settings_service: StdMutex::new(SettingsService::default()),
+            settings_service: StdMutex::new(SettingsService::load(&app_data_dir)),
         }
     }
 }

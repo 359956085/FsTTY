@@ -1,6 +1,6 @@
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, KeyRound, X } from "lucide-react";
-import { type KeyboardEvent, useId, useMemo, useState } from "react";
+import { type KeyboardEvent, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -12,6 +12,7 @@ import type {
   UpdateSessionPayload,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
+import { Select } from "../../shared/ui/Select";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
 
@@ -26,126 +27,6 @@ interface SessionFormDialogProps {
 
 type AuthKind = "password" | "privateKey";
 type PrivateKeySource = "file" | "inline";
-
-interface FormSelectOption<Value extends string> {
-  label: string;
-  value: Value;
-}
-
-interface FormSelectProps<Value extends string> {
-  ariaLabel: string;
-  onChange: (value: Value) => void;
-  options: Array<FormSelectOption<Value>>;
-  value: Value;
-}
-
-function FormSelect<Value extends string>({
-  ariaLabel,
-  onChange,
-  options,
-  value,
-}: FormSelectProps<Value>) {
-  const listboxId = useId();
-  const selectedIndex = Math.max(
-    0,
-    options.findIndex((option) => option.value === value),
-  );
-  const [activeIndex, setActiveIndex] = useState(selectedIndex);
-  const [open, setOpen] = useState(false);
-
-  function openMenu() {
-    setActiveIndex(selectedIndex);
-    setOpen(true);
-  }
-
-  function selectOption(index: number) {
-    const option = options[index];
-    setActiveIndex(index);
-    setOpen(false);
-    if (option.value !== value) {
-      onChange(option.value);
-    }
-  }
-
-  function moveActive(step: number) {
-    if (!open) {
-      openMenu();
-      return;
-    }
-    setActiveIndex((index) => (index + step + options.length) % options.length);
-  }
-
-  // 焦点保留在触发按钮，通过活动选项关联菜单，避免选项关闭后焦点丢失。
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      moveActive(1);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      moveActive(-1);
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      if (open) {
-        selectOption(activeIndex);
-      } else {
-        openMenu();
-      }
-    } else if (event.key === "Escape" && open) {
-      event.preventDefault();
-      setOpen(false);
-    }
-  }
-
-  const selectedOption = options[selectedIndex];
-
-  return (
-    <div
-      className="form-select"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setOpen(false);
-        }
-      }}
-    >
-      <button
-        aria-activedescendant={open ? `${listboxId}-option-${activeIndex}` : undefined}
-        aria-controls={listboxId}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label={ariaLabel}
-        className="text-input form-select-trigger"
-        onClick={() => (open ? setOpen(false) : openMenu())}
-        onKeyDown={handleKeyDown}
-        role="combobox"
-        type="button"
-      >
-        <span>{selectedOption.label}</span>
-        <ChevronDown size={16} />
-      </button>
-      {open ? (
-        <div className="form-select-menu" id={listboxId} role="listbox">
-          {options.map((option, index) => {
-            const active = index === activeIndex;
-            const selected = option.value === value;
-            return (
-              <SelectableOption
-                active={active}
-                className="form-select-option"
-                id={`${listboxId}-option-${index}`}
-                key={option.value}
-                label={option.label}
-                onClick={() => selectOption(index)}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseEnter={() => setActiveIndex(index)}
-                selected={selected}
-              />
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export function SessionFormDialog({
   groupOptions,
@@ -509,7 +390,7 @@ export function SessionFormDialog({
           </label>
           <div className="form-field">
             <span>{t("sessions.authType")}</span>
-            <FormSelect<AuthKind>
+            <Select<AuthKind>
               ariaLabel={t("sessions.authType")}
               onChange={(nextAuthKind) => {
                 setAuthKind(nextAuthKind);
@@ -558,7 +439,7 @@ export function SessionFormDialog({
             <>
               <div className="form-field">
                 <span>{t("sessions.privateKeySource")}</span>
-                <FormSelect<PrivateKeySource>
+                <Select<PrivateKeySource>
                   ariaLabel={t("sessions.privateKeySource")}
                   onChange={(nextPrivateKeySource) => {
                     setPrivateKeySource(nextPrivateKeySource);
