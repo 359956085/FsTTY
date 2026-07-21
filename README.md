@@ -128,6 +128,10 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
+## 社区鸣谢
+
+感谢 [LINUX DO 社区](https://linux.do/) 对开源交流与项目成长的支持。
+
 ## 许可证
 
 FsTTY 使用 [MIT License](LICENSE) 开源。

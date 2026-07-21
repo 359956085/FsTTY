@@ -542,19 +542,14 @@ textarea:focus-visible,
 
 .collapsed-rail {
   display: flex;
+  align-items: center;
   justify-content: center;
   min-width: 0;
   min-height: 0;
-  padding-top: 16px;
-  background: var(--panel);
-}
-
-.collapsed-rail-left {
-  border-right: 1px solid var(--border);
-}
-
-.collapsed-rail-right {
-  border-left: 1px solid var(--border);
+  margin: 8px 12px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: rgba(196, 211, 224, 0.025);
 }
 
 .collapsed-rail button {
@@ -562,13 +557,25 @@ textarea:focus-visible,
   width: 38px;
   height: 38px;
   place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: rgba(196, 211, 224, 0.04);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #c8d1da;
 }
 
-.collapsed-rail button:hover {
+.collapsed-rail button:hover,
+.collapsed-rail button:focus-visible {
+  outline: 0;
   background: var(--surface-hover);
+  color: #fff;
+}
+
+.collapsed-rail button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(210, 216, 222, 0.9);
+}
+
+.collapsed-rail button:active {
+  background: var(--surface-selected);
 }
 
 .resize-handle {
@@ -614,6 +621,15 @@ textarea:focus-visible,
   height: 2px;
 }
 
+.resize-handle[aria-disabled="true"] {
+  cursor: default;
+  pointer-events: none;
+}
+
+.resize-handle[aria-disabled="true"]::after {
+  display: none;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-areas:
@@ -636,7 +652,10 @@ textarea:focus-visible,
   grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  margin: 8px 0 10px;
   overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
   background: var(--terminal-bg);
 }
 

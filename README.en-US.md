@@ -128,6 +128,10 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
+## Acknowledgements
+
+Thanks to the [LINUX DO community](https://linux.do/) for supporting open-source discussion and the growth of this project.
+
 ## License
 
 FsTTY is open source under the [MIT License](LICENSE).
