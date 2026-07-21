@@ -28,17 +28,9 @@ fn show_main_window(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 本地开发允许空公钥启动；发布构建使用 Actions Variables 注入公钥。
-    let updater_builder = match option_env!("TAURI_SIGNING_PUBLIC_KEY") {
-        Some(public_key) if !public_key.trim().is_empty() => {
-            tauri_plugin_updater::Builder::new().pubkey(public_key)
-        }
-        _ => tauri_plugin_updater::Builder::new(),
-    };
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(updater_builder.build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(

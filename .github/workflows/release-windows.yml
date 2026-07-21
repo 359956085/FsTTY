@@ -24,14 +24,26 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: 注入更新公钥
+        shell: pwsh
+        env:
+          FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FSTTY_UPDATER_PUBLIC_KEY)) {
+            throw "缺少 Actions Variable：TAURI_SIGNING_PUBLIC_KEY"
+          }
+
+          $configPath = "src-tauri/tauri.conf.json"
+          $config = Get-Content -Raw $configPath | ConvertFrom-Json
+          # 打包器只读取配置文件；运行时 Builder 注入无法参与更新包签名。
+          $config.plugins.updater.pubkey = $env:FSTTY_UPDATER_PUBLIC_KEY.Trim()
+          $config | ConvertTo-Json -Depth 100 | Set-Content -Encoding utf8 $configPath
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 私钥只能放在 Actions Secrets，禁止放入普通 Variables。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # 公钥和更新地址可放在 Actions Variables，供构建配置使用。
-          TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
           FSTTY_UPDATE_ENDPOINT: ${{ vars.FSTTY_UPDATE_ENDPOINT }}
         with:
           tauriScript: npm run tauri
