@@ -64,12 +64,12 @@ Private key authentication requires a username. File-based keys continue to refe
 ### 3. Use the Terminal
 
 - Enter commands in the central terminal area.
-- The context menu provides copy, paste, select all, clear, and reconnect actions. Press `Ctrl+Shift+C` to copy an active selection.
+- The context menu provides copy, paste, select all, clear, and reconnect actions. With an active selection, press `Ctrl+C` or `Ctrl+Shift+C` to copy it to the Windows clipboard; press `Ctrl+V` to paste. Without a selection, `Ctrl+C` still interrupts the remote command.
 - Open multiple session tabs and drag the left or right divider to resize the workspace.
 
 #### tmux Clipboard
 
-- With tmux mouse mode enabled, regular dragging is handled by tmux. Hold `Shift` while dragging to select text directly in FsTTY.
+- With tmux mouse mode enabled, regular dragging and right-clicks are handled by tmux. Hold the right button, move to a menu item, and release it to run the command. Hold `Shift` while dragging to select text directly in FsTTY, or use `Shift`+right-click to open the FsTTY menu.
 - tmux copy mode writes to the Windows clipboard through OSC 52. Run `tmux show -s set-clipboard`; the value should be `external` or `on`.
 - Run `tmux info | grep Ms` to verify clipboard support. If it reports `[missing]`, configure `terminal-features` using the [official tmux instructions](https://github.com/tmux/tmux/wiki/Clipboard) and restart the tmux server.
 

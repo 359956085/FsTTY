@@ -4,11 +4,92 @@ import {
   MAX_REMOTE_CLIPBOARD_BYTES,
   StrictClipboardBase64,
   TauriClipboardProvider,
+  resolveTerminalClipboardShortcut,
 } from "./terminalClipboard";
 
 const SYSTEM = "c" as ClipboardSelectionType;
 const DEFAULT = "" as ClipboardSelectionType;
 const PRIMARY = "p" as ClipboardSelectionType;
+
+function shortcutEvent(
+  overrides: Partial<{
+    altKey: boolean;
+    ctrlKey: boolean;
+    key: string;
+    metaKey: boolean;
+    shiftKey: boolean;
+    type: string;
+  }> = {},
+) {
+  return {
+    altKey: false,
+    ctrlKey: true,
+    key: "",
+    metaKey: false,
+    shiftKey: false,
+    type: "keydown",
+    ...overrides,
+  };
+}
+
+describe("resolveTerminalClipboardShortcut", () => {
+  it("有选区时支持 Ctrl+C 和 Ctrl+Shift+C 复制", () => {
+    expect(
+      resolveTerminalClipboardShortcut(shortcutEvent({ key: "c" }), true),
+    ).toBe("copy");
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ key: "C", shiftKey: true }),
+        true,
+      ),
+    ).toBe("copy");
+  });
+
+  it("无选区时保留远程 Ctrl+C", () => {
+    expect(
+      resolveTerminalClipboardShortcut(shortcutEvent({ key: "c" }), false),
+    ).toBeNull();
+  });
+
+  it("只将 Ctrl+V 识别为粘贴", () => {
+    expect(
+      resolveTerminalClipboardShortcut(shortcutEvent({ key: "v" }), false),
+    ).toBe("paste");
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ key: "v", shiftKey: true }),
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it("忽略按键抬起、非 Ctrl 和 Alt 或 Meta 组合", () => {
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ key: "v", type: "keyup" }),
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ ctrlKey: false, key: "v" }),
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ altKey: true, key: "v" }),
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      resolveTerminalClipboardShortcut(
+        shortcutEvent({ key: "v", metaKey: true }),
+        false,
+      ),
+    ).toBeNull();
+  });
+});
 
 describe("StrictClipboardBase64", () => {
   const base64 = new StrictClipboardBase64();

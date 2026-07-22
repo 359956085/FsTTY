@@ -64,12 +64,12 @@ NSIS 安装包支持简体中文和英文，并自动跟随 Windows 显示语言
 ### 3. 使用终端
 
 - 在中央终端区域输入命令。
-- 右键菜单支持复制、粘贴、全选、清屏和重连；有选区时也可按 `Ctrl+Shift+C` 复制。
+- 右键菜单支持复制、粘贴、全选、清屏和重连；有选区时按 `Ctrl+C` 或 `Ctrl+Shift+C` 可复制到 Windows 剪贴板，按 `Ctrl+V` 可粘贴。无选区时 `Ctrl+C` 仍用于中断远程命令。
 - 可同时打开多个会话标签，并拖动左右分隔线调整工作区宽度。
 
 #### tmux 剪贴板
 
-- tmux 开启鼠标模式后，普通拖动由 tmux 处理；按住 `Shift` 拖动可在 FsTTY 中直接选中文本。
+- tmux 开启鼠标模式后，普通拖动和右键由 tmux 处理；按住右键移动到菜单项并松开即可执行。按住 `Shift` 拖动可在 FsTTY 中直接选中文本，按住 `Shift` 右键可打开 FsTTY 菜单。
 - tmux 复制模式通过 OSC 52 写入 Windows 剪贴板。运行 `tmux show -s set-clipboard`，结果应为 `external` 或 `on`。
 - 运行 `tmux info | grep Ms` 检查剪贴板能力；如果显示 `[missing]`，请按 [tmux 官方说明](https://github.com/tmux/tmux/wiki/Clipboard) 配置 `terminal-features` 并重启 tmux 服务。
 

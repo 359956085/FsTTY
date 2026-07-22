@@ -1,6 +1,6 @@
 [package]
 name = "fstty"
-version = "0.3.0"
+version = "0.4.0"
 description = "FsTTY"
 authors = ["fengshi"]
 edition = "2021"
@@ -28,6 +28,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["serde"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5.4"
 keyring-core = "1"
 windows-native-keyring-store = { version = "1.1", default-features = false }
 

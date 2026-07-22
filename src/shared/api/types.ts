@@ -1,4 +1,5 @@
 export type Language = "zh-CN" | "en-US";
+export type ClipboardContentKind = "empty" | "text" | "nonText";
 
 export interface AppSettings {
   language: Language;

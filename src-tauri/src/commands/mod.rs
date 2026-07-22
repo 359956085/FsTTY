@@ -1,6 +1,8 @@
+mod clipboard_commands;
 mod session_commands;
 mod settings_commands;
 
+pub use clipboard_commands::get_system_clipboard_content_kind;
 pub use session_commands::{
     cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
     delete_session, disconnect_session, download_file, forget_host_key, get_device_status,

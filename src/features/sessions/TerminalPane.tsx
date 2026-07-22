@@ -22,12 +22,24 @@ import type { TerminalDirectoryRequest } from "./useSessionConnections";
 import { retryInterruptedAuthentication } from "./authenticationRetry";
 import { createImeCompositionFallback } from "./imeCompositionFallback";
 import {
+  createRemoteRightDragState,
+  shouldOpenLocalTerminalContextMenu,
+} from "./terminalContextMenu";
+import {
   StrictClipboardBase64,
   TauriClipboardProvider,
+  readSystemClipboard,
+  resolveTerminalClipboardShortcut,
   writeSystemClipboard,
 } from "./terminalClipboard";
 
 const SHELL_OSC_IDENTIFIER = 777;
+const CLIPBOARD_MESSAGE_KEYS = {
+  nonText: "sessions.clipboardNonText",
+  read: "sessions.clipboardReadFailed",
+  write: "sessions.clipboardWriteFailed",
+} as const;
+type ClipboardMessageKind = keyof typeof CLIPBOARD_MESSAGE_KEYS;
 
 interface ShellIntegration {
   functionName: string;
@@ -81,6 +93,7 @@ export function TerminalPane({
   const imeCompositionFallbackRef = useRef<ReturnType<
     typeof createImeCompositionFallback
   > | null>(null);
+  const remoteRightDragStateRef = useRef(createRemoteRightDragState());
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const mountedRef = useRef(true);
@@ -105,6 +118,7 @@ export function TerminalPane({
   const allowRemoteClipboardWriteRef = useRef(allowRemoteClipboardWrite);
   const reportClipboardErrorRef = useRef<() => void>(() => undefined);
   const copyTerminalSelectionRef = useRef<() => Promise<void>>(async () => undefined);
+  const pasteTerminalClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
@@ -116,7 +130,7 @@ export function TerminalPane({
   const [rememberCredential, setRememberCredential] = useState(true);
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [clipboardWriteFailed, setClipboardWriteFailed] = useState(false);
+  const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
 
   onDirectoryChangeRef.current = onDirectoryChange;
   onCredentialSavedRef.current = onCredentialSaved;
@@ -132,6 +146,7 @@ export function TerminalPane({
   allowRemoteClipboardWriteRef.current = allowRemoteClipboardWrite;
   reportClipboardErrorRef.current = reportClipboardError;
   copyTerminalSelectionRef.current = copyTerminalSelection;
+  pasteTerminalClipboardRef.current = pasteTerminalClipboard;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -146,18 +161,18 @@ export function TerminalPane({
     }
   }
 
-  function reportClipboardError() {
+  function reportClipboardError(kind: ClipboardMessageKind = "write") {
     if (!mountedRef.current) {
       return;
     }
-    setClipboardWriteFailed(true);
+    setClipboardError(kind);
     if (clipboardErrorTimerRef.current !== null) {
       window.clearTimeout(clipboardErrorTimerRef.current);
     }
     clipboardErrorTimerRef.current = window.setTimeout(() => {
       clipboardErrorTimerRef.current = null;
       if (mountedRef.current) {
-        setClipboardWriteFailed(false);
+        setClipboardError(null);
       }
     }, 3000);
   }
@@ -361,10 +376,15 @@ export function TerminalPane({
   }
 
   async function copyTerminalSelection() {
+    const terminal = terminalRef.current;
+    const selection = terminal?.getSelection() ?? "";
+    if (!terminal || !selection) {
+      return;
+    }
     try {
-      const selection = terminalRef.current?.getSelection() ?? "";
-      if (selection) {
-        await writeSystemClipboard(selection);
+      await writeSystemClipboard(selection);
+      if (mountedRef.current && terminalRef.current === terminal) {
+        terminal.clearSelection();
       }
     } catch {
       reportClipboardError();
@@ -374,13 +394,40 @@ export function TerminalPane({
   }
 
   async function pasteTerminalClipboard() {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
     try {
-      const value = await navigator.clipboard.readText();
-      if (value) {
-        sendInputRef.current(value);
+      const contentKind = await api.getSystemClipboardContentKind();
+      if (
+        !mountedRef.current ||
+        !activeRef.current ||
+        !visibleRef.current ||
+        terminalRef.current !== terminal
+      ) {
+        return;
+      }
+      if (contentKind === "empty") {
+        return;
+      }
+      if (contentKind === "nonText") {
+        reportClipboardError("nonText");
+        return;
+      }
+      const value = await readSystemClipboard();
+      if (
+        value &&
+        mountedRef.current &&
+        activeRef.current &&
+        visibleRef.current &&
+        terminalRef.current === terminal
+      ) {
+        terminal.clearSelection();
+        terminal.paste(value);
       }
     } catch {
-      // 剪贴板权限失败不影响终端继续输入。
+      reportClipboardError("read");
     } finally {
       restoreTerminalFocus();
     }
@@ -392,6 +439,7 @@ export function TerminalPane({
     let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
     let disposeImeListeners: (() => void) | null = null;
+    let disposeRemoteMouseListeners: (() => void) | null = null;
 
     async function mountTerminal() {
       const container = containerRef.current;
@@ -440,6 +488,282 @@ export function TerminalPane({
         ),
       );
       terminal.open(container);
+      const remoteRightDragState = remoteRightDragStateRef.current;
+      const syntheticMouseMoves = new WeakSet<Event>();
+      const syntheticMouseReleases = new WeakSet<Event>();
+      let capturedRemotePointerId: number | null = null;
+      let lastRemotePointerEvent: MouseEvent | null = null;
+      let remoteReleaseFallbackTimer: number | null = null;
+      const clearRemoteReleaseFallback = () => {
+        if (remoteReleaseFallbackTimer !== null) {
+          window.clearTimeout(remoteReleaseFallbackTimer);
+          remoteReleaseFallbackTimer = null;
+        }
+      };
+      const releaseRemotePointerCapture = () => {
+        const pointerId = capturedRemotePointerId;
+        capturedRemotePointerId = null;
+        const terminalElement = terminal.element;
+        if (pointerId === null || !terminalElement) {
+          return;
+        }
+        try {
+          if (terminalElement.hasPointerCapture(pointerId)) {
+            terminalElement.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // pointerup 可能已让 WebView2 自动释放捕获，无需再次处理。
+        }
+      };
+      const resetRemoteRightDrag = () => {
+        clearRemoteReleaseFallback();
+        // 先结束状态，防止主动释放捕获产生的 lostpointercapture 补发释放。
+        remoteRightDragState.end();
+        lastRemotePointerEvent = null;
+        releaseRemotePointerCapture();
+      };
+      const dispatchRemoteListenerRearm = (event: MouseEvent) => {
+        const terminalElement = terminal.element;
+        if (!terminalElement) {
+          resetRemoteRightDrag();
+          return false;
+        }
+        // xterm 切换鼠标协议后只会在下一次 mousedown 重新绑定 document 监听。
+        // 补发一次右键按下，让当前 tmux 手势继续拥有移动和释放监听。
+        terminalElement.dispatchEvent(
+          new MouseEvent("mousedown", {
+            altKey: event.altKey,
+            bubbles: true,
+            button: 2,
+            buttons: 2,
+            cancelable: true,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            composed: true,
+            ctrlKey: event.ctrlKey,
+            detail: event.detail,
+            metaKey: event.metaKey,
+            relatedTarget: event.relatedTarget,
+            screenX: event.screenX,
+            screenY: event.screenY,
+            shiftKey: event.shiftKey,
+            view: window,
+          }),
+        );
+        return true;
+      };
+      const handleRemotePointerDown = (event: PointerEvent) => {
+        const target = event.target;
+        const mouseTrackingMode = terminal.modes.mouseTrackingMode;
+        const enabled =
+          event.pointerType === "mouse" &&
+          activeRef.current &&
+          visibleRef.current &&
+          connectionRef.current !== null &&
+          target instanceof Node &&
+          container.contains(target);
+        resetRemoteRightDrag();
+        remoteRightDragState.begin({
+          button: event.button,
+          enabled,
+          mouseTrackingMode,
+          pointerId: event.pointerId,
+          shiftKey: event.shiftKey,
+        });
+        if (!enabled || event.button !== 2 || event.shiftKey || mouseTrackingMode === "none") {
+          return;
+        }
+        lastRemotePointerEvent = event;
+        const terminalElement = terminal.element;
+        if (!terminalElement) {
+          return;
+        }
+        try {
+          // 固定后续 pointerup 到终端，避免 WebView2 在右键拖动后吞掉释放事件。
+          terminalElement.setPointerCapture(event.pointerId);
+          capturedRemotePointerId = event.pointerId;
+        } catch {
+          // 捕获失败时继续依赖窗口级 pointerup 和 mouseup 兜底。
+        }
+      };
+      const handleRemoteMouseMove = (event: MouseEvent) => {
+        const action = remoteRightDragState.getMoveAction(
+          terminal.modes.mouseTrackingMode,
+          event.buttons,
+          syntheticMouseMoves.has(event),
+        );
+        if (action.kind === "ignore") {
+          return;
+        }
+        lastRemotePointerEvent = event;
+        if (action.kind === "passthrough") {
+          // Pointer Capture 已保留正确右键位时，必须让 xterm 的原生拖动监听器直接处理。
+          return;
+        }
+        const terminalElement = terminal.element;
+        if (!terminalElement) {
+          resetRemoteRightDrag();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (
+          action.kind === "rearmAndRedispatchRightDrag" &&
+          !dispatchRemoteListenerRearm(event)
+        ) {
+          return;
+        }
+        // 重建监听后必须重发当前位置；普通修复则只补回 WebView2 丢失的右键位。
+        const repairedEvent = new MouseEvent("mousemove", {
+          altKey: event.altKey,
+          bubbles: true,
+          button: 0,
+          buttons: 2,
+          cancelable: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          composed: true,
+          ctrlKey: event.ctrlKey,
+          detail: event.detail,
+          metaKey: event.metaKey,
+          relatedTarget: event.relatedTarget,
+          screenX: event.screenX,
+          screenY: event.screenY,
+          shiftKey: event.shiftKey,
+          view: window,
+        });
+        syntheticMouseMoves.add(repairedEvent);
+        terminalElement.dispatchEvent(repairedEvent);
+      };
+      const dispatchFallbackRemoteMouseUp = (
+        event: MouseEvent,
+        pointerId?: number,
+      ) => {
+        clearRemoteReleaseFallback();
+        const action = remoteRightDragState.getFallbackReleaseAction(pointerId);
+        if (action.kind === "ignore") {
+          return;
+        }
+        const terminalElement = terminal.element;
+        if (!terminalElement) {
+          resetRemoteRightDrag();
+          return;
+        }
+        const repairedEvent = new MouseEvent("mouseup", {
+          altKey: event.altKey,
+          bubbles: true,
+          button: action.button,
+          buttons: action.buttons,
+          cancelable: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          composed: true,
+          ctrlKey: event.ctrlKey,
+          detail: event.detail,
+          metaKey: event.metaKey,
+          relatedTarget: event.relatedTarget,
+          screenX: event.screenX,
+          screenY: event.screenY,
+          shiftKey: event.shiftKey,
+          view: window,
+        });
+        syntheticMouseReleases.add(repairedEvent);
+        terminalElement.dispatchEvent(repairedEvent);
+        // xterm 的 mouseup 监听器位于事件传播后段；微任务确保释放先发给远端。
+        queueMicrotask(resetRemoteRightDrag);
+      };
+      const scheduleFallbackRemoteMouseUp = (
+        event: MouseEvent,
+        pointerId?: number,
+      ) => {
+        lastRemotePointerEvent = event;
+        clearRemoteReleaseFallback();
+        remoteReleaseFallbackTimer = window.setTimeout(() => {
+          remoteReleaseFallbackTimer = null;
+          dispatchFallbackRemoteMouseUp(event, pointerId);
+        }, 0);
+      };
+      const handleRemotePointerUp = (event: PointerEvent) => {
+        if (event.pointerType !== "mouse") {
+          return;
+        }
+        const action = remoteRightDragState.getPointerUpAction(
+          terminal.modes.mouseTrackingMode,
+          event.pointerId,
+        );
+        if (action.kind === "ignore") {
+          return;
+        }
+        if (
+          action.kind === "rearmListeners" &&
+          !dispatchRemoteListenerRearm(event)
+        ) {
+          return;
+        }
+        // 浏览器通常紧接着派发 mouseup；延迟兜底可避免抢在原生事件前重复释放。
+        scheduleFallbackRemoteMouseUp(event, event.pointerId);
+      };
+      const handleRemoteMouseUp = (event: MouseEvent) => {
+        const action = remoteRightDragState.getNativeReleaseAction(
+          event.button,
+          syntheticMouseReleases.has(event),
+        );
+        if (action.kind === "ignore") {
+          return;
+        }
+        lastRemotePointerEvent = event;
+        if (action.kind === "passthrough") {
+          clearRemoteReleaseFallback();
+          // 原生事件继续传播给 xterm，随后再清理状态。
+          queueMicrotask(resetRemoteRightDrag);
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        scheduleFallbackRemoteMouseUp(event);
+      };
+      const handleRemotePointerCancel = (event: PointerEvent) => {
+        clearRemoteReleaseFallback();
+        remoteRightDragState.cancelPointer(event.pointerId);
+        if (capturedRemotePointerId === event.pointerId) {
+          releaseRemotePointerCapture();
+        }
+      };
+      const handleLostRemotePointerCapture = (event: PointerEvent) => {
+        if (capturedRemotePointerId === event.pointerId) {
+          capturedRemotePointerId = null;
+        }
+        if (event.buttons === 0) {
+          scheduleFallbackRemoteMouseUp(
+            lastRemotePointerEvent ?? event,
+            event.pointerId,
+          );
+        }
+      };
+      // WebView2 右键手势可能破坏后续 MouseEvent.buttons；PointerEvent 用于可靠记录按下状态。
+      window.addEventListener("pointerdown", handleRemotePointerDown, true);
+      window.addEventListener("pointerup", handleRemotePointerUp, true);
+      window.addEventListener("mousemove", handleRemoteMouseMove, true);
+      window.addEventListener("mouseup", handleRemoteMouseUp, true);
+      window.addEventListener("pointercancel", handleRemotePointerCancel, true);
+      terminal.element?.addEventListener(
+        "lostpointercapture",
+        handleLostRemotePointerCapture,
+      );
+      window.addEventListener("blur", resetRemoteRightDrag);
+      disposeRemoteMouseListeners = () => {
+        window.removeEventListener("pointerdown", handleRemotePointerDown, true);
+        window.removeEventListener("pointerup", handleRemotePointerUp, true);
+        window.removeEventListener("mousemove", handleRemoteMouseMove, true);
+        window.removeEventListener("mouseup", handleRemoteMouseUp, true);
+        window.removeEventListener("pointercancel", handleRemotePointerCancel, true);
+        terminal.element?.removeEventListener(
+          "lostpointercapture",
+          handleLostRemotePointerCapture,
+        );
+        window.removeEventListener("blur", resetRemoteRightDrag);
+        resetRemoteRightDrag();
+      };
       const textarea = terminal.textarea;
       if (textarea) {
         const imeCompositionFallback = createImeCompositionFallback();
@@ -479,14 +803,17 @@ export function TerminalPane({
         };
       }
       terminal.attachCustomKeyEventHandler((event) => {
-        if (
-          event.type === "keydown" &&
-          event.ctrlKey &&
-          event.shiftKey &&
-          event.key.toLowerCase() === "c" &&
-          terminal.hasSelection()
-        ) {
+        const action = resolveTerminalClipboardShortcut(event, terminal.hasSelection());
+        if (action === "copy") {
+          event.preventDefault();
+          event.stopPropagation();
           void copyTerminalSelectionRef.current();
+          return false;
+        }
+        if (action === "paste") {
+          event.preventDefault();
+          event.stopPropagation();
+          void pasteTerminalClipboardRef.current();
           return false;
         }
         return true;
@@ -531,6 +858,8 @@ export function TerminalPane({
       }
       disposeImeListeners?.();
       disposeImeListeners = null;
+      disposeRemoteMouseListeners?.();
+      disposeRemoteMouseListeners = null;
       const connection = connectionRef.current;
       connectionRef.current = null;
       if (connection) {
@@ -565,6 +894,9 @@ export function TerminalPane({
   }, [connectionState, directoryRequest]);
 
   useEffect(() => {
+    if (!active || !visible || connectionState !== "connected") {
+      remoteRightDragStateRef.current.end();
+    }
     if (!active || !visible) {
       clearPendingInput();
       return;
@@ -804,17 +1136,26 @@ export function TerminalPane({
     <div className="terminal-wrap">
       <div
         className="terminal-body"
-        onContextMenu={(event) => {
+        onContextMenuCapture={(event) => {
           event.preventDefault();
+          // 必须在捕获阶段跳过 xterm 的本地右键处理，避免隐藏 textarea 打断远端拖动。
+          event.stopPropagation();
+          const mouseTrackingMode =
+            terminalRef.current?.modes.mouseTrackingMode ?? "none";
+          if (!shouldOpenLocalTerminalContextMenu(mouseTrackingMode, event.shiftKey)) {
+            // 手势只由真实 pointerdown 建立，避免 mouseup 后的 contextmenu 重新激活已结束状态。
+            setContextMenu(null);
+            return;
+          }
           focusTerminal();
           setContextMenu({ x: event.clientX, y: event.clientY });
         }}
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
-      {clipboardWriteFailed ? (
+      {clipboardError ? (
         <div aria-live="polite" className="terminal-clipboard-error error-banner">
-          {t("sessions.clipboardWriteFailed")}
+          {t(CLIPBOARD_MESSAGE_KEYS[clipboardError])}
         </div>
       ) : null}
       {connectionState !== "connected" ? (

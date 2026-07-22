@@ -1,4 +1,7 @@
-import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  readText as readClipboardText,
+  writeText as writeClipboardText,
+} from "@tauri-apps/plugin-clipboard-manager";
 import type {
   ClipboardSelectionType,
   IBase64,
@@ -62,7 +65,7 @@ export class TauriClipboardProvider implements IClipboardProvider {
   }
 
   readText() {
-    // 远端读取本机剪贴板风险更高。始终返回空值，并且不申请 Tauri 读取权限。
+    // 远端读取本机剪贴板风险更高。Provider 始终返回空值，不调用 Tauri 读取接口。
     return "";
   }
 
@@ -88,4 +91,37 @@ export class TauriClipboardProvider implements IClipboardProvider {
 
 export function writeSystemClipboard(text: string) {
   return writeClipboardText(text);
+}
+
+export function readSystemClipboard() {
+  return readClipboardText();
+}
+
+interface TerminalClipboardShortcutEvent {
+  altKey: boolean;
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+  shiftKey: boolean;
+  type: string;
+}
+
+export type TerminalClipboardShortcutAction = "copy" | "paste" | null;
+
+export function resolveTerminalClipboardShortcut(
+  event: TerminalClipboardShortcutEvent,
+  hasSelection: boolean,
+): TerminalClipboardShortcutAction {
+  if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) {
+    return null;
+  }
+
+  const key = event.key.toLowerCase();
+  if (key === "c" && hasSelection) {
+    return "copy";
+  }
+  if (key === "v" && !event.shiftKey) {
+    return "paste";
+  }
+  return null;
 }

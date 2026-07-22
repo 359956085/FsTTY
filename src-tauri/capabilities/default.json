@@ -10,6 +10,7 @@
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
+    "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "dialog:default"
     ,"updater:default"

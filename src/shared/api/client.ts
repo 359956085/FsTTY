@@ -1,6 +1,7 @@
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  ClipboardContentKind,
   ConnectResult,
   CreateSessionPayload,
   DeviceStatus,
@@ -113,6 +114,9 @@ export const api = {
   },
   getDeviceStatus(connectionId: string) {
     return invoke<DeviceStatus>("get_device_status", { connectionId });
+  },
+  getSystemClipboardContentKind() {
+    return invoke<ClipboardContentKind>("get_system_clipboard_content_kind");
   },
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");

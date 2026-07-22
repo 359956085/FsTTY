@@ -1590,9 +1590,10 @@ dependencies = [
 
 [[package]]
 name = "fstty"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
+ "clipboard-win",
  "keyring",
  "keyring-core",
  "russh",

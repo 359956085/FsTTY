@@ -1,4 +1,5 @@
 mod app_error;
+mod clipboard;
 mod connection;
 mod device;
 mod file;
@@ -6,6 +7,7 @@ mod session;
 mod settings;
 
 pub use app_error::AppError;
+pub use clipboard::ClipboardContentKind;
 pub use connection::{
     ConnectResult, CredentialKind, HostKeyChallenge, HostKeyChange, SshConnection, TerminalEvent,
     TransferEvent,
