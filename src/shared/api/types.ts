@@ -4,6 +4,7 @@ export interface AppSettings {
   language: Language;
   autoUpdate: boolean;
   updateProxy: string;
+  allowRemoteClipboardWrite: boolean;
 }
 
 export interface SessionGroup {

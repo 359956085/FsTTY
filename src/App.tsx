@@ -21,6 +21,7 @@ export function App() {
     language: "zh-CN",
     autoUpdate: true,
     updateProxy: "",
+    allowRemoteClipboardWrite: true,
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -152,7 +153,10 @@ export function App() {
         <div
           className={view === "sessions" ? "app-view" : "app-view app-view-hidden"}
         >
-          <SessionsPage visible={view === "sessions"} />
+          <SessionsPage
+            allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
+            visible={view === "sessions"}
+          />
         </div>
         {view === "settings" ? (
           <SettingsPage

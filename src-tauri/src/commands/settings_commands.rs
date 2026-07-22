@@ -30,10 +30,11 @@ pub fn update_app_settings(
     state: State<'_, AppState>,
     auto_update: bool,
     update_proxy: String,
+    allow_remote_clipboard_write: bool,
 ) -> Result<AppSettings, AppError> {
     let mut service = state
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    service.update(auto_update, update_proxy)
+    service.update(auto_update, update_proxy, allow_remote_clipboard_write)
 }

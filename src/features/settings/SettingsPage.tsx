@@ -40,13 +40,21 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     }
   }
 
-  async function saveUpdateSettings(autoUpdate: boolean, updateProxy = proxy) {
+  async function saveUpdateSettings(
+    autoUpdate: boolean,
+    updateProxy = proxy,
+    allowRemoteClipboardWrite = settings.allowRemoteClipboardWrite,
+  ) {
     setSavingUpdateSettings(true);
     const save = updateSettingsSaveRef.current.then(async () => {
       setSavingUpdateSettings(true);
       setError(null);
       try {
-        const nextSettings = await api.updateAppSettings(autoUpdate, updateProxy.trim());
+        const nextSettings = await api.updateAppSettings(
+          autoUpdate,
+          updateProxy.trim(),
+          allowRemoteClipboardWrite,
+        );
         setProxy(nextSettings.updateProxy);
         onChange(nextSettings);
         return nextSettings;
@@ -127,6 +135,30 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 { value: "en-US", label: t("settings.english") },
               ]}
               value={settings.language}
+            />
+          </div>
+          <div className="settings-row settings-clipboard-row">
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="remote-clipboard-write">
+                {t("settings.remoteClipboardWrite")}
+              </label>
+              <small>{t("settings.remoteClipboardWriteHint")}</small>
+            </div>
+            <input
+              aria-label={t("settings.remoteClipboardWrite")}
+              checked={settings.allowRemoteClipboardWrite}
+              className="settings-auto-update-toggle"
+              disabled={savingUpdateSettings}
+              id="remote-clipboard-write"
+              onChange={(event) =>
+                void saveUpdateSettings(
+                  settings.autoUpdate,
+                  proxy,
+                  event.target.checked,
+                )
+              }
+              role="switch"
+              type="checkbox"
             />
           </div>
         </section>

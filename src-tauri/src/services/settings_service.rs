@@ -76,11 +76,13 @@ impl SettingsService {
         &mut self,
         auto_update: bool,
         update_proxy: String,
+        allow_remote_clipboard_write: bool,
     ) -> Result<AppSettings, AppError> {
         validate_update_proxy(&update_proxy)?;
         let mut next = self.settings.clone();
         next.auto_update = auto_update;
         next.update_proxy = update_proxy;
+        next.allow_remote_clipboard_write = allow_remote_clipboard_write;
         self.replace(next)
     }
 
@@ -142,6 +144,7 @@ fn default_settings() -> AppSettings {
         language: Language::ZhCn,
         auto_update: true,
         update_proxy: String::new(),
+        allow_remote_clipboard_write: true,
     }
 }
 
@@ -196,7 +199,7 @@ mod tests {
         assert_eq!(service.get(), default_settings());
 
         service
-            .update(false, "http://127.0.0.1:7890".to_owned())
+            .update(false, "http://127.0.0.1:7890".to_owned(), false)
             .expect("保存更新设置失败");
         service.set_language(Language::EnUs).expect("保存语言失败");
 
@@ -204,6 +207,26 @@ mod tests {
         assert_eq!(restored.language, Language::EnUs);
         assert!(!restored.auto_update);
         assert_eq!(restored.update_proxy, "http://127.0.0.1:7890");
+        assert!(!restored.allow_remote_clipboard_write);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn loads_legacy_settings_with_remote_clipboard_enabled() {
+        let directory = test_directory("settings-legacy-clipboard");
+        fs::write(
+            directory.join(STORE_FILE),
+            br#"{
+  "version": 1,
+  "language": "zh-CN",
+  "autoUpdate": true,
+  "updateProxy": ""
+}"#,
+        )
+        .expect("无法写入旧设置文件");
+
+        let restored = SettingsService::load(&directory).get();
+        assert!(restored.allow_remote_clipboard_write);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -215,7 +238,7 @@ mod tests {
             .set_language(Language::EnUs)
             .expect("保存第一版设置失败");
         service
-            .update(false, String::new())
+            .update(false, String::new(), true)
             .expect("保存第二版设置失败");
         fs::write(directory.join(STORE_FILE), b"damaged").expect("无法损坏主设置文件");
 
@@ -223,7 +246,7 @@ mod tests {
         assert_eq!(recovered.get().language, Language::EnUs);
         assert!(recovered.get().auto_update);
         recovered
-            .update(false, "socks5://127.0.0.1:7890".to_owned())
+            .update(false, "socks5://127.0.0.1:7890".to_owned(), true)
             .expect("无法替换损坏的设置文件");
         assert_eq!(
             SettingsService::load(&directory).get().update_proxy,
@@ -255,7 +278,9 @@ mod tests {
         let directory = test_directory("settings-proxy");
         let mut service = SettingsService::load(&directory);
 
-        assert!(service.update(true, "ftp://127.0.0.1".to_owned()).is_err());
+        assert!(service
+            .update(true, "ftp://127.0.0.1".to_owned(), true)
+            .is_err());
         assert_eq!(service.get(), default_settings());
         let _ = fs::remove_dir_all(directory);
     }

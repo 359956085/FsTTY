@@ -120,7 +120,15 @@ export const api = {
   setLanguage(language: Language) {
     return invoke<AppSettings>("set_language", { language });
   },
-  updateAppSettings(autoUpdate: boolean, updateProxy: string) {
-    return invoke<AppSettings>("update_app_settings", { autoUpdate, updateProxy });
+  updateAppSettings(
+    autoUpdate: boolean,
+    updateProxy: string,
+    allowRemoteClipboardWrite: boolean,
+  ) {
+    return invoke<AppSettings>("update_app_settings", {
+      autoUpdate,
+      updateProxy,
+      allowRemoteClipboardWrite,
+    });
   },
 };

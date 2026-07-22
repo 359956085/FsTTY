@@ -23,10 +23,10 @@ FsTTY brings SSH terminals, session management, SFTP file operations, and device
 | Session management | Session groups, search, favorites, and a multi-tab workspace |
 | SSH authentication | Passwords, private key files, and pasted private key content |
 | Host verification | Confirms host key fingerprints on first connection and blocks changed keys |
-| Remote terminal | Interactive xterm.js terminal with copy, paste, clear, and reconnect actions |
+| Remote terminal | Interactive xterm.js terminal with copy, paste, clear, reconnect, and tmux OSC 52 clipboard support |
 | File management | SFTP browsing, uploads, downloads, remote drag-to-move, directory creation, rename, and recursive delete |
 | Device status | Shows OS, CPU, memory, disk, and uptime when available on the remote host |
-| App settings | Chinese/English, manual update checks, startup update checks, and an update proxy |
+| App settings | Chinese/English, remote clipboard control, manual and startup update checks, and an update proxy |
 
 ## Download and Install
 
@@ -64,8 +64,14 @@ Private key authentication requires a username. File-based keys continue to refe
 ### 3. Use the Terminal
 
 - Enter commands in the central terminal area.
-- The context menu provides copy, paste, select all, clear, and reconnect actions.
+- The context menu provides copy, paste, select all, clear, and reconnect actions. Press `Ctrl+Shift+C` to copy an active selection.
 - Open multiple session tabs and drag the left or right divider to resize the workspace.
+
+#### tmux Clipboard
+
+- With tmux mouse mode enabled, regular dragging is handled by tmux. Hold `Shift` while dragging to select text directly in FsTTY.
+- tmux copy mode writes to the Windows clipboard through OSC 52. Run `tmux show -s set-clipboard`; the value should be `external` or `on`.
+- Run `tmux info | grep Ms` to verify clipboard support. If it reports `[missing]`, configure `terminal-features` using the [official tmux instructions](https://github.com/tmux/tmux/wiki/Clipboard) and restart the tmux server.
 
 ### 4. Manage Remote Files
 
@@ -92,6 +98,7 @@ The Settings page lets you:
 - Check for updates manually.
 - Check for updates at startup. FsTTY still asks for confirmation when an update is available and never installs it silently.
 - Configure an empty, `http://`, `https://`, or `socks5://` update proxy.
+- Enable or disable remote clipboard writes through OSC 52.
 
 ## Security
 
@@ -99,6 +106,7 @@ The Settings page lets you:
 - Session configuration contains connection details and file-based private key paths, but never returns or displays stored private key content.
 - First-time connections require host key confirmation. A changed trusted key blocks the connection.
 - Credentials marked for one-time use are limited to the current connection flow.
+- When OSC 52 is enabled, remote programs can replace Windows clipboard content. Disable remote clipboard writes in Settings when synchronization is not needed.
 
 ## Current Limitations
 

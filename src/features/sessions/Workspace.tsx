@@ -15,6 +15,7 @@ import type { SessionRuntime } from "./useSessionConnections";
 import type { OpenSessionTab } from "./useSessionsPageState";
 
 interface WorkspaceProps {
+  allowRemoteClipboardWrite: boolean;
   activeTabId: string | null;
   activeRuntime: SessionRuntime;
   connectionStates: Readonly<Record<string, ConnectionState>>;
@@ -56,6 +57,7 @@ interface WorkspaceProps {
 }
 
 export function Workspace({
+  allowRemoteClipboardWrite,
   activeRuntime,
   activeTabId,
   connectionStates,
@@ -175,6 +177,7 @@ export function Workspace({
               >
                 <TerminalPane
                   active={activeTabId === tab.id}
+                  allowRemoteClipboardWrite={allowRemoteClipboardWrite}
                   autoConnect={tab.autoConnect}
                   connectionState={runtime?.connectionState ?? "disconnected"}
                   directoryRequest={runtime?.terminalDirectoryRequest ?? null}

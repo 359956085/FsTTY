@@ -6,6 +6,12 @@ pub struct AppSettings {
     pub language: Language,
     pub auto_update: bool,
     pub update_proxy: String,
+    #[serde(default = "default_allow_remote_clipboard_write")]
+    pub allow_remote_clipboard_write: bool,
+}
+
+fn default_allow_remote_clipboard_write() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

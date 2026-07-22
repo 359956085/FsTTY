@@ -20,6 +20,12 @@ import { TextInput } from "../../shared/ui/TextInput";
 import { hasControlCharacter } from "../../shared/validation/text";
 import type { TerminalDirectoryRequest } from "./useSessionConnections";
 import { retryInterruptedAuthentication } from "./authenticationRetry";
+import { createImeCompositionFallback } from "./imeCompositionFallback";
+import {
+  StrictClipboardBase64,
+  TauriClipboardProvider,
+  writeSystemClipboard,
+} from "./terminalClipboard";
 
 const SHELL_OSC_IDENTIFIER = 777;
 
@@ -31,6 +37,7 @@ interface ShellIntegration {
 
 interface TerminalPaneProps {
   active: boolean;
+  allowRemoteClipboardWrite: boolean;
   autoConnect: boolean;
   visible: boolean;
   runtimeId: string;
@@ -49,6 +56,7 @@ interface TerminalPaneProps {
 
 export function TerminalPane({
   active,
+  allowRemoteClipboardWrite,
   autoConnect,
   connectionState,
   directoryRequest,
@@ -69,6 +77,10 @@ export function TerminalPane({
   const inputBufferRef = useRef("");
   const inputTimerRef = useRef<number | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
+  const clipboardErrorTimerRef = useRef<number | null>(null);
+  const imeCompositionFallbackRef = useRef<ReturnType<
+    typeof createImeCompositionFallback
+  > | null>(null);
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const mountedRef = useRef(true);
@@ -89,6 +101,10 @@ export function TerminalPane({
   const sendImmediateInputRef = useRef<(data: string) => void>(() => undefined);
   const translateRef = useRef(t);
   const activeRef = useRef(active);
+  const visibleRef = useRef(visible);
+  const allowRemoteClipboardWriteRef = useRef(allowRemoteClipboardWrite);
+  const reportClipboardErrorRef = useRef<() => void>(() => undefined);
+  const copyTerminalSelectionRef = useRef<() => Promise<void>>(async () => undefined);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
@@ -100,6 +116,7 @@ export function TerminalPane({
   const [rememberCredential, setRememberCredential] = useState(true);
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [clipboardWriteFailed, setClipboardWriteFailed] = useState(false);
 
   onDirectoryChangeRef.current = onDirectoryChange;
   onCredentialSavedRef.current = onCredentialSaved;
@@ -111,6 +128,10 @@ export function TerminalPane({
   sendImmediateInputRef.current = sendImmediateInput;
   translateRef.current = t;
   activeRef.current = active;
+  visibleRef.current = visible;
+  allowRemoteClipboardWriteRef.current = allowRemoteClipboardWrite;
+  reportClipboardErrorRef.current = reportClipboardError;
+  copyTerminalSelectionRef.current = copyTerminalSelection;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -123,6 +144,22 @@ export function TerminalPane({
     if (mountedRef.current) {
       onStateChange(runtimeId, state, error);
     }
+  }
+
+  function reportClipboardError() {
+    if (!mountedRef.current) {
+      return;
+    }
+    setClipboardWriteFailed(true);
+    if (clipboardErrorTimerRef.current !== null) {
+      window.clearTimeout(clipboardErrorTimerRef.current);
+    }
+    clipboardErrorTimerRef.current = window.setTimeout(() => {
+      clipboardErrorTimerRef.current = null;
+      if (mountedRef.current) {
+        setClipboardWriteFailed(false);
+      }
+    }, 3000);
   }
 
   function clearPendingInput() {
@@ -327,10 +364,10 @@ export function TerminalPane({
     try {
       const selection = terminalRef.current?.getSelection() ?? "";
       if (selection) {
-        await navigator.clipboard.writeText(selection);
+        await writeSystemClipboard(selection);
       }
     } catch {
-      // 剪贴板权限失败不影响终端继续输入。
+      reportClipboardError();
     } finally {
       restoreTerminalFocus();
     }
@@ -354,15 +391,17 @@ export function TerminalPane({
     let observer: ResizeObserver | null = null;
     let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
+    let disposeImeListeners: (() => void) | null = null;
 
     async function mountTerminal() {
       const container = containerRef.current;
       if (!container) {
         return;
       }
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
+      const [{ Terminal }, { FitAddon }, { ClipboardAddon }] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
+        import("@xterm/addon-clipboard"),
       ]);
       if (disposed) {
         return;
@@ -388,7 +427,70 @@ export function TerminalPane({
       });
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
+      terminal.loadAddon(
+        new ClipboardAddon(
+          new StrictClipboardBase64(),
+          new TauriClipboardProvider({
+            isAllowed: () =>
+              allowRemoteClipboardWriteRef.current &&
+              activeRef.current &&
+              visibleRef.current,
+            onWriteError: () => reportClipboardErrorRef.current(),
+          }),
+        ),
+      );
       terminal.open(container);
+      const textarea = terminal.textarea;
+      if (textarea) {
+        const imeCompositionFallback = createImeCompositionFallback();
+        const handleInputCapture = (event: Event) => {
+          if (!(event instanceof InputEvent) || event.target !== textarea) {
+            return;
+          }
+          const finalInput = imeCompositionFallback.takeFinalInput(event);
+          if (finalInput === null) {
+            return;
+          }
+          // WebView2 已给出完整最终文字；阻止 xterm 因 Shift 状态忽略后，走公开输入接口提交。
+          event.stopPropagation();
+          terminal.input(finalInput, true);
+        };
+        textarea.addEventListener("compositionstart", imeCompositionFallback.compositionStart);
+        textarea.addEventListener("compositionend", imeCompositionFallback.compositionEnd);
+        textarea.addEventListener("keydown", imeCompositionFallback.handleKeyDown);
+        textarea.addEventListener("keyup", imeCompositionFallback.handleKeyUp);
+        textarea.addEventListener("blur", imeCompositionFallback.reset);
+        container.addEventListener("input", handleInputCapture, true);
+        imeCompositionFallbackRef.current = imeCompositionFallback;
+        disposeImeListeners = () => {
+          textarea.removeEventListener(
+            "compositionstart",
+            imeCompositionFallback.compositionStart,
+          );
+          textarea.removeEventListener("compositionend", imeCompositionFallback.compositionEnd);
+          textarea.removeEventListener("keydown", imeCompositionFallback.handleKeyDown);
+          textarea.removeEventListener("keyup", imeCompositionFallback.handleKeyUp);
+          textarea.removeEventListener("blur", imeCompositionFallback.reset);
+          container.removeEventListener("input", handleInputCapture, true);
+          imeCompositionFallback.dispose();
+          if (imeCompositionFallbackRef.current === imeCompositionFallback) {
+            imeCompositionFallbackRef.current = null;
+          }
+        };
+      }
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (
+          event.type === "keydown" &&
+          event.ctrlKey &&
+          event.shiftKey &&
+          event.key.toLowerCase() === "c" &&
+          terminal.hasSelection()
+        ) {
+          void copyTerminalSelectionRef.current();
+          return false;
+        }
+        return true;
+      });
       oscHandler = terminal.parser.registerOscHandler(
         SHELL_OSC_IDENTIFIER,
         (data) => handleShellOscRef.current(data),
@@ -423,6 +525,12 @@ export function TerminalPane({
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
+      if (clipboardErrorTimerRef.current !== null) {
+        window.clearTimeout(clipboardErrorTimerRef.current);
+        clipboardErrorTimerRef.current = null;
+      }
+      disposeImeListeners?.();
+      disposeImeListeners = null;
       const connection = connectionRef.current;
       connectionRef.current = null;
       if (connection) {
@@ -485,6 +593,7 @@ export function TerminalPane({
     }
     clearPendingInput();
     resetShellIntegration();
+    imeCompositionFallbackRef.current?.reset();
     terminal.reset();
     const attemptId = connectionAttemptRef.current + 1;
     connectionAttemptRef.current = attemptId;
@@ -703,6 +812,11 @@ export function TerminalPane({
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
+      {clipboardWriteFailed ? (
+        <div aria-live="polite" className="terminal-clipboard-error error-banner">
+          {t("sessions.clipboardWriteFailed")}
+        </div>
+      ) : null}
       {connectionState !== "connected" ? (
         <div className="terminal-connect-overlay">
           <Link2Off size={28} />

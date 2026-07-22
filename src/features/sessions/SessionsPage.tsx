@@ -14,10 +14,11 @@ import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
 
 interface SessionsPageProps {
+  allowRemoteClipboardWrite: boolean;
   visible: boolean;
 }
 
-export function SessionsPage({ visible }: SessionsPageProps) {
+export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPageProps) {
   const { t } = useTranslation();
   const sessionsState = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
@@ -130,6 +131,7 @@ export function SessionsPage({ visible }: SessionsPageProps) {
       />
 
       <Workspace
+        allowRemoteClipboardWrite={allowRemoteClipboardWrite}
         activeRuntime={activeRuntime}
         activeTabId={sessionsState.activeTabId}
         connectionStates={connectionStates}
