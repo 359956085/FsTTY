@@ -9,10 +9,14 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
+- 调整更新弹窗底部按钮样式，统一取消、立即更新和重试操作的视觉层级。
+
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
+
+- Refined the update dialog footer buttons to give Cancel, Update Now, and Retry a consistent visual hierarchy.
 
 <!-- release-notes:en-US:end -->
 

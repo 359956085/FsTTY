@@ -1642,15 +1642,44 @@ textarea:focus-visible,
 
 .update-dialog .dialog-actions {
   justify-content: flex-end;
+  gap: 12px;
+}
+
+.update-dialog .dialog-actions .button {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 8px;
   gap: 8px;
 }
 
+.update-dialog .dialog-actions .button-ghost {
+  min-width: 68px;
+  border-color: rgba(210, 216, 222, 0.24);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.update-dialog .dialog-actions .button-ghost:hover:not(:disabled) {
+  border-color: rgba(210, 216, 222, 0.42);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.update-dialog .dialog-actions .button-ghost:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(1px);
+}
+
+.update-dialog .dialog-actions .button-ghost:focus-visible {
+  outline: 2px solid rgba(210, 216, 222, 0.72);
+  outline-offset: 2px;
+}
+
 .update-dialog .update-action-button {
-  min-width: 112px;
-  min-height: 38px;
+  min-width: 128px;
   border: 1px solid #3b91e8;
-  background: #318be4;
-  box-shadow: 0 4px 14px rgba(49, 139, 228, 0.18);
+  background: linear-gradient(180deg, #3b95ec 0%, #287fd6 100%);
+  box-shadow: 0 4px 14px rgba(49, 139, 228, 0.22);
   color: #f4f8fc;
   transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease,
     transform 120ms ease;
@@ -1658,12 +1687,12 @@ textarea:focus-visible,
 
 .update-dialog .update-action-button:hover:not(:disabled) {
   border-color: #4b9def;
-  background: #3b95ec;
+  background: linear-gradient(180deg, #489ff1 0%, #318be4 100%);
   box-shadow: 0 5px 16px rgba(49, 139, 228, 0.26);
 }
 
 .update-dialog .update-action-button:active:not(:disabled) {
-  background: #287fd6;
+  background: linear-gradient(180deg, #318be4 0%, #2475c5 100%);
   box-shadow: 0 2px 8px rgba(49, 139, 228, 0.2);
   transform: translateY(1px);
 }

@@ -1,4 +1,4 @@
-import { Download } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../shared/ui/Button";
@@ -119,7 +119,7 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
           {updater.phase === "available" || updater.phase === "error" ? (
             <Button
               className="update-action-button"
-              icon={updater.phase === "available" ? <Download aria-hidden="true" size={16} /> : undefined}
+              icon={<RefreshCw aria-hidden="true" size={18} />}
               onClick={() => void updater.installUpdate()}
             >
               {updater.phase === "error" ? t("settings.retryUpdate") : t("settings.updateNow")}
