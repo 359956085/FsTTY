@@ -42,7 +42,7 @@ jobs:
           # 打包器只读取配置文件；运行时 Builder 注入无法参与更新包签名。
           $config.plugins.updater.pubkey = $env:FSTTY_UPDATER_PUBLIC_KEY.Trim()
           $config | ConvertTo-Json -Depth 100 | Set-Content -Encoding utf8 $configPath
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 私钥只能放在 Actions Secrets，禁止放入普通 Variables。
