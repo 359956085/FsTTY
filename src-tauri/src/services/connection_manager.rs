@@ -41,6 +41,8 @@ const HOST_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 const MAX_TERMINAL_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PENDING_TERMINAL_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_TERMINAL_MESSAGES: usize = 256;
+const MAX_TERMINAL_OUTPUT_BATCH_BYTES: usize = 64 * 1024;
+const TERMINAL_OUTPUT_BATCH_DELAY: Duration = Duration::from_millis(4);
 const MAX_EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
 const TRANSFER_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_REMOTE_PATH_BYTES: usize = 4096;
@@ -139,6 +141,39 @@ impl PendingTerminalMessages {
             .ok_or_else(|| AppError::Connection("终端启动输出过大".to_owned()))?;
         self.messages.push_back(message);
         Ok(())
+    }
+}
+
+struct TerminalOutputBatch {
+    bytes: Vec<u8>,
+}
+
+impl TerminalOutputBatch {
+    fn new() -> Self {
+        // 空闲连接不预占 64 KiB；首次输出后按实际流量增长并复用容量。
+        Self { bytes: Vec::new() }
+    }
+
+    fn append(&mut self, data: &[u8]) -> usize {
+        let writable = (MAX_TERMINAL_OUTPUT_BATCH_BYTES - self.bytes.len()).min(data.len());
+        self.bytes.extend_from_slice(&data[..writable]);
+        writable
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self.bytes.len() == MAX_TERMINAL_OUTPUT_BATCH_BYTES
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn clear(&mut self) {
+        self.bytes.clear();
     }
 }
 
@@ -1559,53 +1594,109 @@ async fn run_terminal_reader(
     events: Channel<TerminalEvent>,
     mut pending: VecDeque<ChannelMsg>,
 ) -> TerminalEnd {
+    let mut output_batch = TerminalOutputBatch::new();
+    let mut flush_deadline = None;
     loop {
-        let message = match pending.pop_front() {
-            Some(message) => Some(message),
-            None => terminal.wait().await,
+        let message = match flush_deadline {
+            Some(deadline) => {
+                tokio::select! {
+                    biased;
+                    _ = time::sleep_until(deadline) => {
+                        if flush_terminal_output(&connection_id, &events, &mut output_batch).is_err() {
+                            return TerminalEnd::ClientGone;
+                        }
+                        flush_deadline = None;
+                        continue;
+                    }
+                    message = next_terminal_message(&mut terminal, &mut pending) => message,
+                }
+            }
+            None => next_terminal_message(&mut terminal, &mut pending).await,
         };
         match message {
             Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-                if events
-                    .send(TerminalEvent::Data {
-                        connection_id: connection_id.clone(),
-                        data: BASE64_STANDARD.encode(data),
-                    })
-                    .is_err()
-                {
-                    return TerminalEnd::ClientGone;
+                let mut remaining = data.as_ref();
+                while !remaining.is_empty() {
+                    if output_batch.is_empty() {
+                        flush_deadline = Some(time::Instant::now() + TERMINAL_OUTPUT_BATCH_DELAY);
+                    }
+                    let appended = output_batch.append(remaining);
+                    remaining = &remaining[appended..];
+                    if output_batch.is_full() {
+                        if flush_terminal_output(&connection_id, &events, &mut output_batch)
+                            .is_err()
+                        {
+                            return TerminalEnd::ClientGone;
+                        }
+                        flush_deadline = None;
+                    }
                 }
             }
-            Some(ChannelMsg::ExitStatus { exit_status }) => {
-                return TerminalEnd::Disconnected {
-                    exit_code: Some(exit_status),
-                    message: format!("远程 Shell 已退出，状态码 {exit_status}"),
-                };
+            message => {
+                // 断线和退出事件必须排在最后一批输出之后，避免终端尾部内容丢失。
+                if flush_terminal_output(&connection_id, &events, &mut output_batch).is_err() {
+                    return TerminalEnd::ClientGone;
+                }
+                flush_deadline = None;
+                match message {
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        return TerminalEnd::Disconnected {
+                            exit_code: Some(exit_status),
+                            message: format!("远程 Shell 已退出，状态码 {exit_status}"),
+                        };
+                    }
+                    Some(ChannelMsg::ExitSignal { .. }) => {
+                        return TerminalEnd::Disconnected {
+                            exit_code: None,
+                            message: "远程 Shell 因信号退出".to_owned(),
+                        };
+                    }
+                    Some(ChannelMsg::Eof) => {
+                        return TerminalEnd::Disconnected {
+                            exit_code: None,
+                            message: "远程 Shell 已关闭输出".to_owned(),
+                        };
+                    }
+                    Some(ChannelMsg::Failure) => {
+                        return TerminalEnd::Error("远程终端请求失败".to_owned());
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        return TerminalEnd::Disconnected {
+                            exit_code: None,
+                            message: "连接已断开".to_owned(),
+                        };
+                    }
+                    _ => {}
+                }
             }
-            Some(ChannelMsg::ExitSignal { .. }) => {
-                return TerminalEnd::Disconnected {
-                    exit_code: None,
-                    message: "远程 Shell 因信号退出".to_owned(),
-                };
-            }
-            Some(ChannelMsg::Eof) => {
-                return TerminalEnd::Disconnected {
-                    exit_code: None,
-                    message: "远程 Shell 已关闭输出".to_owned(),
-                };
-            }
-            Some(ChannelMsg::Failure) => {
-                return TerminalEnd::Error("远程终端请求失败".to_owned());
-            }
-            Some(ChannelMsg::Close) | None => {
-                return TerminalEnd::Disconnected {
-                    exit_code: None,
-                    message: "连接已断开".to_owned(),
-                };
-            }
-            _ => {}
         }
     }
+}
+
+async fn next_terminal_message(
+    terminal: &mut russh::ChannelReadHalf,
+    pending: &mut VecDeque<ChannelMsg>,
+) -> Option<ChannelMsg> {
+    match pending.pop_front() {
+        Some(message) => Some(message),
+        None => terminal.wait().await,
+    }
+}
+
+fn flush_terminal_output(
+    connection_id: &str,
+    events: &Channel<TerminalEvent>,
+    output_batch: &mut TerminalOutputBatch,
+) -> Result<(), ()> {
+    if output_batch.is_empty() {
+        return Ok(());
+    }
+    let result = events.send(TerminalEvent::Data {
+        connection_id: connection_id.to_owned(),
+        data: BASE64_STANDARD.encode(output_batch.as_slice()),
+    });
+    output_batch.clear();
+    result.map_err(|_| ())
 }
 
 async fn run_terminal_writer(
@@ -2147,6 +2238,39 @@ mod tests {
         assert!(pending
             .push(ChannelMsg::WindowAdjusted { new_size: 1024 })
             .is_err());
+    }
+
+    #[test]
+    fn batches_consecutive_terminal_output_in_order() {
+        let mut batch = TerminalOutputBatch::new();
+
+        assert_eq!(batch.append(b"first"), 5);
+        assert_eq!(batch.append(b"-second"), 7);
+        assert_eq!(batch.as_slice(), b"first-second");
+        assert!(!batch.is_full());
+    }
+
+    #[test]
+    fn splits_dense_terminal_output_at_batch_limit() {
+        let input = vec![7_u8; 1024 * 1024];
+        let mut remaining = input.as_slice();
+        let mut batch = TerminalOutputBatch::new();
+        let mut output = Vec::with_capacity(input.len());
+        let mut emitted_batches = 0;
+
+        while !remaining.is_empty() {
+            let appended = batch.append(remaining);
+            remaining = &remaining[appended..];
+            if batch.is_full() {
+                output.extend_from_slice(batch.as_slice());
+                batch.clear();
+                emitted_batches += 1;
+            }
+        }
+
+        assert!(batch.is_empty());
+        assert_eq!(emitted_batches, 16);
+        assert_eq!(output, input);
     }
 
     #[tokio::test]

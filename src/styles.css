@@ -753,12 +753,14 @@ textarea:focus-visible,
 
 .terminal-session {
   position: absolute;
+  content-visibility: hidden;
   visibility: hidden;
   pointer-events: none;
   inset: 0;
 }
 
 .terminal-session-active {
+  content-visibility: visible;
   visibility: visible;
   pointer-events: auto;
 }

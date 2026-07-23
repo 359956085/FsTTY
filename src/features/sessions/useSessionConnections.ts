@@ -62,9 +62,14 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const updateRuntime = useCallback(
     (sessionId: string, update: (runtime: SessionRuntime) => SessionRuntime) => {
       setRuntimes((current) => {
+        const existing = current[sessionId];
+        const nextRuntime = update(existing ?? createRuntime());
+        if (existing && nextRuntime === existing) {
+          return current;
+        }
         const next = {
           ...current,
-          [sessionId]: update(current[sessionId] ?? createRuntime()),
+          [sessionId]: nextRuntime,
         };
         runtimesRef.current = next;
         return next;

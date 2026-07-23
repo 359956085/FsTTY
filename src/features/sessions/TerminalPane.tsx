@@ -1,6 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { Copy, KeyRound, Link, Link2Off, ShieldAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
@@ -47,6 +47,11 @@ interface ShellIntegration {
   token: string;
 }
 
+interface TerminalActivityController {
+  start: () => void;
+  stop: () => void;
+}
+
 interface TerminalPaneProps {
   active: boolean;
   allowRemoteClipboardWrite: boolean;
@@ -66,7 +71,7 @@ interface TerminalPaneProps {
   ) => void;
 }
 
-export function TerminalPane({
+export const TerminalPane = memo(function TerminalPane({
   active,
   allowRemoteClipboardWrite,
   autoConnect,
@@ -94,6 +99,8 @@ export function TerminalPane({
     typeof createImeCompositionFallback
   > | null>(null);
   const remoteRightDragStateRef = useRef(createRemoteRightDragState());
+  const remoteMouseActivityRef = useRef<TerminalActivityController | null>(null);
+  const resizeObserverActivityRef = useRef<TerminalActivityController | null>(null);
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const mountedRef = useRef(true);
@@ -310,7 +317,14 @@ export function TerminalPane({
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     const container = containerRef.current;
-    if (!terminal || !fitAddon || !container || container.clientWidth === 0) {
+    if (
+      !activeRef.current ||
+      !visibleRef.current ||
+      !terminal ||
+      !fitAddon ||
+      !container ||
+      container.clientWidth === 0
+    ) {
       return;
     }
     const buffer = terminal.buffer.active;
@@ -347,7 +361,7 @@ export function TerminalPane({
     resizeTimerRef.current = window.setTimeout(() => {
       resizeTimerRef.current = null;
       const currentConnection = connectionRef.current;
-      if (currentConnection) {
+      if (currentConnection && activeRef.current && visibleRef.current) {
         void api
           .resizeTerminal(
             currentConnection.connectionId,
@@ -439,7 +453,8 @@ export function TerminalPane({
     let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
     let disposeImeListeners: (() => void) | null = null;
-    let disposeRemoteMouseListeners: (() => void) | null = null;
+    let remoteMouseListenersAttached = false;
+    let resizeObserverActive = false;
 
     async function mountTerminal() {
       const container = containerRef.current;
@@ -740,18 +755,29 @@ export function TerminalPane({
           );
         }
       };
-      // WebView2 右键手势可能破坏后续 MouseEvent.buttons；PointerEvent 用于可靠记录按下状态。
-      window.addEventListener("pointerdown", handleRemotePointerDown, true);
-      window.addEventListener("pointerup", handleRemotePointerUp, true);
-      window.addEventListener("mousemove", handleRemoteMouseMove, true);
-      window.addEventListener("mouseup", handleRemoteMouseUp, true);
-      window.addEventListener("pointercancel", handleRemotePointerCancel, true);
-      terminal.element?.addEventListener(
-        "lostpointercapture",
-        handleLostRemotePointerCapture,
-      );
-      window.addEventListener("blur", resetRemoteRightDrag);
-      disposeRemoteMouseListeners = () => {
+      const startRemoteMouseListeners = () => {
+        if (remoteMouseListenersAttached) {
+          return;
+        }
+        remoteMouseListenersAttached = true;
+        // WebView2 右键手势可能破坏后续 MouseEvent.buttons；PointerEvent 用于可靠记录按下状态。
+        window.addEventListener("pointerdown", handleRemotePointerDown, true);
+        window.addEventListener("pointerup", handleRemotePointerUp, true);
+        window.addEventListener("mousemove", handleRemoteMouseMove, true);
+        window.addEventListener("mouseup", handleRemoteMouseUp, true);
+        window.addEventListener("pointercancel", handleRemotePointerCancel, true);
+        terminal.element?.addEventListener(
+          "lostpointercapture",
+          handleLostRemotePointerCapture,
+        );
+        window.addEventListener("blur", resetRemoteRightDrag);
+      };
+      const stopRemoteMouseListeners = () => {
+        if (!remoteMouseListenersAttached) {
+          resetRemoteRightDrag();
+          return;
+        }
+        remoteMouseListenersAttached = false;
         window.removeEventListener("pointerdown", handleRemotePointerDown, true);
         window.removeEventListener("pointerup", handleRemotePointerUp, true);
         window.removeEventListener("mousemove", handleRemoteMouseMove, true);
@@ -764,6 +790,11 @@ export function TerminalPane({
         window.removeEventListener("blur", resetRemoteRightDrag);
         resetRemoteRightDrag();
       };
+      const remoteMouseActivity = {
+        start: startRemoteMouseListeners,
+        stop: stopRemoteMouseListeners,
+      };
+      remoteMouseActivityRef.current = remoteMouseActivity;
       const textarea = terminal.textarea;
       if (textarea) {
         const imeCompositionFallback = createImeCompositionFallback();
@@ -831,8 +862,35 @@ export function TerminalPane({
       fitAddonRef.current = fitAddon;
       terminalInstance = terminal;
       observer = new ResizeObserver(fitAndResize);
-      observer.observe(container);
-      fitAndResize();
+      const resizeObserverActivity = {
+        start: () => {
+          if (resizeObserverActive) {
+            return;
+          }
+          resizeObserverActive = true;
+          observer?.observe(container);
+        },
+        stop: () => {
+          if (!resizeObserverActive) {
+            if (resizeTimerRef.current !== null) {
+              window.clearTimeout(resizeTimerRef.current);
+              resizeTimerRef.current = null;
+            }
+            return;
+          }
+          resizeObserverActive = false;
+          observer?.disconnect();
+          if (resizeTimerRef.current !== null) {
+            window.clearTimeout(resizeTimerRef.current);
+            resizeTimerRef.current = null;
+          }
+        },
+      };
+      resizeObserverActivityRef.current = resizeObserverActivity;
+      if (activeRef.current && visibleRef.current) {
+        resizeObserverActivity.start();
+        fitAndResize();
+      }
       if (autoConnectRef.current && !disposed) {
         void connectTerminalRef.current();
       }
@@ -845,7 +903,8 @@ export function TerminalPane({
       disposed = true;
       connectionAttemptRef.current += 1;
       connectingRef.current = false;
-      observer?.disconnect();
+      resizeObserverActivityRef.current?.stop();
+      resizeObserverActivityRef.current = null;
       oscHandler?.dispose();
       clearPendingInput();
       resetShellIntegration();
@@ -858,8 +917,8 @@ export function TerminalPane({
       }
       disposeImeListeners?.();
       disposeImeListeners = null;
-      disposeRemoteMouseListeners?.();
-      disposeRemoteMouseListeners = null;
+      remoteMouseActivityRef.current?.stop();
+      remoteMouseActivityRef.current = null;
       const connection = connectionRef.current;
       connectionRef.current = null;
       if (connection) {
@@ -894,10 +953,23 @@ export function TerminalPane({
   }, [connectionState, directoryRequest]);
 
   useEffect(() => {
+    const resizeObserverActivity = resizeObserverActivityRef.current;
+    const remoteMouseActivity = remoteMouseActivityRef.current;
+    if (active && visible) {
+      resizeObserverActivity?.start();
+    } else {
+      resizeObserverActivity?.stop();
+    }
+    if (active && visible && connectionState === "connected") {
+      remoteMouseActivity?.start();
+    } else {
+      remoteMouseActivity?.stop();
+    }
     if (!active || !visible || connectionState !== "connected") {
       remoteRightDragStateRef.current.end();
     }
     if (!active || !visible) {
+      terminalRef.current?.blur();
       clearPendingInput();
       return;
     }
@@ -1316,11 +1388,15 @@ export function TerminalPane({
 
     </div>
   );
-}
+});
 
 function decodeBase64(value: string) {
   const binary = window.atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function createShellIntegrationCommand(

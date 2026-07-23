@@ -1,6 +1,6 @@
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
@@ -96,6 +96,33 @@ export function Workspace({
     y: number;
     tabId: string;
   } | null>(null);
+  const [initializedTerminalIds, setInitializedTerminalIds] = useState<ReadonlySet<string>>(
+    () => new Set(activeTabId ? [activeTabId] : []),
+  );
+
+  useEffect(() => {
+    if (!activeTabId) {
+      return;
+    }
+    setInitializedTerminalIds((current) => {
+      if (current.has(activeTabId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(activeTabId);
+      return next;
+    });
+  }, [activeTabId]);
+
+  useEffect(() => {
+    const validIds = new Set(openTabs.map((tab) => tab.id));
+    setInitializedTerminalIds((current) => {
+      if ([...current].every((id) => validIds.has(id))) {
+        return current;
+      }
+      return new Set([...current].filter((id) => validIds.has(id)));
+    });
+  }, [openTabs]);
 
   return (
     <section
@@ -166,6 +193,8 @@ export function Workspace({
           ) : null}
           {openTabs.map((tab) => {
             const runtime = runtimes[tab.id];
+            const terminalInitialized =
+              activeTabId === tab.id || initializedTerminalIds.has(tab.id);
             return (
               <div
                 className={
@@ -175,20 +204,22 @@ export function Workspace({
                 }
                 key={tab.id}
               >
-                <TerminalPane
-                  active={activeTabId === tab.id}
-                  allowRemoteClipboardWrite={allowRemoteClipboardWrite}
-                  autoConnect={tab.autoConnect}
-                  connectionState={runtime?.connectionState ?? "disconnected"}
-                  directoryRequest={runtime?.terminalDirectoryRequest ?? null}
-                  onConnected={onConnected}
-                  onCredentialSaved={onCredentialSaved}
-                  onDirectoryChange={onDirectoryChange}
-                  onStateChange={onTerminalState}
-                  runtimeId={tab.id}
-                  session={tab.session}
-                  visible={visible}
-                />
+                {terminalInitialized ? (
+                  <TerminalPane
+                    active={activeTabId === tab.id}
+                    allowRemoteClipboardWrite={allowRemoteClipboardWrite}
+                    autoConnect={tab.autoConnect}
+                    connectionState={runtime?.connectionState ?? "disconnected"}
+                    directoryRequest={runtime?.terminalDirectoryRequest ?? null}
+                    onConnected={onConnected}
+                    onCredentialSaved={onCredentialSaved}
+                    onDirectoryChange={onDirectoryChange}
+                    onStateChange={onTerminalState}
+                    runtimeId={tab.id}
+                    session={tab.session}
+                    visible={visible}
+                  />
+                ) : null}
               </div>
             );
           })}
