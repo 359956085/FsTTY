@@ -75,6 +75,22 @@ export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPag
     }
   }
 
+  async function deleteGroup(groupName: string) {
+    const sessionIds = new Set(
+      sessionsState.groups
+        .find((group) => group.name === groupName)
+        ?.sessions.map((session) => session.id) ?? [],
+    );
+    const affectedTabs = sessionsState.openSessionTabs.filter((tab) =>
+      sessionIds.has(tab.sessionId),
+    );
+    const result = await sessionsState.deleteGroup(groupName);
+    if (result.ok) {
+      affectedTabs.forEach((tab) => connections.removeRuntime(tab.id));
+    }
+    return result;
+  }
+
   return (
     <div
       className={
@@ -98,10 +114,12 @@ export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPag
           favoriteSessionIds={sessionsState.favoriteSessionIds}
           filter={sessionsState.filter}
           groups={sessionsState.groups}
+          mutationPending={sessionsState.listMutationPending}
           query={sessionsState.query}
           onCollapse={toggleLeftCollapsed}
           onCreate={() => sessionsState.setDialogState({ mode: "create" })}
           onDelete={(sessionId) => void deleteSession(sessionId)}
+          onDeleteGroup={deleteGroup}
           onEdit={(sessionId) => {
             const session = sessionsState.sessions.find((item) => item.id === sessionId);
             if (session) {
@@ -112,6 +130,9 @@ export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPag
           onQueryChange={sessionsState.setQuery}
           onOpen={sessionsState.openSessionTab}
           onRefresh={() => void sessionsState.refreshSessions()}
+          onRenameGroup={sessionsState.renameGroup}
+          onReorderGroup={sessionsState.reorderGroup}
+          onReorderSession={sessionsState.reorderSession}
           onSelect={sessionsState.selectSession}
           selectedSessionId={sessionsState.selectedSessionId}
           onToggleFavorite={sessionsState.toggleFavorite}

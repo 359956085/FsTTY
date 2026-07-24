@@ -71,6 +71,72 @@ pub async fn delete_session(
 }
 
 #[tauri::command]
+pub async fn reorder_session_group(
+    state: State<'_, AppState>,
+    group_name: String,
+    target_index: usize,
+) -> Result<(), AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .reorder_group(&group_name, target_index)
+}
+
+#[tauri::command]
+pub async fn reorder_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    target_group: String,
+    target_index: usize,
+) -> Result<(), AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .reorder_session(&session_id, &target_group, target_index)
+}
+
+#[tauri::command]
+pub async fn rename_session_group(
+    state: State<'_, AppState>,
+    group_name: String,
+    new_name: String,
+) -> Result<(), AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .rename_group(&group_name, &new_name)
+}
+
+#[tauri::command]
+pub async fn delete_session_group(
+    state: State<'_, AppState>,
+    group_name: String,
+) -> Result<Vec<String>, AppError> {
+    let session_ids = {
+        state
+            .session_service
+            .lock()
+            .await
+            .session_ids_in_group(&group_name)?
+    };
+    for session_id in &session_ids {
+        state
+            .connection_manager
+            .disconnect_session(session_id)
+            .await;
+    }
+    state
+        .session_service
+        .lock()
+        .await
+        .delete_group(&group_name, &state.credential_service)
+        .await
+}
+
+#[tauri::command]
 pub async fn set_session_credential(
     state: State<'_, AppState>,
     session_id: String,

@@ -428,6 +428,7 @@ textarea:focus-visible,
 }
 
 .session-group {
+  position: relative;
   margin-bottom: 8px;
 }
 
@@ -445,6 +446,63 @@ textarea:focus-visible,
   text-align: left;
 }
 
+.session-list-drag-enabled .session-group-title,
+.session-list-drag-enabled .session-item-select {
+  cursor: grab;
+}
+
+.session-list-dragging,
+.session-list-dragging * {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.session-drag-source {
+  opacity: 0.46;
+}
+
+.session-group-drop-before::before,
+.session-group-drop-after::after,
+.session-item-drop-before::before,
+.session-item-drop-after::after {
+  position: absolute;
+  z-index: 3;
+  right: 2px;
+  left: 2px;
+  height: 3px;
+  border-radius: 3px;
+  background: #55a6ff;
+  box-shadow:
+    0 0 0 1px rgba(85, 166, 255, 0.28),
+    0 0 10px rgba(45, 139, 246, 0.9);
+  content: "";
+  pointer-events: none;
+}
+
+.session-group-drop-before::before {
+  top: -3px;
+}
+
+.session-group-drop-after::after {
+  bottom: -3px;
+}
+
+.session-item-drop-before::before {
+  top: 0;
+}
+
+.session-item-drop-after::after {
+  bottom: 0;
+}
+
+.session-group-drop-target {
+  border-radius: 5px;
+  background: rgba(45, 139, 246, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(85, 166, 255, 0.8),
+    0 0 10px rgba(45, 139, 246, 0.28);
+}
+
 .session-group-title strong {
   display: grid;
   width: 21px;
@@ -457,6 +515,7 @@ textarea:focus-visible,
 }
 
 .session-item {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;
   min-height: 52px;
@@ -467,6 +526,34 @@ textarea:focus-visible,
   background: transparent;
 }
 
+.group-operation-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.group-operation-body {
+  display: grid;
+  gap: 12px;
+  padding: 18px 16px;
+}
+
+.group-operation-body label {
+  display: grid;
+  gap: 8px;
+}
+
+.group-operation-body p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.group-operation-warning {
+  color: #ffaaaa;
+}
+
+.group-operation-dialog .dialog-actions {
+  justify-content: flex-end;
+}
+
 .session-item:hover {
   background: rgba(255, 255, 255, 0.035);
 }
@@ -474,6 +561,21 @@ textarea:focus-visible,
 .session-item-active {
   border-color: rgba(210, 216, 222, 0.62);
   background: rgba(210, 216, 222, 0.14);
+}
+
+.session-list-dragging .session-item:hover {
+  background: transparent;
+}
+
+.session-list-dragging .session-item-active:hover {
+  background: rgba(210, 216, 222, 0.14);
+}
+
+.session-list-dragging .session-item.session-item-drop-before,
+.session-list-dragging .session-item.session-item-drop-after {
+  border-color: rgba(85, 166, 255, 0.78);
+  background: rgba(45, 139, 246, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(85, 166, 255, 0.16);
 }
 
 .session-item-select {

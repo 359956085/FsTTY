@@ -10,6 +10,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 ### 简体中文
 
 - 更新弹窗支持忽略当前版本；自动检查不再提示已忽略版本，手动检查仍可查看并安装。
+- 会话列表支持拖动调整分组和会话顺序、跨组移动会话，并可重命名或整组删除分组。
 
 <!-- release-notes:zh-CN:end -->
 
@@ -17,6 +18,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 ### English
 
 - The update dialog can now ignore the current version. Automatic checks suppress ignored versions, while manual checks can still show and install them.
+- The session list now supports drag-and-drop group and session ordering, moving sessions between groups, and renaming or deleting entire groups.
 
 <!-- release-notes:en-US:end -->
 

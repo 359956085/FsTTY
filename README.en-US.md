@@ -20,7 +20,7 @@ FsTTY brings SSH terminals, session management, SFTP file operations, and device
 
 | Feature | Description |
 | --- | --- |
-| Session management | Session groups, search, favorites, and a multi-tab workspace |
+| Session management | Session groups, drag ordering, cross-group moves, search, favorites, and a multi-tab workspace |
 | SSH authentication | Passwords, private key files, and pasted private key content |
 | Host verification | Confirms host key fingerprints on first connection and blocks changed keys |
 | Remote terminal | Interactive xterm.js terminal with copy, paste, clear, reconnect, and tmux OSC 52 clipboard support |

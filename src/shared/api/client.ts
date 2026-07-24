@@ -28,6 +28,18 @@ export const api = {
   deleteSession(sessionId: string) {
     return invoke<void>("delete_session", { sessionId });
   },
+  reorderSessionGroup(groupName: string, targetIndex: number) {
+    return invoke<void>("reorder_session_group", { groupName, targetIndex });
+  },
+  reorderSession(sessionId: string, targetGroup: string, targetIndex: number) {
+    return invoke<void>("reorder_session", { sessionId, targetGroup, targetIndex });
+  },
+  renameSessionGroup(groupName: string, newName: string) {
+    return invoke<void>("rename_session_group", { groupName, newName });
+  },
+  deleteSessionGroup(groupName: string) {
+    return invoke<string[]>("delete_session_group", { groupName });
+  },
   setSessionCredential(sessionId: string, credential: string) {
     return invoke<Session>("set_session_credential", { sessionId, credential });
   },

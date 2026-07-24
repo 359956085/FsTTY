@@ -22,6 +22,7 @@ const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SESSIONS: usize = 500;
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
+const DEFAULT_SESSION_GROUP: &str = "未分组";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -347,6 +348,194 @@ impl SessionService {
                 // 磁盘仍保留待清理项时，内存也保留，确保本次运行仍可重试。
                 self.store = before_cleanup;
             }
+        }
+        Ok(())
+    }
+
+    pub fn reorder_group(&mut self, group_name: &str, target_index: usize) -> Result<(), AppError> {
+        self.ensure_writable()?;
+        let mut groups = group_session_blocks(&self.store.sessions);
+        if target_index >= groups.len() {
+            return Err(AppError::Validation("分组目标位置无效".to_owned()));
+        }
+        let source_index = groups
+            .iter()
+            .position(|(name, _)| name == group_name)
+            .ok_or_else(|| AppError::NotFound("未找到指定分组".to_owned()))?;
+        if source_index == target_index {
+            return Ok(());
+        }
+
+        let group = groups.remove(source_index);
+        groups.insert(target_index, group);
+        self.replace_sessions(flatten_session_blocks(groups))
+    }
+
+    pub fn reorder_session(
+        &mut self,
+        session_id: &str,
+        target_group: &str,
+        target_index: usize,
+    ) -> Result<(), AppError> {
+        self.ensure_writable()?;
+        validate_id(session_id)?;
+        validate_text("分组", target_group, 128, false)?;
+
+        let mut groups = group_session_blocks(&self.store.sessions);
+        let target_exists = groups.iter().any(|(name, _)| name == target_group);
+        if !target_exists {
+            return Err(AppError::NotFound("未找到目标分组".to_owned()));
+        }
+        let (source_group_index, source_session_index) = groups
+            .iter()
+            .enumerate()
+            .find_map(|(group_index, (_, sessions))| {
+                sessions
+                    .iter()
+                    .position(|session| session.id == session_id)
+                    .map(|session_index| (group_index, session_index))
+            })
+            .ok_or_else(|| AppError::NotFound("未找到指定会话".to_owned()))?;
+        let source_group = groups[source_group_index].0.clone();
+        if source_group == target_group && source_session_index == target_index {
+            return Ok(());
+        }
+
+        let mut session = groups[source_group_index].1.remove(source_session_index);
+        if groups[source_group_index].1.is_empty() {
+            groups.remove(source_group_index);
+        }
+        let target_group_index = groups
+            .iter()
+            .position(|(name, _)| name == target_group)
+            .or_else(|| {
+                if source_group == target_group {
+                    groups.push((target_group.to_owned(), Vec::new()));
+                    Some(groups.len() - 1)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| AppError::NotFound("未找到目标分组".to_owned()))?;
+        let target_sessions = &mut groups[target_group_index].1;
+        if target_index > target_sessions.len() {
+            return Err(AppError::Validation("会话目标位置无效".to_owned()));
+        }
+        session.group = target_group.to_owned();
+        target_sessions.insert(target_index, session);
+        self.replace_sessions(flatten_session_blocks(groups))
+    }
+
+    pub fn rename_group(&mut self, group_name: &str, new_name: &str) -> Result<(), AppError> {
+        self.ensure_writable()?;
+        validate_text("分组", new_name, 128, false)?;
+        let new_name = new_name.trim();
+        if group_name == DEFAULT_SESSION_GROUP || new_name == DEFAULT_SESSION_GROUP {
+            return Err(AppError::Validation("系统默认分组不能重命名".to_owned()));
+        }
+        if !self
+            .store
+            .sessions
+            .iter()
+            .any(|session| session.group == group_name)
+        {
+            return Err(AppError::NotFound("未找到指定分组".to_owned()));
+        }
+        if group_name == new_name {
+            return Ok(());
+        }
+        if self
+            .store
+            .sessions
+            .iter()
+            .any(|session| session.group == new_name)
+        {
+            return Err(AppError::Validation("分组名称已存在".to_owned()));
+        }
+
+        let previous = self.store.clone();
+        for session in &mut self.store.sessions {
+            if session.group == group_name {
+                session.group = new_name.to_owned();
+            }
+        }
+        if let Err(error) = self.persist() {
+            self.store = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn session_ids_in_group(&self, group_name: &str) -> Result<Vec<String>, AppError> {
+        self.ensure_readable()?;
+        if group_name == DEFAULT_SESSION_GROUP {
+            return Err(AppError::Validation("系统默认分组不能删除".to_owned()));
+        }
+        let session_ids = self
+            .store
+            .sessions
+            .iter()
+            .filter(|session| session.group == group_name)
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        if session_ids.is_empty() {
+            return Err(AppError::NotFound("未找到指定分组".to_owned()));
+        }
+        Ok(session_ids)
+    }
+
+    pub async fn delete_group(
+        &mut self,
+        group_name: &str,
+        credentials: &CredentialService,
+    ) -> Result<Vec<String>, AppError> {
+        self.ensure_writable()?;
+        let session_ids = self.session_ids_in_group(group_name)?;
+        let deleted_ids = session_ids.iter().cloned().collect::<HashSet<_>>();
+        let previous = self.store.clone();
+        self.store
+            .sessions
+            .retain(|session| !deleted_ids.contains(&session.id));
+        for session_id in &session_ids {
+            if !self
+                .store
+                .pending_credential_cleanup_ids
+                .contains(session_id)
+            {
+                self.store
+                    .pending_credential_cleanup_ids
+                    .push(session_id.clone());
+            }
+        }
+        if let Err(error) = self.persist() {
+            self.store = previous;
+            return Err(error);
+        }
+
+        let mut cleaned_ids = HashSet::new();
+        for session_id in &session_ids {
+            if credentials.delete_all(session_id).await.is_ok() {
+                cleaned_ids.insert(session_id.clone());
+            }
+        }
+        if !cleaned_ids.is_empty() {
+            let before_cleanup = self.store.clone();
+            self.store
+                .pending_credential_cleanup_ids
+                .retain(|id| !cleaned_ids.contains(id));
+            if self.persist().is_err() {
+                self.store = before_cleanup;
+            }
+        }
+        Ok(session_ids)
+    }
+
+    fn replace_sessions(&mut self, sessions: Vec<StoredSession>) -> Result<(), AppError> {
+        let previous = self.store.clone();
+        self.store.sessions = sessions;
+        if let Err(error) = self.persist() {
+            self.store = previous;
+            return Err(error);
         }
         Ok(())
     }
@@ -1168,10 +1357,31 @@ fn validate_id(value: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::Validation("会话 ID 无效".to_owned()))
 }
 
+fn group_session_blocks(sessions: &[StoredSession]) -> Vec<(String, Vec<StoredSession>)> {
+    let mut groups = Vec::<(String, Vec<StoredSession>)>::new();
+    for session in sessions {
+        if let Some((_, group_sessions)) =
+            groups.iter_mut().find(|(name, _)| name == &session.group)
+        {
+            group_sessions.push(session.clone());
+        } else {
+            groups.push((session.group.clone(), vec![session.clone()]));
+        }
+    }
+    groups
+}
+
+fn flatten_session_blocks(groups: Vec<(String, Vec<StoredSession>)>) -> Vec<StoredSession> {
+    groups
+        .into_iter()
+        .flat_map(|(_, sessions)| sessions)
+        .collect()
+}
+
 fn normalize_group(group: &str) -> String {
     let group = group.trim();
     if group.is_empty() {
-        "未分组".to_owned()
+        DEFAULT_SESSION_GROUP.to_owned()
     } else {
         group.to_owned()
     }
@@ -1237,6 +1447,12 @@ mod tests {
             auth: SessionAuth::Password,
             login_save_prompted: false,
         }
+    }
+
+    fn grouped_session(name: &str, group: &str) -> StoredSession {
+        let mut session = sample_session(name);
+        session.group = group.to_owned();
+        session
     }
 
     #[test]
@@ -1317,6 +1533,100 @@ mod tests {
             normalize_tags(vec![" Web ".to_owned(), "web".to_owned(), "DB".to_owned()]),
             vec!["Web".to_owned(), "DB".to_owned()]
         );
+    }
+
+    #[test]
+    fn reorders_group_blocks_and_sessions() {
+        let directory = test_directory("session-order");
+        let mut service = SessionService::load(&directory);
+        let a1 = grouped_session("a1", "A");
+        let a1_id = a1.id.clone();
+        let a2 = grouped_session("a2", "A");
+        let b1 = grouped_session("b1", "B");
+        let b1_id = b1.id.clone();
+        let c1 = grouped_session("c1", "C");
+        service.store.sessions = vec![a1, a2, b1, c1];
+
+        service.reorder_group("A", 2).expect("无法调整分组顺序");
+        assert_eq!(
+            service
+                .store
+                .sessions
+                .iter()
+                .map(|session| session.group.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "C", "A", "A"]
+        );
+
+        service
+            .reorder_session(&a1_id, "A", 1)
+            .expect("无法调整组内会话顺序");
+        let group_a_names = service
+            .store
+            .sessions
+            .iter()
+            .filter(|session| session.group == "A")
+            .map(|session| session.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(group_a_names, vec!["a2", "a1"]);
+
+        service
+            .reorder_session(&b1_id, "C", 1)
+            .expect("无法跨组移动会话");
+        assert!(!service
+            .store
+            .sessions
+            .iter()
+            .any(|session| session.group == "B"));
+        assert_eq!(
+            service
+                .store
+                .sessions
+                .iter()
+                .filter(|session| session.group == "C")
+                .map(|session| session.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c1", "b1"]
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn renames_groups_and_protects_default_group() {
+        let directory = test_directory("group-management");
+        let mut service = SessionService::load(&directory);
+        service.store.sessions = vec![
+            grouped_session("a1", "A"),
+            grouped_session("b1", "B"),
+            grouped_session("default", DEFAULT_SESSION_GROUP),
+        ];
+
+        service.rename_group("A", "生产").expect("无法重命名分组");
+        assert_eq!(service.store.sessions[0].group, "生产");
+        assert!(service.rename_group("生产", "B").is_err());
+        assert!(service.rename_group(DEFAULT_SESSION_GROUP, "其他").is_err());
+        assert!(service.session_ids_in_group(DEFAULT_SESSION_GROUP).is_err());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn deletes_group_sessions_and_keeps_other_groups() {
+        let directory = test_directory("group-delete");
+        let credentials = CredentialService::new();
+        let mut service = SessionService::load(&directory);
+        let first = grouped_session("a1", "A");
+        let second = grouped_session("a2", "A");
+        let expected_ids = vec![first.id.clone(), second.id.clone()];
+        service.store.sessions = vec![first, second, grouped_session("b1", "B")];
+
+        let deleted_ids = service
+            .delete_group("A", &credentials)
+            .await
+            .expect("无法删除分组");
+        assert_eq!(deleted_ids, expected_ids);
+        assert_eq!(service.store.sessions.len(), 1);
+        assert_eq!(service.store.sessions[0].group, "B");
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

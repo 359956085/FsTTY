@@ -67,6 +67,13 @@ void i18n.use(initReactI18next).init({
           createTitle: "新建会话",
           editTitle: "编辑会话",
           confirmDelete: "确认删除当前会话？",
+          groupName: "分组名称",
+          groupNameRequired: "分组名称不能为空",
+          renameGroup: "重命名分组",
+          deleteGroup: "删除分组",
+          confirmDeleteGroup:
+            "确认删除分组“{{name}}”及其中 {{count}} 个会话？",
+          deleteGroupWarning: "会话和系统凭据将永久删除，此操作无法撤销。",
           noSession: "暂无会话",
           cpu: "CPU",
           memory: "内存",
@@ -301,6 +308,14 @@ void i18n.use(initReactI18next).init({
           createTitle: "New Session",
           editTitle: "Edit Session",
           confirmDelete: "Delete current session?",
+          groupName: "Group name",
+          groupNameRequired: "Group name is required",
+          renameGroup: "Rename group",
+          deleteGroup: "Delete group",
+          confirmDeleteGroup:
+            "Delete “{{name}}” and every session in it ({{count}} total)?",
+          deleteGroupWarning:
+            "Sessions and system credentials will be permanently deleted. This cannot be undone.",
           noSession: "No Session",
           cpu: "CPU",
           memory: "Memory",

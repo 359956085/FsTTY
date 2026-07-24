@@ -11,6 +11,11 @@ import {
   readWorkspacePreferences,
   updateWorkspacePreferences,
 } from "./workspacePreferences";
+import {
+  renameSessionGroup as renameGroupInState,
+  reorderSessionGroups,
+  reorderSessionInGroups,
+} from "./sessionOrdering";
 
 export type SessionDialogState =
   | { mode: "create"; session?: undefined }
@@ -28,6 +33,10 @@ interface SessionTabState {
 export interface OpenSessionTab extends SessionTabState {
   session: Session;
 }
+
+export type SessionListMutationResult<T = undefined> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
 
 interface UseSessionsPageStateOptions {
   confirmDeleteText: string;
@@ -50,8 +59,11 @@ export function useSessionsPageState({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [listMutationPending, setListMutationPending] = useState(false);
   const initialized = useRef(false);
   const requestId = useRef(0);
+  const groupsRef = useRef<SessionGroup[]>([]);
+  const listMutationPendingRef = useRef(false);
   const activeTabIdRef = useRef<string | null>(null);
   const openTabsRef = useRef<SessionTabState[]>([]);
   const favoriteSessionIdsRef = useRef<string[]>([]);
@@ -103,6 +115,7 @@ export function useSessionsPageState({
   );
 
   const refreshSessions = useCallback(async () => {
+    if (listMutationPendingRef.current) return;
     const nextRequestId = requestId.current + 1;
     requestId.current = nextRequestId;
     setLoading(true);
@@ -125,6 +138,7 @@ export function useSessionsPageState({
         : stored?.favoriteSessionIds ?? [];
       const validFavoriteIds = candidateFavoriteIds.filter((id) => validIds.has(id));
       initialized.current = true;
+      groupsRef.current = nextGroups;
       setGroups(nextGroups);
       setSelectedSessionId((current) => {
         return current && validIds.has(current) ? current : null;
@@ -212,16 +226,202 @@ export function useSessionsPageState({
     );
   }, []);
 
+  const beginListMutation = useCallback(() => {
+    if (listMutationPendingRef.current) return false;
+    listMutationPendingRef.current = true;
+    requestId.current += 1;
+    setLoading(false);
+    setListMutationPending(true);
+    setError(null);
+    return true;
+  }, []);
+
+  const finishListMutation = useCallback(() => {
+    listMutationPendingRef.current = false;
+    setListMutationPending(false);
+  }, []);
+
+  const reorderGroup = useCallback(
+    async (groupName: string, targetIndex: number) => {
+      if (!beginListMutation()) return false;
+      const previous = groupsRef.current;
+      const next = reorderSessionGroups(previous, groupName, targetIndex);
+      if (next === previous) {
+        finishListMutation();
+        return true;
+      }
+      groupsRef.current = next;
+      setGroups(next);
+      try {
+        await api.reorderSessionGroup(groupName, targetIndex);
+        return true;
+      } catch (nextError) {
+        groupsRef.current = previous;
+        setGroups(previous);
+        setError(resolveApiError(nextError, errorFallback));
+        return false;
+      } finally {
+        finishListMutation();
+      }
+    },
+    [beginListMutation, errorFallback, finishListMutation],
+  );
+
+  const reorderSession = useCallback(
+    async (
+      sessionId: string,
+      targetGroupName: string,
+      targetIndex: number,
+    ) => {
+      if (!beginListMutation()) return false;
+      const previous = groupsRef.current;
+      const next = reorderSessionInGroups(
+        previous,
+        sessionId,
+        targetGroupName,
+        targetIndex,
+      );
+      if (next === previous) {
+        finishListMutation();
+        return true;
+      }
+      groupsRef.current = next;
+      setGroups(next);
+      try {
+        await api.reorderSession(sessionId, targetGroupName, targetIndex);
+        return true;
+      } catch (nextError) {
+        groupsRef.current = previous;
+        setGroups(previous);
+        setError(resolveApiError(nextError, errorFallback));
+        return false;
+      } finally {
+        finishListMutation();
+      }
+    },
+    [beginListMutation, errorFallback, finishListMutation],
+  );
+
+  const renameGroup = useCallback(
+    async (groupName: string, newName: string) => {
+      if (!beginListMutation()) {
+        return {
+          ok: false,
+          error: errorFallback,
+        } satisfies SessionListMutationResult;
+      }
+      const normalizedName = newName.trim();
+      const previous = groupsRef.current;
+      const previousCollapsed = collapsedGroupNames;
+      const next = renameGroupInState(previous, groupName, normalizedName);
+      groupsRef.current = next;
+      setGroups(next);
+      setCollapsedGroupNames((current) =>
+        current.map((name) => (name === groupName ? normalizedName : name)),
+      );
+      try {
+        await api.renameSessionGroup(groupName, normalizedName);
+        return { ok: true, value: undefined } satisfies SessionListMutationResult;
+      } catch (nextError) {
+        const message = resolveApiError(nextError, errorFallback);
+        groupsRef.current = previous;
+        setGroups(previous);
+        setCollapsedGroupNames(previousCollapsed);
+        setError(message);
+        return { ok: false, error: message } satisfies SessionListMutationResult;
+      } finally {
+        finishListMutation();
+      }
+    },
+    [
+      beginListMutation,
+      collapsedGroupNames,
+      errorFallback,
+      finishListMutation,
+    ],
+  );
+
+  const deleteGroup = useCallback(
+    async (groupName: string) => {
+      if (!beginListMutation()) {
+        return {
+          ok: false,
+          error: errorFallback,
+        } satisfies SessionListMutationResult<string[]>;
+      }
+      try {
+        const deletedIds = await api.deleteSessionGroup(groupName);
+        const deletedSet = new Set(deletedIds);
+        const nextGroups = groupsRef.current.filter(
+          (group) => group.name !== groupName,
+        );
+        groupsRef.current = nextGroups;
+        setGroups(nextGroups);
+        setCollapsedGroupNames((current) =>
+          current.filter((name) => name !== groupName),
+        );
+        setSelectedSessionId((current) =>
+          current && deletedSet.has(current) ? null : current,
+        );
+
+        const currentTabs = openTabsRef.current;
+        const nextTabs = currentTabs.filter(
+          (tab) => !deletedSet.has(tab.sessionId),
+        );
+        const activeWasDeleted = currentTabs.some(
+          (tab) =>
+            tab.id === activeTabIdRef.current &&
+            deletedSet.has(tab.sessionId),
+        );
+        const nextActiveTabId = activeWasDeleted
+          ? nextTabs[0]?.id ?? null
+          : activeTabIdRef.current;
+        applyPreferences(
+          nextTabs,
+          nextActiveTabId,
+          favoriteSessionIdsRef.current.filter((id) => !deletedSet.has(id)),
+        );
+        return {
+          ok: true,
+          value: deletedIds,
+        } satisfies SessionListMutationResult<string[]>;
+      } catch (nextError) {
+        const message = resolveApiError(nextError, errorFallback);
+        setError(message);
+        return {
+          ok: false,
+          error: message,
+        } satisfies SessionListMutationResult<string[]>;
+      } finally {
+        finishListMutation();
+      }
+    },
+    [
+      applyPreferences,
+      beginListMutation,
+      errorFallback,
+      finishListMutation,
+    ],
+  );
+
   async function saveSession(payload: CreateSessionPayload | UpdateSessionPayload) {
     setError(null);
     setSaveError(null);
     try {
       if ("id" in payload) {
         const updated = await api.updateSession(payload);
-        setGroups((current) => upsertSessionInGroups(current, updated));
+        setGroups((current) => {
+          const next = upsertSessionInGroups(current, updated);
+          groupsRef.current = next;
+          return next;
+        });
       } else {
         const created = await api.createSession(payload);
-        setGroups((current) => upsertSessionInGroups(current, created));
+        setGroups((current) => {
+          const next = upsertSessionInGroups(current, created);
+          groupsRef.current = next;
+          return next;
+        });
         setSelectedSessionId(created.id);
         const tab: SessionTabState = {
           id: crypto.randomUUID(),
@@ -262,12 +462,16 @@ export function useSessionsPageState({
         ? nextTabs[firstRemovedIndex]?.id ?? nextTabs[firstRemovedIndex - 1]?.id ?? null
         : activeTabIdRef.current;
       setGroups((current) =>
-        current
+        {
+          const next = current
           .map((group) => ({
             ...group,
             sessions: group.sessions.filter((session) => session.id !== sessionId),
           }))
-          .filter((group) => group.sessions.length > 0),
+          .filter((group) => group.sessions.length > 0);
+          groupsRef.current = next;
+          return next;
+        },
       );
       setSelectedSessionId((current) => (current === sessionId ? null : current));
       applyPreferences(
@@ -292,11 +496,15 @@ export function useSessionsPageState({
     favoriteSessionIds,
     filter,
     groups,
+    listMutationPending,
     loading,
     openSessionTab,
     openSessionTabs,
     query,
     refreshSessions,
+    renameGroup,
+    reorderGroup,
+    reorderSession,
     saveError,
     saveSession,
     selectSession,
@@ -308,6 +516,7 @@ export function useSessionsPageState({
     setQuery,
     toggleFavorite,
     toggleGroup,
+    deleteGroup,
   };
 }
 
