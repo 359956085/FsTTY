@@ -15,6 +15,7 @@ import {
   Link as LinkIcon,
   Pencil,
   RefreshCw,
+  Save,
   Trash2,
   Upload,
   X,
@@ -927,6 +928,15 @@ export function FilesPane({
               </Button>
               <Button
                 disabled={operationPending}
+                icon={
+                  fileOperation.kind === "create" ? (
+                    <FolderPlus aria-hidden="true" size={16} />
+                  ) : fileOperation.kind === "rename" ? (
+                    <Save aria-hidden="true" size={16} />
+                  ) : (
+                    <Trash2 aria-hidden="true" size={16} />
+                  )
+                }
                 onClick={() => void submitFileOperation()}
                 variant={fileOperation.kind === "delete" ? "danger" : "primary"}
               >

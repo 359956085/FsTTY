@@ -1,5 +1,12 @@
 import { Channel } from "@tauri-apps/api/core";
-import { Copy, KeyRound, Link, Link2Off, ShieldAlert } from "lucide-react";
+import {
+  Copy,
+  KeyRound,
+  Link,
+  Link2Off,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
@@ -1244,9 +1251,8 @@ export const TerminalPane = memo(function TerminalPane({
             disabled={
               connectionState === "connecting" || connectionState === "disconnecting"
             }
-            icon={<Link size={16} />}
+            icon={<Link aria-hidden="true" size={16} />}
             onClick={() => void connectTerminal()}
-            variant="ghost"
           >
             {connectionState === "connecting"
               ? t("sessions.connecting")
@@ -1324,6 +1330,7 @@ export const TerminalPane = memo(function TerminalPane({
               </Button>
               <Button
                 disabled={credentialSubmitting}
+                icon={<Link aria-hidden="true" size={16} />}
                 onClick={() => void submitCredential()}
                 variant="primary"
               >
@@ -1355,7 +1362,10 @@ export const TerminalPane = memo(function TerminalPane({
               <Button onClick={() => setHostKeyChallenge(null)} variant="ghost">
                 {t("sessions.cancel")}
               </Button>
-              <Button onClick={() => void trustAndReconnect()}>
+              <Button
+                icon={<ShieldCheck aria-hidden="true" size={16} />}
+                onClick={() => void trustAndReconnect()}
+              >
                 {t("sessions.trustAndConnect")}
               </Button>
             </footer>
@@ -1378,7 +1388,7 @@ export const TerminalPane = memo(function TerminalPane({
             </dl>
             <p>{t("sessions.hostKeyChangedHint")}</p>
             <footer className="dialog-actions">
-              <Button onClick={() => setHostKeyChange(null)}>
+              <Button onClick={() => setHostKeyChange(null)} variant="ghost">
                 {t("sessions.close")}
               </Button>
             </footer>

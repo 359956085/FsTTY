@@ -1,3 +1,4 @@
+import { RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
@@ -183,8 +184,8 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
               ) : null}
               <Button
                 disabled={updater.busy || savingUpdateSettings}
+                icon={<RefreshCw aria-hidden="true" size={16} />}
                 onClick={() => void handleCheckForUpdates()}
-                variant="ghost"
               >
                 {updater.phase === "checking"
                   ? t("settings.checkingUpdate")

@@ -806,23 +806,6 @@ textarea:focus-visible,
 .terminal-connect-overlay .terminal-connect-button {
   min-height: 36px;
   padding: 0 14px;
-  border-color: rgba(210, 216, 222, 0.48);
-  background: rgba(255, 255, 255, 0.018);
-  color: var(--text);
-}
-
-.terminal-connect-overlay .terminal-connect-button:hover:not(:disabled) {
-  border-color: rgba(225, 228, 231, 0.72);
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.terminal-connect-overlay .terminal-connect-button:active:not(:disabled) {
-  border-color: rgba(225, 228, 231, 0.86);
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.terminal-connect-overlay .terminal-connect-button:focus-visible {
-  outline-color: rgba(225, 228, 231, 0.86);
 }
 
 .terminal-body .xterm {
@@ -1347,23 +1330,90 @@ textarea:focus-visible,
   gap: 7px;
   min-height: 32px;
   padding: 0 12px;
+  border: 1px solid transparent;
   border-radius: 5px;
   white-space: nowrap;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.button > svg {
+  flex: 0 0 auto;
 }
 
 .button-primary {
-  background: var(--accent);
-  color: #fff;
+  border-color: #3b91e8;
+  background: linear-gradient(180deg, #3b95ec 0%, #287fd6 100%);
+  box-shadow: 0 4px 14px rgba(49, 139, 228, 0.22);
+  color: #f4f8fc;
+}
+
+.button-primary:hover:not(:disabled) {
+  border-color: #4b9def;
+  background: linear-gradient(180deg, #489ff1 0%, #318be4 100%);
+  box-shadow: 0 5px 16px rgba(49, 139, 228, 0.26);
+}
+
+.button-primary:active:not(:disabled) {
+  background: linear-gradient(180deg, #318be4 0%, #2475c5 100%);
+  box-shadow: 0 2px 8px rgba(49, 139, 228, 0.2);
+  transform: translateY(1px);
+}
+
+.button-primary:focus-visible {
+  outline: 2px solid rgba(72, 159, 247, 0.78);
+  outline-offset: 2px;
 }
 
 .button-ghost {
-  border: 1px solid var(--border);
+  border-color: var(--border);
   background: rgba(255, 255, 255, 0.035);
 }
 
+.button-ghost:hover:not(:disabled) {
+  border-color: rgba(210, 216, 222, 0.42);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.button-ghost:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(1px);
+}
+
+.button-ghost:focus-visible {
+  outline: 2px solid rgba(210, 216, 222, 0.72);
+  outline-offset: 2px;
+}
+
 .button-danger {
-  background: rgba(255, 107, 107, 0.14);
-  color: #ff9c9c;
+  border-color: #d95d5d;
+  background: linear-gradient(180deg, #d95d5d 0%, #b83f3f 100%);
+  box-shadow: 0 4px 14px rgba(217, 93, 93, 0.18);
+  color: #fff7f7;
+}
+
+.button-danger:hover:not(:disabled) {
+  border-color: #ea7070;
+  background: linear-gradient(180deg, #e26868 0%, #c74949 100%);
+}
+
+.button-danger:active:not(:disabled) {
+  background: linear-gradient(180deg, #c94d4d 0%, #a93636 100%);
+  box-shadow: 0 2px 8px rgba(217, 93, 93, 0.16);
+  transform: translateY(1px);
+}
+
+.button-danger:focus-visible {
+  outline: 2px solid rgba(255, 107, 107, 0.78);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  box-shadow: none;
+  opacity: 0.5;
 }
 
 .settings-page {
@@ -1658,58 +1708,10 @@ textarea:focus-visible,
 
 .update-dialog .dialog-actions .button-ghost {
   min-width: 68px;
-  border-color: rgba(210, 216, 222, 0.24);
-  background: rgba(255, 255, 255, 0.025);
-  color: var(--text);
-  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
-}
-
-.update-dialog .dialog-actions .button-ghost:hover:not(:disabled) {
-  border-color: rgba(210, 216, 222, 0.42);
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.update-dialog .dialog-actions .button-ghost:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateY(1px);
-}
-
-.update-dialog .dialog-actions .button-ghost:focus-visible {
-  outline: 2px solid rgba(210, 216, 222, 0.72);
-  outline-offset: 2px;
 }
 
 .update-dialog .update-action-button {
   min-width: 128px;
-  border: 1px solid #3b91e8;
-  background: linear-gradient(180deg, #3b95ec 0%, #287fd6 100%);
-  box-shadow: 0 4px 14px rgba(49, 139, 228, 0.22);
-  color: #f4f8fc;
-  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease,
-    transform 120ms ease;
-}
-
-.update-dialog .update-action-button:hover:not(:disabled) {
-  border-color: #4b9def;
-  background: linear-gradient(180deg, #489ff1 0%, #318be4 100%);
-  box-shadow: 0 5px 16px rgba(49, 139, 228, 0.26);
-}
-
-.update-dialog .update-action-button:active:not(:disabled) {
-  background: linear-gradient(180deg, #318be4 0%, #2475c5 100%);
-  box-shadow: 0 2px 8px rgba(49, 139, 228, 0.2);
-  transform: translateY(1px);
-}
-
-.update-dialog .update-action-button:focus-visible {
-  outline: 2px solid rgba(72, 159, 247, 0.78);
-  outline-offset: 2px;
-}
-
-.update-dialog .update-action-button:disabled {
-  cursor: not-allowed;
-  box-shadow: none;
-  opacity: 0.5;
 }
 
 .form-success {
@@ -1877,18 +1879,6 @@ textarea:focus-visible,
 .session-dialog .file-picker-button {
   min-height: 44px;
   padding: 0 14px;
-  border-color: rgba(190, 196, 202, 0.22);
-  background: rgba(255, 255, 255, 0.025);
-  color: var(--text);
-}
-
-.session-dialog .file-picker-button:hover:not(:disabled) {
-  border-color: rgba(210, 216, 222, 0.42);
-  background: var(--surface-hover);
-}
-
-.session-dialog .file-picker-button > span {
-  color: inherit;
 }
 
 .session-dialog .dialog-secondary-action {
@@ -1910,17 +1900,6 @@ textarea:focus-visible,
   min-width: 70px;
   min-height: 42px;
   padding: 0 17px;
-}
-
-.session-dialog .dialog-actions .button-primary {
-  border-color: #3b91e8;
-  background: #318be4;
-  color: #f4f8fc;
-}
-
-.session-dialog .dialog-actions .button-primary:hover:not(:disabled) {
-  border-color: #4b9def;
-  background: #3b95ec;
 }
 
 .dialog-header,
@@ -2145,22 +2124,6 @@ textarea:focus-visible,
   min-width: 78px;
   min-height: 38px;
   padding: 0 14px;
-}
-
-.credential-dialog .dialog-actions .button-primary {
-  border: 1px solid #3b91e8;
-  background: #318be4;
-  color: #f4f8fc;
-}
-
-.credential-dialog .dialog-actions .button-primary:hover:not(:disabled) {
-  border-color: #4b9def;
-  background: #3b95ec;
-}
-
-.credential-dialog .dialog-actions .button-ghost:hover:not(:disabled) {
-  border-color: rgba(210, 216, 222, 0.42);
-  background: var(--surface-hover);
 }
 
 .security-details {

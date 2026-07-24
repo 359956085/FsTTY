@@ -12,6 +12,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 - 调整更新弹窗底部按钮样式，统一取消、立即更新和重试操作的视觉层级。
 - 优化多标签终端的后台渲染、事件监听和输出批处理，降低空闲开销与瞬时内存占用。
 - 上传和下载过程中显示基于一秒滑动窗口计算的实时速度。
+- 统一保存、连接、确认和更新等按钮的蓝色主操作样式，并按操作语义补充图标。
 
 <!-- release-notes:zh-CN:end -->
 
@@ -21,6 +22,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 - Refined the update dialog footer buttons to give Cancel, Update Now, and Retry a consistent visual hierarchy.
 - Optimized background rendering, event listeners, and output batching for multi-tab terminals to reduce idle overhead and transient memory usage.
 - Added real-time upload and download speeds calculated over a one-second sliding window.
+- Unified blue primary-action styling for save, connect, confirm, and update buttons, with contextual icons.
 
 <!-- release-notes:en-US:end -->
 

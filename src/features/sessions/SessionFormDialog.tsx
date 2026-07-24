@@ -1,5 +1,5 @@
 import { confirm, open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, KeyRound, X } from "lucide-react";
+import { ChevronDown, FolderOpen, KeyRound, Save, X } from "lucide-react";
 import { type KeyboardEvent, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
@@ -485,6 +485,7 @@ export function SessionFormDialog({
                     <TextInput readOnly value={privateKeyPath} />
                     <Button
                       className="file-picker-button"
+                      icon={<FolderOpen aria-hidden="true" size={16} />}
                       onClick={() => void choosePrivateKey()}
                       variant="ghost"
                     >
@@ -537,7 +538,7 @@ export function SessionFormDialog({
         {session ? (
           <div className="dialog-secondary-action">
             <Button
-              icon={<KeyRound size={16} />}
+              icon={<KeyRound aria-hidden="true" size={16} />}
               onClick={() => void forgetHostKey()}
               variant="ghost"
             >
@@ -551,7 +552,11 @@ export function SessionFormDialog({
         ) : null}
 
         <footer className="dialog-actions">
-          <Button disabled={submitting} onClick={() => void handleSubmit()}>
+          <Button
+            disabled={submitting}
+            icon={<Save aria-hidden="true" size={16} />}
+            onClick={() => void handleSubmit()}
+          >
             {t("sessions.save")}
           </Button>
         </footer>
