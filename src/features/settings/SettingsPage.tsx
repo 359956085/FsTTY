@@ -194,9 +194,12 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             </div>
           </div>
           <div className="settings-row">
-            <label className="settings-row-label" htmlFor="auto-update">
-              {t("settings.autoUpdate")}
-            </label>
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="auto-update">
+                {t("settings.autoUpdate")}
+              </label>
+              <small>{t("settings.autoUpdateHint")}</small>
+            </div>
             <input
               aria-label={t("settings.autoUpdate")}
               checked={settings.autoUpdate}
@@ -209,9 +212,12 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             />
           </div>
           <div className="settings-row settings-proxy-row">
-            <label className="settings-row-label" htmlFor="update-proxy">
-              {t("settings.updateProxy")}
-            </label>
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="update-proxy">
+                {t("settings.updateProxy")}
+              </label>
+              <small>{t("settings.updateProxyHint")}</small>
+            </div>
             <TextInput
               className="settings-proxy-input"
               disabled={savingUpdateSettings || updater.phase === "downloading"}
