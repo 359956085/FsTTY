@@ -9,24 +9,38 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
-- 调整更新弹窗底部按钮样式，统一取消、立即更新和重试操作的视觉层级。
-- 优化多标签终端的后台渲染、事件监听和输出批处理，降低空闲开销与瞬时内存占用。
-- 上传和下载过程中显示基于一秒滑动窗口计算的实时速度。
-- 统一保存、连接、确认和更新等按钮的蓝色主操作样式，并按操作语义补充图标。
-- 密码会话允许稍后在终端输入账号和密码，并在首次成功连接后选择是否保存登录信息。
-- 设备状态新增 CPU、内存固定近 10 分钟折线趋势和网络上下行实时速度。
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+<!-- release-notes:en-US:end -->
+
+## [0.5.0] - 2026-07-24
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 设备状态CPU、内存改为折线趋势，新增网络上下行。
+
+- 上传和下载显示实时速度。
+
+- 密码认证时，账号、密码不再是必填项。
+
+- ui、文案、性能优化
 
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
 
-- Refined the update dialog footer buttons to give Cancel, Update Now, and Retry a consistent visual hierarchy.
-- Optimized background rendering, event listeners, and output batching for multi-tab terminals to reduce idle overhead and transient memory usage.
-- Added real-time upload and download speeds calculated over a one-second sliding window.
-- Unified blue primary-action styling for save, connect, confirm, and update buttons, with contextual icons.
-- Password sessions can now request missing usernames and passwords in the terminal, then offer to save them after the first successful connection.
-- Device Status now shows fixed 10-minute CPU and memory trends plus real-time network upload and download speeds.
+- Device Status now displays CPU and memory trend charts and adds real-time network upload and download speeds.
+
+- Uploads and downloads now show real-time transfer speeds.
+
+- Username and password are no longer required for password authentication.
+
+- UI, copy, and performance optimizations.
 
 <!-- release-notes:en-US:end -->
 
