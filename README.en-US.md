@@ -25,7 +25,7 @@ FsTTY brings SSH terminals, session management, SFTP file operations, and device
 | Host verification | Confirms host key fingerprints on first connection and blocks changed keys |
 | Remote terminal | Interactive xterm.js terminal with copy, paste, clear, reconnect, and tmux OSC 52 clipboard support |
 | File management | SFTP browsing, uploads, downloads, remote drag-to-move, directory creation, rename, and recursive delete |
-| Device status | Shows OS, CPU, memory, disk, and uptime when available on the remote host |
+| Device status | Shows 10-minute CPU and memory trends, disk, network traffic, OS, and uptime |
 | App settings | Chinese/English, remote clipboard control, manual and startup update checks, and an update proxy |
 
 ## Download and Install
@@ -88,7 +88,7 @@ Recursive deletion has no recycle bin or undo. Verify the target path before con
 
 ### 5. View Device Status
 
-The Device Status panel displays the operating system, architecture, uptime, CPU, memory, and disk usage when the required remote commands are available. Restricted accounts and minimal systems may provide incomplete information.
+The Device Status panel displays the operating system, architecture, uptime, disk usage, network upload and download speeds, and the latest 10 minutes of CPU and memory trends when the required remote commands are available. Restricted accounts and minimal systems may provide incomplete information.
 
 ### 6. Settings and Updates
 

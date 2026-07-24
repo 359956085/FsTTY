@@ -1,13 +1,37 @@
 use crate::models::{AppError, DeviceStatus};
 use crate::services::ConnectionManager;
-use std::time::Duration;
+use std::collections::HashMap;
 
-const PROC_STAT: &str = "cat /proc/stat";
-const PROC_MEMINFO: &str = "cat /proc/meminfo";
-const DISK_USAGE: &str = "df -Pk /";
-const OS_RELEASE: &str = "cat /etc/os-release";
-const ARCHITECTURE: &str = "uname -m";
-const UPTIME: &str = "cat /proc/uptime";
+const CPU_FIRST: &str = "cpu-first";
+const CPU_SECOND: &str = "cpu-second";
+const MEMORY: &str = "memory";
+const DISK: &str = "disk";
+const OS: &str = "os";
+const ARCHITECTURE: &str = "architecture";
+const UPTIME: &str = "uptime";
+const ROUTE: &str = "route";
+const NETWORK: &str = "network";
+
+// 每轮只创建一个远程执行通道，避免多标签轮询时反复建立 SSH channel。
+const DEVICE_SNAPSHOT: &str = r#"printf '%s\n' '__FSTTY_CPU_FIRST__'
+cat /proc/stat 2>/dev/null
+sleep 0.25
+printf '%s\n' '__FSTTY_CPU_SECOND__'
+cat /proc/stat 2>/dev/null
+printf '%s\n' '__FSTTY_MEMORY__'
+cat /proc/meminfo 2>/dev/null
+printf '%s\n' '__FSTTY_DISK__'
+df -Pk / 2>/dev/null
+printf '%s\n' '__FSTTY_OS__'
+cat /etc/os-release 2>/dev/null
+printf '%s\n' '__FSTTY_ARCHITECTURE__'
+uname -m 2>/dev/null
+printf '%s\n' '__FSTTY_UPTIME__'
+cat /proc/uptime 2>/dev/null
+printf '%s\n' '__FSTTY_ROUTE__'
+cat /proc/net/route 2>/dev/null
+printf '%s\n' '__FSTTY_NETWORK__'
+cat /proc/net/dev 2>/dev/null"#;
 
 pub struct DeviceService;
 
@@ -18,41 +42,54 @@ impl DeviceService {
         connection_id: &str,
     ) -> Result<DeviceStatus, AppError> {
         let session_id = connections.session_id(connection_id).await?;
-        let cpu = read_cpu(connections, connection_id);
-        let memory = read_text(connections, connection_id, PROC_MEMINFO);
-        let disk = read_text(connections, connection_id, DISK_USAGE);
-        let os = read_text(connections, connection_id, OS_RELEASE);
-        let architecture = read_text(connections, connection_id, ARCHITECTURE);
-        let uptime = read_text(connections, connection_id, UPTIME);
-        let (cpu, memory, disk, os, architecture, uptime) =
-            tokio::join!(cpu, memory, disk, os, architecture, uptime);
+        let output = connections.exec(connection_id, DEVICE_SNAPSHOT).await?;
+        let output = String::from_utf8(output).unwrap_or_default();
+        let sections = parse_snapshot(&output);
 
-        let (cpu_percent, cpu_cores) = cpu
-            .and_then(|(first, second)| parse_cpu(&first, &second))
+        let (cpu_percent, cpu_cores) = sections
+            .get(CPU_FIRST)
+            .zip(sections.get(CPU_SECOND))
+            .and_then(|(first, second)| parse_cpu(first, second))
             .map(|value| (Some(value.0), Some(value.1)))
             .unwrap_or((None, None));
-        let (memory_percent, memory_used_gb, memory_total_gb) = memory
-            .as_deref()
+        let (memory_percent, memory_used_gb, memory_total_gb) = sections
+            .get(MEMORY)
+            .map(String::as_str)
             .and_then(parse_memory)
             .map(|value| (Some(value.0), Some(value.1), Some(value.2)))
             .unwrap_or((None, None, None));
-        let (disk_percent, disk_used_gb, disk_total_gb) = disk
-            .as_deref()
+        let (disk_percent, disk_used_gb, disk_total_gb) = sections
+            .get(DISK)
+            .map(String::as_str)
             .and_then(parse_disk)
             .map(|value| (Some(value.0), Some(value.1), Some(value.2)))
             .unwrap_or((None, None, None));
-        let os = os.as_deref().and_then(parse_os_release);
-        let architecture = architecture
-            .as_deref()
+        let os = sections
+            .get(OS)
+            .map(String::as_str)
+            .and_then(parse_os_release);
+        let architecture = sections
+            .get(ARCHITECTURE)
+            .map(String::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
-        let uptime_seconds = uptime.as_deref().and_then(parse_uptime);
+        let uptime_seconds = sections
+            .get(UPTIME)
+            .map(String::as_str)
+            .and_then(parse_uptime);
+        let (network_received_bytes, network_transmitted_bytes) = sections
+            .get(ROUTE)
+            .zip(sections.get(NETWORK))
+            .and_then(|(route, network)| parse_network(route, network))
+            .map(|value| (Some(value.0), Some(value.1)))
+            .unwrap_or((None, None));
         let available = cpu_percent.is_some()
             || memory_percent.is_some()
             || disk_percent.is_some()
             || os.is_some()
-            || architecture.is_some();
+            || architecture.is_some()
+            || network_received_bytes.is_some();
 
         Ok(DeviceStatus {
             session_id,
@@ -68,26 +105,43 @@ impl DeviceService {
             disk_percent,
             disk_used_gb,
             disk_total_gb,
+            network_received_bytes,
+            network_transmitted_bytes,
         })
     }
 }
 
-async fn read_cpu(
-    connections: &ConnectionManager,
-    connection_id: &str,
-) -> Option<(String, String)> {
-    let first = read_text(connections, connection_id, PROC_STAT).await?;
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    let second = read_text(connections, connection_id, PROC_STAT).await?;
-    Some((first, second))
+fn parse_snapshot(value: &str) -> HashMap<&'static str, String> {
+    let mut sections = HashMap::new();
+    let mut current = None;
+    for line in value.lines() {
+        if let Some(section) = snapshot_section(line) {
+            current = Some(section);
+            sections.entry(section).or_insert_with(String::new);
+            continue;
+        }
+        if let Some(section) = current {
+            let content = sections.entry(section).or_insert_with(String::new);
+            content.push_str(line);
+            content.push('\n');
+        }
+    }
+    sections
 }
 
-async fn read_text(
-    connections: &ConnectionManager,
-    connection_id: &str,
-    command: &'static str,
-) -> Option<String> {
-    String::from_utf8(connections.exec(connection_id, command).await.ok()?).ok()
+fn snapshot_section(line: &str) -> Option<&'static str> {
+    match line.trim() {
+        "__FSTTY_CPU_FIRST__" => Some(CPU_FIRST),
+        "__FSTTY_CPU_SECOND__" => Some(CPU_SECOND),
+        "__FSTTY_MEMORY__" => Some(MEMORY),
+        "__FSTTY_DISK__" => Some(DISK),
+        "__FSTTY_OS__" => Some(OS),
+        "__FSTTY_ARCHITECTURE__" => Some(ARCHITECTURE),
+        "__FSTTY_UPTIME__" => Some(UPTIME),
+        "__FSTTY_ROUTE__" => Some(ROUTE),
+        "__FSTTY_NETWORK__" => Some(NETWORK),
+        _ => None,
+    }
 }
 
 fn parse_cpu(first: &str, second: &str) -> Option<(u8, u16)> {
@@ -162,6 +216,52 @@ fn parse_disk(value: &str) -> Option<(u8, f64, f64)> {
     Some((percent, kib_to_gib(used), kib_to_gib(total)))
 }
 
+fn parse_network(route: &str, network: &str) -> Option<(u64, u64)> {
+    let default_interface = route.lines().skip(1).find_map(|line| {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 4 || fields[1] != "00000000" {
+            return None;
+        }
+        let flags = u16::from_str_radix(fields[3], 16).ok()?;
+        (flags & 1 != 0).then_some(fields[0])
+    });
+    let interfaces = network.lines().filter_map(|line| {
+        let (name, counters) = line.split_once(':')?;
+        let name = name.trim();
+        let fields = counters.split_whitespace().collect::<Vec<_>>();
+        if name.is_empty() || fields.len() < 16 {
+            return None;
+        }
+        Some((
+            name,
+            fields[0].parse::<u64>().ok()?,
+            fields[8].parse::<u64>().ok()?,
+        ))
+    });
+    let interfaces = interfaces.collect::<Vec<_>>();
+    if let Some(name) = default_interface {
+        if let Some((_, received, transmitted)) = interfaces
+            .iter()
+            .find(|(interface, _, _)| *interface == name)
+        {
+            return Some((*received, *transmitted));
+        }
+    }
+
+    let mut found = false;
+    let mut received = 0_u64;
+    let mut transmitted = 0_u64;
+    for (name, interface_received, interface_transmitted) in interfaces {
+        if name == "lo" {
+            continue;
+        }
+        found = true;
+        received = received.saturating_add(interface_received);
+        transmitted = transmitted.saturating_add(interface_transmitted);
+    }
+    found.then_some((received, transmitted))
+}
+
 fn parse_os_release(value: &str) -> Option<String> {
     let raw = value.lines().find_map(|line| {
         line.strip_prefix("PRETTY_NAME=")
@@ -207,5 +307,41 @@ mod tests {
             parse_os_release("NAME=Ubuntu\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n"),
             Some("Ubuntu 24.04 LTS".to_owned())
         );
+    }
+
+    #[test]
+    fn parses_combined_snapshot_sections() {
+        let snapshot = "__FSTTY_CPU_FIRST__\ncpu 1 2 3 4\n\
+                        __FSTTY_CPU_SECOND__\ncpu 2 3 4 5\n\
+                        __FSTTY_MEMORY__\nMemTotal: 4096 kB\n";
+        let sections = parse_snapshot(snapshot);
+        assert_eq!(
+            sections.get(CPU_FIRST).map(String::as_str),
+            Some("cpu 1 2 3 4\n")
+        );
+        assert_eq!(
+            sections.get(MEMORY).map(String::as_str),
+            Some("MemTotal: 4096 kB\n")
+        );
+    }
+
+    #[test]
+    fn selects_default_network_interface() {
+        let route = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n\
+                     eth0 00000000 0100007F 0003 0 0 0 00000000 0 0 0\n";
+        let network = "Inter-| Receive | Transmit\n\
+                       lo: 50 0 0 0 0 0 0 0 60 0 0 0 0 0 0 0\n\
+                       eth0: 1000 0 0 0 0 0 0 0 2500 0 0 0 0 0 0 0\n\
+                       docker0: 400 0 0 0 0 0 0 0 800 0 0 0 0 0 0 0\n";
+        assert_eq!(parse_network(route, network), Some((1000, 2500)));
+    }
+
+    #[test]
+    fn falls_back_to_non_loopback_network_total() {
+        let network = "lo: 50 0 0 0 0 0 0 0 60 0 0 0 0 0 0 0\n\
+                       eth0: 1000 0 0 0 0 0 0 0 2500 0 0 0 0 0 0 0\n\
+                       eth1: 400 0 0 0 0 0 0 0 800 0 0 0 0 0 0 0\n";
+        assert_eq!(parse_network("", network), Some((1400, 3300)));
+        assert_eq!(parse_network("", "broken"), None);
     }
 }

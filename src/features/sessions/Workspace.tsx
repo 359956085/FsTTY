@@ -288,6 +288,7 @@ export function Workspace({
           {verticalResizeHandle}
           <DeviceStatusPanel
             connected={activeRuntime.connectionState === "connected"}
+            history={activeRuntime.deviceHistory}
             status={activeRuntime.deviceStatus}
           />
         </aside>

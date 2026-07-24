@@ -48,6 +48,9 @@ interface ActiveDrag {
 const KEYBOARD_WIDTH_STEP = 8;
 const KEYBOARD_RATIO_STEP = 2;
 const VERTICAL_HANDLES_WIDTH = 8;
+const WORKSPACE_TAB_BAR_HEIGHT = 48;
+const HORIZONTAL_HANDLE_HEIGHT = 4;
+const DEVICE_STATUS_MIN_HEIGHT = 230;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -80,13 +83,23 @@ function getBoundedValue(
   value: number,
   layout: WorkspaceLayoutPreferences,
   rootWidth: number,
+  filesTrackHeight = 0,
 ) {
   if (target === "files") {
-    return clamp(
-      value,
-      WORKSPACE_LAYOUT_LIMITS.fileRatio.min,
+    const heightLimitedMax =
+      filesTrackHeight > 0
+        ? ((filesTrackHeight - HORIZONTAL_HANDLE_HEIGHT - DEVICE_STATUS_MIN_HEIGHT) /
+            filesTrackHeight) *
+          100
+        : WORKSPACE_LAYOUT_LIMITS.fileRatio.max;
+    const max = clamp(
+      heightLimitedMax,
+      0,
       WORKSPACE_LAYOUT_LIMITS.fileRatio.max,
     );
+    // 窗口较矮时优先保留设备状态五行，文件区通过自身滚动继续使用。
+    const min = Math.min(WORKSPACE_LAYOUT_LIMITS.fileRatio.min, max);
+    return clamp(value, min, max);
   }
 
   const limits =
@@ -130,20 +143,35 @@ function calculateDragValue(
         ? drag.startValue - offset
         : drag.startValue + offset;
 
-  return getBoundedValue(drag.target, rawValue, layout, drag.rootWidth);
+  return getBoundedValue(
+    drag.target,
+    rawValue,
+    layout,
+    drag.rootWidth,
+    drag.trackSize,
+  );
 }
 
 function fitLayoutToRoot(
   layout: WorkspaceLayoutPreferences,
   rootWidth: number,
+  rootHeight: number,
   resizeFirst: "left" | "right",
 ) {
-  if (rootWidth <= 0) {
+  if (rootWidth <= 0 && rootHeight <= 0) {
     return layout;
   }
 
   let leftWidth = layout.leftWidth;
   let rightWidth = layout.rightWidth;
+  const filesTrackHeight = Math.max(rootHeight - WORKSPACE_TAB_BAR_HEIGHT, 0);
+  const fileRatio = getBoundedValue(
+    "files",
+    layout.fileRatio,
+    layout,
+    rootWidth,
+    filesTrackHeight,
+  );
   const effectiveLeft = layout.leftCollapsed
     ? WORKSPACE_COLLAPSED_PANE_WIDTH
     : leftWidth;
@@ -158,7 +186,7 @@ function fitLayoutToRoot(
     rootWidth;
 
   if (overflow <= 0) {
-    return layout;
+    return fileRatio === layout.fileRatio ? layout : { ...layout, fileRatio };
   }
 
   const shrink = (target: "left" | "right") => {
@@ -187,9 +215,11 @@ function fitLayoutToRoot(
   shrink(resizeFirst);
   shrink(resizeFirst === "left" ? "right" : "left");
 
-  return leftWidth === layout.leftWidth && rightWidth === layout.rightWidth
+  return leftWidth === layout.leftWidth &&
+    rightWidth === layout.rightWidth &&
+    fileRatio === layout.fileRatio
     ? layout
-    : { ...layout, leftWidth, rightWidth };
+    : { ...layout, leftWidth, rightWidth, fileRatio };
 }
 
 export function usePaneLayout(): UsePaneLayoutResult {
@@ -233,7 +263,12 @@ export function usePaneLayout(): UsePaneLayoutResult {
     const observer = new ResizeObserver(([entry]) => {
       const current = layoutRef.current;
       // 窗口缩小时优先收缩右栏，保证终端不会被两侧面板挤没。
-      const next = fitLayoutToRoot(current, entry.contentRect.width, "right");
+      const next = fitLayoutToRoot(
+        current,
+        entry.contentRect.width,
+        entry.contentRect.height,
+        "right",
+      );
       if (next !== current) {
         commitLayout(next);
       }
@@ -263,6 +298,10 @@ export function usePaneLayout(): UsePaneLayoutResult {
       const current = layoutRef.current;
       const rootBounds = root.getBoundingClientRect();
       const handle = event.currentTarget;
+      const filesTrackHeight =
+        target === "files"
+          ? (handle.parentElement?.getBoundingClientRect().height ?? rootBounds.height)
+          : rootBounds.height;
       const drag: ActiveDrag = {
         pointerId: event.pointerId,
         target,
@@ -274,7 +313,7 @@ export function usePaneLayout(): UsePaneLayoutResult {
             : target === "right"
               ? current.rightWidth
               : current.fileRatio,
-        trackSize: Math.max(rootBounds.height, 1),
+        trackSize: Math.max(filesTrackHeight, 1),
         rootWidth: rootBounds.width,
       };
 
@@ -351,7 +390,12 @@ export function usePaneLayout(): UsePaneLayoutResult {
   const adjustResize = useCallback(
     (target: PaneResizeTarget, direction: ResizeDirection) => {
       const current = layoutRef.current;
-      const rootWidth = rootRef.current?.getBoundingClientRect().width ?? 0;
+      const rootBounds = rootRef.current?.getBoundingClientRect();
+      const rootWidth = rootBounds?.width ?? 0;
+      const filesTrackHeight = Math.max(
+        (rootBounds?.height ?? 0) - WORKSPACE_TAB_BAR_HEIGHT,
+        0,
+      );
       const movement =
         target === "files"
           ? direction * KEYBOARD_RATIO_STEP
@@ -362,7 +406,13 @@ export function usePaneLayout(): UsePaneLayoutResult {
           : target === "right"
             ? current.rightWidth - movement
             : current.fileRatio + movement;
-      const nextValue = getBoundedValue(target, rawValue, current, rootWidth);
+      const nextValue = getBoundedValue(
+        target,
+        rawValue,
+        current,
+        rootWidth,
+        filesTrackHeight,
+      );
       const nextLayout = {
         ...current,
         ...(target === "left"
@@ -380,10 +430,12 @@ export function usePaneLayout(): UsePaneLayoutResult {
   const toggleLeftCollapsed = useCallback(() => {
     const current = layoutRef.current;
     const toggled = { ...current, leftCollapsed: !current.leftCollapsed };
+    const rootBounds = rootRef.current?.getBoundingClientRect();
     commitLayout(
       fitLayoutToRoot(
         toggled,
-        rootRef.current?.getBoundingClientRect().width ?? 0,
+        rootBounds?.width ?? 0,
+        rootBounds?.height ?? 0,
         "left",
       ),
     );
@@ -392,10 +444,12 @@ export function usePaneLayout(): UsePaneLayoutResult {
   const toggleRightCollapsed = useCallback(() => {
     const current = layoutRef.current;
     const toggled = { ...current, rightCollapsed: !current.rightCollapsed };
+    const rootBounds = rootRef.current?.getBoundingClientRect();
     commitLayout(
       fitLayoutToRoot(
         toggled,
-        rootRef.current?.getBoundingClientRect().width ?? 0,
+        rootBounds?.width ?? 0,
+        rootBounds?.height ?? 0,
         "right",
       ),
     );

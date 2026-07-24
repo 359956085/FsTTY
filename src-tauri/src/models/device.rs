@@ -16,4 +16,6 @@ pub struct DeviceStatus {
     pub disk_percent: Option<u8>,
     pub disk_used_gb: Option<f64>,
     pub disk_total_gb: Option<f64>,
+    pub network_received_bytes: Option<u64>,
+    pub network_transmitted_bytes: Option<u64>,
 }

@@ -157,6 +157,8 @@ export interface DeviceStatus {
   diskPercent?: number | null;
   diskUsedGb?: number | null;
   diskTotalGb?: number | null;
+  networkReceivedBytes?: number | null;
+  networkTransmittedBytes?: number | null;
 }
 
 export type TransferEvent =

@@ -14,6 +14,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 - 上传和下载过程中显示基于一秒滑动窗口计算的实时速度。
 - 统一保存、连接、确认和更新等按钮的蓝色主操作样式，并按操作语义补充图标。
 - 密码会话允许稍后在终端输入账号和密码，并在首次成功连接后选择是否保存登录信息。
+- 设备状态新增 CPU、内存固定近 10 分钟折线趋势和网络上下行实时速度。
 
 <!-- release-notes:zh-CN:end -->
 
@@ -25,6 +26,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 - Added real-time upload and download speeds calculated over a one-second sliding window.
 - Unified blue primary-action styling for save, connect, confirm, and update buttons, with contextual icons.
 - Password sessions can now request missing usernames and passwords in the terminal, then offer to save them after the first successful connection.
+- Device Status now shows fixed 10-minute CPU and memory trends plus real-time network upload and download speeds.
 
 <!-- release-notes:en-US:end -->
 

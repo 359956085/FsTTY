@@ -13,6 +13,12 @@ import type {
   TransferEvent,
 } from "../../shared/api/types";
 import { DEFAULT_REMOTE_PATH } from "./constants";
+import {
+  appendDeviceMetricSample,
+  DEVICE_POLL_INTERVAL_MS,
+  type DeviceMetricSample,
+  type DeviceNetworkCounterSample,
+} from "./deviceMetrics";
 import { createTransferSpeedTracker } from "./fileUtils";
 
 export interface TransferProgress {
@@ -41,6 +47,7 @@ export interface SessionRuntime {
   files: FileEntry[];
   filesLoading: boolean;
   deviceStatus: DeviceStatus | null;
+  deviceHistory: DeviceMetricSample[];
   transfer: TransferProgress | null;
   terminalDirectoryRequest: TerminalDirectoryRequest | null;
 }
@@ -54,6 +61,9 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const runtimesRef = useRef(runtimes);
   const fileRequestIds = useRef(new Map<string, number>());
   const deviceRequestIds = useRef(new Map<string, number>());
+  const devicePollTimers = useRef(new Map<string, number>());
+  const devicePollIds = useRef(new Map<string, number>());
+  const deviceNetworkCounters = useRef(new Map<string, DeviceNetworkCounterSample>());
   // 后端继续处理单文件；批次令牌只负责前端串行排队和整批取消。
   const uploadBatchTokens = useRef(new Map<string, string>());
   const terminalDirectoryRequestId = useRef(0);
@@ -77,6 +87,35 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         runtimesRef.current = next;
         return next;
       });
+    },
+    [],
+  );
+
+  const stopDevicePolling = useCallback((sessionId: string) => {
+    const timer = devicePollTimers.current.get(sessionId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      devicePollTimers.current.delete(sessionId);
+    }
+    deviceRequestIds.current.set(
+      sessionId,
+      (deviceRequestIds.current.get(sessionId) ?? 0) + 1,
+    );
+    devicePollIds.current.set(sessionId, (devicePollIds.current.get(sessionId) ?? 0) + 1);
+    deviceNetworkCounters.current.delete(sessionId);
+  }, []);
+
+  useEffect(
+    () => () => {
+      for (const timer of devicePollTimers.current.values()) {
+        window.clearTimeout(timer);
+      }
+      devicePollTimers.current.clear();
+      devicePollIds.current.clear();
+      for (const [sessionId, requestId] of deviceRequestIds.current) {
+        deviceRequestIds.current.set(sessionId, requestId + 1);
+      }
+      deviceNetworkCounters.current.clear();
     },
     [],
   );
@@ -124,17 +163,58 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       deviceRequestIds.current.set(sessionId, requestId);
       try {
         const deviceStatus = await api.getDeviceStatus(connectionId);
-        if (deviceRequestIds.current.get(sessionId) !== requestId) {
-          return;
+        const runtime = runtimesRef.current[sessionId];
+        if (
+          deviceRequestIds.current.get(sessionId) !== requestId ||
+          runtime?.connection?.connectionId !== connectionId
+        ) {
+          return false;
         }
-        updateRuntime(sessionId, (runtime) => ({ ...runtime, deviceStatus }));
+        const sample = appendDeviceMetricSample(
+          runtime.deviceHistory,
+          deviceStatus,
+          performance.now(),
+          deviceNetworkCounters.current.get(sessionId) ?? null,
+        );
+        if (sample.networkCounter) {
+          deviceNetworkCounters.current.set(sessionId, sample.networkCounter);
+        } else {
+          deviceNetworkCounters.current.delete(sessionId);
+        }
+        updateRuntime(sessionId, (current) => ({
+          ...current,
+          deviceStatus,
+          deviceHistory: sample.history,
+        }));
+        return true;
       } catch {
-        if (deviceRequestIds.current.get(sessionId) === requestId) {
-          updateRuntime(sessionId, (runtime) => ({ ...runtime, deviceStatus: null }));
-        }
+        return false;
       }
     },
     [updateRuntime],
+  );
+
+  const startDevicePolling = useCallback(
+    (sessionId: string, connectionId: string) => {
+      stopDevicePolling(sessionId);
+      const pollId = devicePollIds.current.get(sessionId) ?? 0;
+      const poll = async () => {
+        await loadDevice(sessionId, connectionId);
+        if (
+          devicePollIds.current.get(sessionId) !== pollId ||
+          runtimesRef.current[sessionId]?.connection?.connectionId !== connectionId
+        ) {
+          return;
+        }
+        const timer = window.setTimeout(() => {
+          devicePollTimers.current.delete(sessionId);
+          void poll();
+        }, DEVICE_POLL_INTERVAL_MS);
+        devicePollTimers.current.set(sessionId, timer);
+      };
+      void poll();
+    },
+    [loadDevice, stopDevicePolling],
   );
 
   const handleConnected = useCallback(
@@ -148,14 +228,15 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         currentPath,
         files: [],
         deviceStatus: null,
+        deviceHistory: [],
         terminalDirectoryRequest: null,
       }));
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
       }
-      void loadDevice(sessionId, connection.connectionId);
+      startDevicePolling(sessionId, connection.connectionId);
     },
-    [loadDevice, loadFiles, updateRuntime],
+    [loadFiles, startDevicePolling, updateRuntime],
   );
 
   const handleTerminalState = useCallback(
@@ -166,10 +247,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           sessionId,
           (fileRequestIds.current.get(sessionId) ?? 0) + 1,
         );
-        deviceRequestIds.current.set(
-          sessionId,
-          (deviceRequestIds.current.get(sessionId) ?? 0) + 1,
-        );
+        stopDevicePolling(sessionId);
       }
       updateRuntime(sessionId, (runtime) => ({
         ...runtime,
@@ -191,6 +269,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           state === "disconnected" || state === "error"
             ? null
             : runtime.deviceStatus,
+        deviceHistory:
+          state === "disconnected" || state === "error"
+            ? []
+            : runtime.deviceHistory,
         transfer:
           state === "disconnected" || state === "error" ? null : runtime.transfer,
         terminalDirectoryRequest:
@@ -199,7 +281,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             : runtime.terminalDirectoryRequest,
       }));
     },
-    [updateRuntime],
+    [stopDevicePolling, updateRuntime],
   );
 
   const openPath = useCallback(
@@ -324,9 +406,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (!runtime?.connection || runtime.filesLoading) {
         return;
       }
-      const tasks: Promise<unknown>[] = [
-        loadDevice(sessionId, runtime.connection.connectionId),
-      ];
+      const tasks: Promise<unknown>[] = [];
       if (runtime.connection.sftpAvailable) {
         tasks.push(
           loadFiles(
@@ -338,7 +418,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       }
       await Promise.all(tasks);
     },
-    [loadDevice, loadFiles],
+    [loadFiles],
   );
 
   const disconnect = useCallback(
@@ -364,8 +444,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const removeRuntime = useCallback((sessionId: string) => {
+    stopDevicePolling(sessionId);
     fileRequestIds.current.delete(sessionId);
     deviceRequestIds.current.delete(sessionId);
+    devicePollIds.current.delete(sessionId);
+    deviceNetworkCounters.current.delete(sessionId);
     uploadBatchTokens.current.delete(sessionId);
     setRuntimes((current) => {
       const next = { ...current };
@@ -373,7 +456,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       runtimesRef.current = next;
       return next;
     });
-  }, []);
+  }, [stopDevicePolling]);
 
   const pruneRuntimes = useCallback((validSessionIds: ReadonlySet<string>) => {
     const invalid = Object.entries(runtimesRef.current).filter(
@@ -383,8 +466,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (runtime.connection) {
         void api.disconnectSession(runtime.connection.connectionId);
       }
+      stopDevicePolling(sessionId);
       fileRequestIds.current.delete(sessionId);
       deviceRequestIds.current.delete(sessionId);
+      devicePollIds.current.delete(sessionId);
+      deviceNetworkCounters.current.delete(sessionId);
       uploadBatchTokens.current.delete(sessionId);
     }
     if (invalid.length > 0) {
@@ -395,7 +481,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         return next;
       });
     }
-  }, []);
+  }, [stopDevicePolling]);
 
   const uploadFiles = useCallback(
     async (sessionId: string, localPaths: string[]) => {
@@ -700,6 +786,7 @@ export function createRuntime(): SessionRuntime {
     files: [],
     filesLoading: false,
     deviceStatus: null,
+    deviceHistory: [],
     transfer: null,
     terminalDirectoryRequest: null,
   };

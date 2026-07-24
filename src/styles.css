@@ -838,7 +838,7 @@ textarea:focus-visible,
 .right-rail {
   grid-area: side;
   display: grid;
-  grid-template-rows: minmax(0, var(--workspace-files-ratio)) 4px minmax(0, 1fr);
+  grid-template-rows: minmax(0, var(--workspace-files-ratio)) 4px minmax(230px, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1250,7 +1250,7 @@ textarea:focus-visible,
   flex-direction: column;
   justify-content: flex-end;
   min-width: 0;
-  min-height: 0;
+  min-height: 230px;
   overflow: auto;
 }
 
@@ -1321,6 +1321,51 @@ textarea:focus-visible,
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #aeb6bd, #d4d9de);
+}
+
+.metric-sparkline {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  overflow: visible;
+}
+
+.metric-sparkline polyline {
+  fill: none;
+  stroke: #d9e0e7;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.metric-sparkline circle {
+  fill: #d9e0e7;
+}
+
+.device-network-row {
+  grid-template-columns: 22px 70px minmax(0, 1fr);
+}
+
+.network-rates {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  color: #d9e0e7;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.network-rates > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.network-rates svg {
+  color: var(--muted);
 }
 
 .button {
@@ -2201,5 +2246,14 @@ textarea:focus-visible,
 @media (max-width: 1280px) {
   .device-row {
     grid-template-columns: 20px 62px minmax(64px, 1fr) 38px 78px;
+  }
+
+  .device-os-row,
+  .device-network-row {
+    grid-template-columns: 20px 62px minmax(0, 1fr);
+  }
+
+  .network-rates {
+    gap: 12px;
   }
 }
