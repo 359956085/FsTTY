@@ -42,6 +42,7 @@ import {
   createModifiedTimeFormatter,
   formatModifiedTime,
   formatSize,
+  formatTransferSpeed,
   isRemoteMoveCandidate,
   remoteParentPath,
 } from "./fileUtils";
@@ -155,6 +156,7 @@ export function FilesPane({
   const moveSuccessTimerRef = useRef<number | null>(null);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
   const [moveRequestPending, setMoveRequestPending] = useState(false);
+  const [speedDisplayTimeMs, setSpeedDisplayTimeMs] = useState(() => performance.now());
   const transferRunning = transfer?.state === "running";
   const operationBlocked =
     !sftpAvailable ||
@@ -291,6 +293,21 @@ export function FilesPane({
     });
   }, [files]);
 
+  useEffect(() => {
+    if (!transferRunning || !transfer) {
+      return;
+    }
+    const remainingMs = Math.max(
+      transfer.speedUpdatedAtMs + 1500 - performance.now(),
+      0,
+    );
+    const timeout = window.setTimeout(
+      () => setSpeedDisplayTimeMs(performance.now()),
+      remainingMs,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [transfer, transferRunning]);
+
   const selected = useMemo(
     () => files.find((file) => file.path === selectedPath) ?? null,
     [files, selectedPath],
@@ -304,6 +321,12 @@ export function FilesPane({
   const progressPercent = transfer?.totalBytes
     ? Math.min(100, Math.round((transfer.transferredBytes / transfer.totalBytes) * 100))
     : 0;
+  const displayedSpeed =
+    transferRunning &&
+    transfer &&
+    speedDisplayTimeMs - transfer.speedUpdatedAtMs < 1500
+      ? transfer.speedBytesPerSecond
+      : 0;
   const operationTitle =
     fileOperation?.kind === "create"
       ? t("sessions.createDirectory")
@@ -935,7 +958,7 @@ export function FilesPane({
               ? t("sessions.transferCompleted")
               : transfer.state === "cancelled"
                 ? t("sessions.transferCancelled")
-                : `${progressPercent}%`}
+                : `${progressPercent}% · ${formatTransferSpeed(displayedSpeed)}`}
           </em>
           {transferRunning ? (
             <button

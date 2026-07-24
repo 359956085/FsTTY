@@ -3,9 +3,11 @@ import type { FileEntry } from "../../shared/api/types";
 import {
   buildBreadcrumbs,
   canMoveRemoteEntry,
+  createTransferSpeedTracker,
   createModifiedTimeFormatter,
   formatModifiedTime,
   formatSize,
+  formatTransferSpeed,
   isRemoteMoveCandidate,
   remoteParentPath,
 } from "./fileUtils";
@@ -64,5 +66,46 @@ describe("文件展示格式", () => {
     expect(chinese.resolvedOptions().locale).toBe("zh-CN");
     expect(english.resolvedOptions().locale).toBe("en-US");
     expect(formatModifiedTime(null, chinese)).toBe("--");
+  });
+
+  it("格式化传输速度单位边界", () => {
+    expect(formatTransferSpeed(0)).toBe("0 B/s");
+    expect(formatTransferSpeed(1023)).toBe("1023 B/s");
+    expect(formatTransferSpeed(1024)).toBe("1.0 KB/s");
+    expect(formatTransferSpeed(1024 * 1024)).toBe("1.0 MB/s");
+    expect(formatTransferSpeed(1024 * 1024 * 1024)).toBe("1.0 GB/s");
+    expect(formatTransferSpeed(Number.NaN)).toBe("0 B/s");
+  });
+});
+
+describe("传输速度滑动窗口", () => {
+  it("使用最近一秒样本计算速度", () => {
+    const tracker = createTransferSpeedTracker();
+    expect(tracker.update(0, 0).speedBytesPerSecond).toBe(0);
+    expect(tracker.update(512, 500).speedBytesPerSecond).toBe(1024);
+    expect(tracker.update(1024, 1000).speedBytesPerSecond).toBe(1024);
+    expect(tracker.update(2048, 1500).speedBytesPerSecond).toBe(1536);
+  });
+
+  it("字节倒退时重置且不继承旧速度", () => {
+    const tracker = createTransferSpeedTracker();
+    tracker.update(0, 0);
+    tracker.update(1024, 1000);
+    const reset = tracker.update(0, 1100);
+    expect(reset.speedBytesPerSecond).toBe(0);
+    expect(reset.speedUpdatedAtMs).toBe(1100);
+    expect(tracker.update(1024, 2100).speedBytesPerSecond).toBe(1024);
+  });
+
+  it("忽略无进度事件并处理异常时间", () => {
+    const tracker = createTransferSpeedTracker();
+    tracker.update(0, 100);
+    const progress = tracker.update(100, 200);
+    expect(tracker.update(100, 300)).toEqual(progress);
+    expect(tracker.update(200, 150).speedBytesPerSecond).toBe(0);
+    expect(tracker.update(300, Number.NaN)).toEqual({
+      speedBytesPerSecond: 0,
+      speedUpdatedAtMs: 0,
+    });
   });
 });

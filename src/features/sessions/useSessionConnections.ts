@@ -13,6 +13,7 @@ import type {
   TransferEvent,
 } from "../../shared/api/types";
 import { DEFAULT_REMOTE_PATH } from "./constants";
+import { createTransferSpeedTracker } from "./fileUtils";
 
 export interface TransferProgress {
   id: string;
@@ -22,6 +23,8 @@ export interface TransferProgress {
   batchTotal?: number;
   transferredBytes: number;
   totalBytes: number;
+  speedBytesPerSecond: number;
+  speedUpdatedAtMs: number;
   state: "running" | "completed" | "cancelled";
 }
 
@@ -715,10 +718,13 @@ function createTransferChannel(
   batchTotal?: number,
 ) {
   const channel = new Channel<TransferEvent>();
+  const speedTracker = createTransferSpeedTracker();
+  const initialSpeed = speedTracker.update(0, performance.now());
   channel.onmessage = (event) => {
     if (event.transferId !== transferId) {
       return;
     }
+    const speed = speedTracker.update(event.transferredBytes, performance.now());
     updateRuntime(sessionId, (runtime) => ({
       ...runtime,
       transfer: {
@@ -729,6 +735,7 @@ function createTransferChannel(
         batchTotal,
         transferredBytes: event.transferredBytes,
         totalBytes: event.totalBytes,
+        ...speed,
         state:
           event.kind === "completed"
             ? "completed"
@@ -749,6 +756,7 @@ function createTransferChannel(
       batchTotal,
       transferredBytes: 0,
       totalBytes: 0,
+      ...initialSpeed,
       state: "running",
     },
   }));

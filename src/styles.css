@@ -1162,7 +1162,7 @@ textarea:focus-visible,
 
 .transfer-bar {
   display: grid;
-  grid-template-columns: minmax(90px, 1fr) minmax(70px, 1fr) 54px 26px;
+  grid-template-columns: minmax(70px, 1fr) minmax(44px, 0.7fr) max-content 26px;
   align-items: center;
   gap: 8px;
   margin: 0 10px 8px;
@@ -1188,8 +1188,10 @@ textarea:focus-visible,
 
 .transfer-bar em {
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
   font-style: normal;
   text-align: right;
+  white-space: nowrap;
 }
 
 .transfer-bar > button {
