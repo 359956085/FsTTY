@@ -9,10 +9,14 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
+- 更新弹窗支持忽略当前版本；自动检查不再提示已忽略版本，手动检查仍可查看并安装。
+
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
+
+- The update dialog can now ignore the current version. Automatic checks suppress ignored versions, while manual checks can still show and install them.
 
 <!-- release-notes:en-US:end -->
 

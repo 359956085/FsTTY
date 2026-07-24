@@ -1,12 +1,16 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../../shared/api/client";
+import type { AppSettings } from "../../shared/api/types";
+import { normalizeReleaseVersion, shouldSuppressUpdate } from "./updateVersion";
 
 export type UpdatePhase =
   | "idle"
   | "checking"
   | "upToDate"
   | "available"
+  | "ignoring"
   | "downloading"
   | "installing"
   | "completed"
@@ -24,6 +28,7 @@ interface AppUpdaterState {
   dialogOpen: boolean;
   downloadedBytes: number;
   error: string | null;
+  ignoreError: boolean;
   phase: UpdatePhase;
   totalBytes: number | null;
   versionError: string | null;
@@ -33,11 +38,14 @@ export interface AppUpdaterController extends AppUpdaterState {
   busy: boolean;
   checkForUpdates: (source?: "manual" | "automatic", proxyOverride?: string) => Promise<void>;
   dismissUpdate: () => Promise<void>;
+  ignoreUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
 }
 
 interface UseAppUpdaterOptions {
   autoUpdate: boolean;
+  ignoredUpdateVersion: string | null;
+  onSettingsChange: (settings: AppSettings) => void;
   proxy: string;
   startupReady: boolean;
 }
@@ -48,6 +56,7 @@ const INITIAL_STATE: AppUpdaterState = {
   dialogOpen: false,
   downloadedBytes: 0,
   error: null,
+  ignoreError: false,
   phase: "idle",
   totalBytes: null,
   versionError: null,
@@ -69,18 +78,17 @@ function updaterError(error: unknown) {
   return null;
 }
 
-function normalizeVersion(version: string) {
-  return version.replace(/^v/i, "");
-}
-
 export function useAppUpdater({
   autoUpdate,
+  ignoredUpdateVersion,
+  onSettingsChange,
   proxy,
   startupReady,
 }: UseAppUpdaterOptions): AppUpdaterController {
   const [state, setState] = useState(INITIAL_STATE);
   const updateRef = useRef<Update | null>(null);
   const checkingRef = useRef(false);
+  const ignoringRef = useRef(false);
   const installingRef = useRef(false);
   const mountedRef = useRef(true);
   const startupCheckStartedRef = useRef(false);
@@ -95,7 +103,7 @@ export function useAppUpdater({
 
   const checkForUpdates = useCallback(
     async (source: "manual" | "automatic" = "manual", proxyOverride = proxy) => {
-      if (checkingRef.current || installingRef.current) {
+      if (checkingRef.current || ignoringRef.current || installingRef.current) {
         return;
       }
       checkingRef.current = true;
@@ -107,6 +115,7 @@ export function useAppUpdater({
           dialogOpen: false,
           downloadedBytes: 0,
           error: null,
+          ignoreError: false,
           phase: "checking",
           totalBytes: null,
         }));
@@ -129,13 +138,19 @@ export function useAppUpdater({
           }));
           return;
         }
+        const version = normalizeReleaseVersion(update.version);
+        if (shouldSuppressUpdate(source, version, ignoredUpdateVersion)) {
+          await update.close().catch(() => undefined);
+          setState((current) => ({ ...current, phase: "idle" }));
+          return;
+        }
         updateRef.current = update;
         setState((current) => ({
           ...current,
           availableUpdate: {
             body: update.body,
             date: update.date,
-            version: normalizeVersion(update.version),
+            version,
           },
           dialogOpen: true,
           phase: "available",
@@ -145,6 +160,7 @@ export function useAppUpdater({
           setState((current) => ({
             ...current,
             error: updaterError(error),
+            ignoreError: false,
             phase: "error",
           }));
         }
@@ -152,11 +168,11 @@ export function useAppUpdater({
         checkingRef.current = false;
       }
     },
-    [proxy, releaseUpdate],
+    [ignoredUpdateVersion, proxy, releaseUpdate],
   );
 
   const dismissUpdate = useCallback(async () => {
-    if (installingRef.current) {
+    if (ignoringRef.current || installingRef.current) {
       return;
     }
     await releaseUpdate();
@@ -167,15 +183,67 @@ export function useAppUpdater({
         dialogOpen: false,
         downloadedBytes: 0,
         error: null,
+        ignoreError: false,
         phase: "idle",
         totalBytes: null,
       }));
     }
   }, [releaseUpdate]);
 
+  const ignoreUpdate = useCallback(async () => {
+    const update = updateRef.current;
+    if (!update || checkingRef.current || ignoringRef.current || installingRef.current) {
+      return;
+    }
+    ignoringRef.current = true;
+    if (mountedRef.current) {
+      setState((current) => ({
+        ...current,
+        error: null,
+        ignoreError: false,
+        phase: "ignoring",
+      }));
+    }
+    try {
+      const nextSettings = await api.setIgnoredUpdateVersion(
+        normalizeReleaseVersion(update.version),
+      );
+      await releaseUpdate();
+      if (mountedRef.current) {
+        onSettingsChange(nextSettings);
+        setState((current) => ({
+          ...current,
+          availableUpdate: null,
+          dialogOpen: false,
+          downloadedBytes: 0,
+          error: null,
+          ignoreError: false,
+          phase: "idle",
+          totalBytes: null,
+        }));
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setState((current) => ({
+          ...current,
+          error: updaterError(error),
+          ignoreError: true,
+          phase: "available",
+        }));
+      }
+    } finally {
+      ignoringRef.current = false;
+    }
+  }, [onSettingsChange, releaseUpdate]);
+
   const installUpdate = useCallback(async () => {
     const update = updateRef.current;
-    if (!update || installingRef.current || checkingRef.current) {
+    if (
+      !update ||
+      installingRef.current ||
+      checkingRef.current ||
+      ignoringRef.current
+    ) {
       return;
     }
     installingRef.current = true;
@@ -185,6 +253,7 @@ export function useAppUpdater({
         ...current,
         downloadedBytes: 0,
         error: null,
+        ignoreError: false,
         phase: "downloading",
         totalBytes: null,
       }));
@@ -221,6 +290,7 @@ export function useAppUpdater({
         setState((current) => ({
           ...current,
           error: updaterError(error),
+          ignoreError: false,
           phase: "error",
         }));
       }
@@ -236,7 +306,7 @@ export function useAppUpdater({
         if (active) {
           setState((current) => ({
             ...current,
-            currentVersion: normalizeVersion(version),
+            currentVersion: normalizeReleaseVersion(version),
           }));
         }
       })
@@ -275,9 +345,14 @@ export function useAppUpdater({
 
   return {
     ...state,
-    busy: state.phase === "checking" || state.phase === "downloading" || state.phase === "installing",
+    busy:
+      state.phase === "checking" ||
+      state.phase === "ignoring" ||
+      state.phase === "downloading" ||
+      state.phase === "installing",
     checkForUpdates,
     dismissUpdate,
+    ignoreUpdate,
     installUpdate,
   };
 }

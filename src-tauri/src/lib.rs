@@ -7,8 +7,8 @@ use commands::{
     delete_session, disconnect_session, download_file, forget_host_key, get_app_settings,
     get_device_status, get_system_clipboard_content_kind, list_remote_files, list_sessions,
     move_remote_entry, rename_remote_entry, resize_terminal, resolve_session_login_save_prompt,
-    set_language, set_session_credential, trust_host_key, update_app_settings, update_session,
-    upload_file, write_terminal,
+    set_ignored_update_version, set_language, set_session_credential, trust_host_key,
+    update_app_settings, update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -106,6 +106,7 @@ pub fn run() {
             get_device_status,
             get_system_clipboard_content_kind,
             get_app_settings,
+            set_ignored_update_version,
             set_language,
             update_app_settings
         ])

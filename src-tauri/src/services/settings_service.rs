@@ -86,6 +86,13 @@ impl SettingsService {
         self.replace(next)
     }
 
+    pub fn set_ignored_update_version(&mut self, version: String) -> Result<AppSettings, AppError> {
+        validate_release_version(&version)?;
+        let mut next = self.settings.clone();
+        next.ignored_update_version = Some(version);
+        self.replace(next)
+    }
+
     fn replace(&mut self, next: AppSettings) -> Result<AppSettings, AppError> {
         let previous = std::mem::replace(&mut self.settings, next);
         if let Err(error) = self.persist() {
@@ -145,7 +152,25 @@ fn default_settings() -> AppSettings {
         auto_update: true,
         update_proxy: String::new(),
         allow_remote_clipboard_write: true,
+        ignored_update_version: None,
     }
+}
+
+fn validate_release_version(version: &str) -> Result<(), AppError> {
+    let parts = version.split('.').collect::<Vec<_>>();
+    let valid = version.len() <= 64
+        && !version.chars().any(char::is_control)
+        && parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|character| character.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'))
+                && part.parse::<u64>().is_ok()
+        });
+    if !valid {
+        return Err(AppError::Validation("忽略的更新版本无效".to_owned()));
+    }
+    Ok(())
 }
 
 fn validate_update_proxy(update_proxy: &str) -> Result<(), AppError> {
@@ -202,12 +227,16 @@ mod tests {
             .update(false, "http://127.0.0.1:7890".to_owned(), false)
             .expect("保存更新设置失败");
         service.set_language(Language::EnUs).expect("保存语言失败");
+        service
+            .set_ignored_update_version("0.5.0".to_owned())
+            .expect("保存忽略版本失败");
 
         let restored = SettingsService::load(&directory).get();
         assert_eq!(restored.language, Language::EnUs);
         assert!(!restored.auto_update);
         assert_eq!(restored.update_proxy, "http://127.0.0.1:7890");
         assert!(!restored.allow_remote_clipboard_write);
+        assert_eq!(restored.ignored_update_version.as_deref(), Some("0.5.0"));
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -227,6 +256,7 @@ mod tests {
 
         let restored = SettingsService::load(&directory).get();
         assert!(restored.allow_remote_clipboard_write);
+        assert_eq!(restored.ignored_update_version, None);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -280,6 +310,18 @@ mod tests {
 
         assert!(service
             .update(true, "ftp://127.0.0.1".to_owned(), true)
+            .is_err());
+        assert_eq!(service.get(), default_settings());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn rejects_invalid_ignored_version_without_changing_memory() {
+        let directory = test_directory("settings-ignored-version");
+        let mut service = SettingsService::load(&directory);
+
+        assert!(service
+            .set_ignored_update_version("v0.5.0".to_owned())
             .is_err());
         assert_eq!(service.get(), default_settings());
         let _ = fs::remove_dir_all(directory);

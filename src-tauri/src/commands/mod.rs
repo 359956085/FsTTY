@@ -10,4 +10,6 @@ pub use session_commands::{
     resolve_session_login_save_prompt, set_session_credential, trust_host_key, update_session,
     upload_file, write_terminal,
 };
-pub use settings_commands::{get_app_settings, set_language, update_app_settings};
+pub use settings_commands::{
+    get_app_settings, set_ignored_update_version, set_language, update_app_settings,
+};

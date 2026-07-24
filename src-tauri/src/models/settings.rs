@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub update_proxy: String,
     #[serde(default = "default_allow_remote_clipboard_write")]
     pub allow_remote_clipboard_write: bool,
+    #[serde(default)]
+    pub ignored_update_version: Option<String>,
 }
 
 fn default_allow_remote_clipboard_write() -> bool {

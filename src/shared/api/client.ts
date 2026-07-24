@@ -130,6 +130,9 @@ export const api = {
   setLanguage(language: Language) {
     return invoke<AppSettings>("set_language", { language });
   },
+  setIgnoredUpdateVersion(version: string) {
+    return invoke<AppSettings>("set_ignored_update_version", { version });
+  },
   updateAppSettings(
     autoUpdate: boolean,
     updateProxy: string,

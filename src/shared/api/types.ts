@@ -6,6 +6,7 @@ export interface AppSettings {
   autoUpdate: boolean;
   updateProxy: string;
   allowRemoteClipboardWrite: boolean;
+  ignoredUpdateVersion: string | null;
 }
 
 export interface SessionGroup {

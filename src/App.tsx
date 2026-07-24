@@ -22,11 +22,14 @@ export function App() {
     autoUpdate: true,
     updateProxy: "",
     allowRemoteClipboardWrite: true,
+    ignoredUpdateVersion: null,
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const updater = useAppUpdater({
     autoUpdate: settings.autoUpdate,
+    ignoredUpdateVersion: settings.ignoredUpdateVersion,
+    onSettingsChange: setSettings,
     proxy: settings.updateProxy,
     startupReady: settingsLoaded,
   });

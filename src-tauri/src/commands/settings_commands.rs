@@ -38,3 +38,15 @@ pub fn update_app_settings(
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
     service.update(auto_update, update_proxy, allow_remote_clipboard_write)
 }
+
+#[tauri::command]
+pub fn set_ignored_update_version(
+    state: State<'_, AppState>,
+    version: String,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    service.set_ignored_update_version(version)
+}

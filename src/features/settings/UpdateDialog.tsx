@@ -20,7 +20,10 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
   const { i18n, t } = useTranslation();
   const { dialogOpen, dismissUpdate } = updater;
   const update = updater.availableUpdate;
-  const busy = updater.phase === "downloading" || updater.phase === "installing";
+  const busy =
+    updater.phase === "ignoring" ||
+    updater.phase === "downloading" ||
+    updater.phase === "installing";
 
   useEffect(() => {
     if (!dialogOpen || busy) {
@@ -101,16 +104,26 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
               </div>
             </div>
           ) : null}
+          {updater.phase === "ignoring" ? (
+            <div className="loading-banner">{t("settings.ignoringUpdate")}</div>
+          ) : null}
           {updater.phase === "completed" ? (
             <div className="form-success">{t("settings.updateInstalled")}</div>
           ) : null}
-          {updater.phase === "error" ? (
+          {updater.ignoreError ? (
+            <div className="form-error">{t("settings.ignoreUpdateFailed")}</div>
+          ) : updater.phase === "error" ? (
             <div className="form-error">
               {updater.error || t("settings.updateUnknownError")}
             </div>
           ) : null}
         </div>
         <footer className="dialog-actions">
+          {!busy && (updater.phase === "available" || updater.phase === "error") ? (
+            <Button onClick={() => void updater.ignoreUpdate()} variant="ghost">
+              {t("settings.ignoreUpdate")}
+            </Button>
+          ) : null}
           {!busy ? (
             <Button onClick={() => void updater.dismissUpdate()} variant="ghost">
               {updater.phase === "completed" ? t("sessions.close") : t("sessions.cancel")}
