@@ -7,6 +7,7 @@ import type {
   DeviceStatus,
   FileEntry,
   Language,
+  LoginSaveDecision,
   Session,
   SessionGroup,
   TerminalEvent,
@@ -30,12 +31,16 @@ export const api = {
   setSessionCredential(sessionId: string, credential: string) {
     return invoke<Session>("set_session_credential", { sessionId, credential });
   },
+  resolveSessionLoginSavePrompt(sessionId: string, decision: LoginSaveDecision) {
+    return invoke<Session>("resolve_session_login_save_prompt", { sessionId, decision });
+  },
   connectSession(
     sessionId: string,
     columns: number,
     rows: number,
     onEvent: Channel<TerminalEvent>,
     oneTimeCredential?: string,
+    oneTimeUsername?: string,
   ) {
     return invoke<ConnectResult>("connect_session", {
       sessionId,
@@ -43,6 +48,7 @@ export const api = {
       rows,
       onEvent,
       oneTimeCredential: oneTimeCredential ?? null,
+      oneTimeUsername: oneTimeUsername ?? null,
     });
   },
   trustHostKey(sessionId: string, challengeId: string) {

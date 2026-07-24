@@ -268,7 +268,9 @@ export function SessionList({
                         <span className="session-item-main">
                           <span className="session-name">{session.name}</span>
                           <span className="session-meta">
-                            {session.username}@{session.host}
+                            {session.username
+                              ? `${session.username}@${session.host}`
+                              : session.host}
                           </span>
                         </span>
                       </button>

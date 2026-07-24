@@ -1,8 +1,8 @@
 use crate::models::{
-    AppError, ConnectResult, CreateSessionPayload, DeviceStatus, FileEntry, SessionGroup,
-    SessionProfile, TerminalEvent, TransferEvent, UpdateSessionPayload,
+    AppError, ConnectResult, CreateSessionPayload, DeviceStatus, FileEntry, LoginSaveDecision,
+    SessionGroup, SessionProfile, TerminalEvent, TransferEvent, UpdateSessionPayload,
 };
-use crate::services::AppState;
+use crate::services::{AppState, OneTimeLogin};
 use tauri::{ipc::Channel, State};
 use zeroize::Zeroizing;
 
@@ -85,6 +85,20 @@ pub async fn set_session_credential(
 }
 
 #[tauri::command]
+pub async fn resolve_session_login_save_prompt(
+    state: State<'_, AppState>,
+    session_id: String,
+    decision: LoginSaveDecision,
+) -> Result<SessionProfile, AppError> {
+    state
+        .session_service
+        .lock()
+        .await
+        .resolve_login_save_prompt(&session_id, decision, &state.credential_service)
+        .await
+}
+
+#[tauri::command]
 pub async fn connect_session(
     state: State<'_, AppState>,
     session_id: String,
@@ -92,6 +106,7 @@ pub async fn connect_session(
     rows: u32,
     on_event: Channel<TerminalEvent>,
     one_time_credential: Option<Zeroizing<String>>,
+    one_time_username: Option<String>,
 ) -> Result<ConnectResult, AppError> {
     let session = state.session_service.lock().await.find(&session_id)?;
     state
@@ -102,7 +117,10 @@ pub async fn connect_session(
             rows,
             on_event,
             &state.credential_service,
-            one_time_credential,
+            Some(OneTimeLogin {
+                credential: one_time_credential,
+                username: one_time_username,
+            }),
         )
         .await
 }

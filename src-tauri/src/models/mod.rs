@@ -15,8 +15,8 @@ pub use connection::{
 pub use device::DeviceStatus;
 pub use file::{FileEntry, FileKind};
 pub use session::{
-    CreateSessionPayload, CredentialAction, CredentialState, PrivateKeyMaterialAction,
-    PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup, SessionProfile, StoredSession,
-    UpdateSessionPayload,
+    CreateSessionPayload, CredentialAction, CredentialState, LoginSaveDecision,
+    PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,
+    SessionProfile, StoredSession, UpdateSessionPayload,
 };
 pub use settings::{AppSettings, Language};

@@ -68,6 +68,7 @@ pub struct SessionProfile {
     pub tags: Vec<String>,
     pub auth: SessionAuth,
     pub credential_state: CredentialState,
+    pub login_save_prompted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -81,6 +82,8 @@ pub struct StoredSession {
     pub group: String,
     pub tags: Vec<String>,
     pub auth: SessionAuth,
+    #[serde(default)]
+    pub login_save_prompted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -109,6 +112,22 @@ pub enum CredentialAction {
     Replace { value: Zeroizing<String> },
     UseOnce { value: Zeroizing<String> },
     Clear,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum LoginSaveDecision {
+    Save {
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<Zeroizing<String>>,
+    },
+    Decline,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +183,7 @@ impl From<StoredSession> for SessionProfile {
             tags: session.tags,
             auth: session.auth,
             credential_state: CredentialState::Missing,
+            login_save_prompted: session.login_save_prompted,
         }
     }
 }
@@ -216,5 +236,21 @@ mod tests {
         assert!(
             matches!(action, CredentialAction::UseOnce { value } if value.as_str() == "临时口令")
         );
+    }
+
+    #[test]
+    fn legacy_session_defaults_login_save_prompted_to_false() {
+        let session = serde_json::from_value::<StoredSession>(serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "旧会话",
+            "host": "127.0.0.1",
+            "port": 22,
+            "username": "",
+            "group": "未分组",
+            "tags": [],
+            "auth": { "kind": "password" }
+        }))
+        .expect("旧会话应兼容新增字段");
+        assert!(!session.login_save_prompted);
     }
 }

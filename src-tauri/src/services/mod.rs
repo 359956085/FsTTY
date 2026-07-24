@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex;
 
-pub use connection_manager::ConnectionManager;
+pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
 pub use session_service::SessionService;

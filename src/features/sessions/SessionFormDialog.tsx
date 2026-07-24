@@ -216,6 +216,12 @@ export function SessionFormDialog({
       authKind === "privateKey" &&
       privateKeySource === "inline" &&
       privateKeyContent.length > 0;
+    const preservingStoredPassword =
+      authKind === "password" &&
+      rememberCredential &&
+      !credential &&
+      samePassword &&
+      session?.credentialState === "stored";
 
     if (authKind === "privateKey" && privateKeySource === "file" && !normalizedKeyPath) {
       setError(t("sessions.validationPrivateKey"));
@@ -233,15 +239,18 @@ export function SessionFormDialog({
 
     let credentialAction: CredentialAction;
     if (authKind === "password") {
+      if (!normalizedUsername && (Boolean(credential) || preservingStoredPassword)) {
+        setError(t("sessions.validationPasswordUsername"));
+        return;
+      }
       if (!rememberCredential) {
         credentialAction = { mode: "clear" };
       } else if (credential) {
         credentialAction = { mode: "replace", value: credential };
-      } else if (samePassword && session?.credentialState === "stored") {
+      } else if (preservingStoredPassword) {
         credentialAction = { mode: "preserve" };
       } else {
-        setError(t("sessions.validationPassword"));
-        return;
+        credentialAction = { mode: "clear" };
       }
     } else if (credential) {
       credentialAction = rememberCredential
@@ -442,6 +451,7 @@ export function SessionFormDialog({
                   type="password"
                   value={credential}
                 />
+                <small>{t("sessions.validationCredential")}</small>
               </label>
             ) : null
           ) : (

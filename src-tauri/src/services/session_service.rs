@@ -1,7 +1,7 @@
 use crate::models::{
-    AppError, CreateSessionPayload, CredentialAction, CredentialState, PrivateKeyMaterialAction,
-    PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup, SessionProfile, StoredSession,
-    UpdateSessionPayload,
+    AppError, CreateSessionPayload, CredentialAction, CredentialState, LoginSaveDecision,
+    PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,
+    SessionProfile, StoredSession, UpdateSessionPayload,
 };
 use crate::services::CredentialService;
 use russh::keys::{decode_secret_key, load_secret_key};
@@ -155,6 +155,14 @@ impl SessionService {
             &payload.tags,
         )?;
         validate_auth_username(&payload.username, &payload.auth)?;
+        validate_password_username(
+            &payload.username,
+            &payload.auth,
+            &payload.credential,
+            None,
+            credentials,
+        )
+        .await?;
 
         let id = Uuid::new_v4().to_string();
         let (auth, changes) =
@@ -168,6 +176,7 @@ impl SessionService {
             group: normalize_group(&payload.group),
             tags: normalize_tags(payload.tags),
             auth,
+            login_save_prompted: false,
         };
         let snapshot = SecretSnapshot {
             credential: None,
@@ -220,6 +229,14 @@ impl SessionService {
         )?;
         validate_auth_username(&payload.username, &payload.auth)?;
         let old_session = self.find(&payload.id)?;
+        validate_password_username(
+            &payload.username,
+            &payload.auth,
+            &payload.credential,
+            Some(&old_session),
+            credentials,
+        )
+        .await?;
         let (auth, changes) = prepare_auth(
             &payload.id,
             payload.auth,
@@ -250,6 +267,7 @@ impl SessionService {
             group: normalize_group(&payload.group),
             tags: normalize_tags(payload.tags),
             auth,
+            login_save_prompted: old_session.login_save_prompted,
         };
         apply_auth_changes(&payload.id, &changes, &snapshot, credentials).await?;
         let credential_state = match resolve_credential_state(&updated, credentials).await {
@@ -377,6 +395,94 @@ impl SessionService {
         }
         credentials.set(session_id, value).await?;
         Ok(profile_with_state(session, CredentialState::Stored))
+    }
+
+    pub async fn resolve_login_save_prompt(
+        &mut self,
+        session_id: &str,
+        decision: LoginSaveDecision,
+        credentials: &CredentialService,
+    ) -> Result<SessionProfile, AppError> {
+        self.ensure_writable()?;
+        validate_id(session_id)?;
+        let current = self.find(session_id)?;
+        if !matches!(current.auth, SessionAuth::Password) {
+            return Err(AppError::Validation(
+                "只有密码认证会话可以保存登录信息".to_owned(),
+            ));
+        }
+        if current.login_save_prompted {
+            let state = resolve_credential_state(&current, credentials).await?;
+            return Ok(profile_with_state(current, state));
+        }
+
+        let (next_username, next_password) = match decision {
+            LoginSaveDecision::Decline => (current.username.clone(), None),
+            LoginSaveDecision::Save { username, password } => {
+                let normalized_username = username.map(|value| value.trim().to_owned());
+                if let Some(value) = normalized_username.as_deref() {
+                    validate_text("用户名", value, 128, false)?;
+                    if !current.username.is_empty() && current.username != value {
+                        return Err(AppError::Validation(
+                            "临时账号与会话中已保存账号不一致".to_owned(),
+                        ));
+                    }
+                }
+                let next_username = normalized_username.unwrap_or_else(|| current.username.clone());
+                if next_username.is_empty() {
+                    return Err(AppError::Validation(
+                        "保存密码时必须同时保存账号".to_owned(),
+                    ));
+                }
+                if password.as_ref().is_some_and(|value| value.is_empty()) {
+                    return Err(AppError::Validation("密码不能为空".to_owned()));
+                }
+                if next_username == current.username && password.is_none() {
+                    return Err(AppError::Validation("没有可保存的登录信息".to_owned()));
+                }
+                (next_username, password)
+            }
+        };
+
+        let password_changed = next_password.is_some();
+        let credential_snapshot = if password_changed {
+            credentials.get(session_id).await?
+        } else {
+            None
+        };
+        if let Some(password) = next_password {
+            credentials.set(session_id, password).await?;
+        }
+
+        let previous = self.store.clone();
+        let target = self
+            .store
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| AppError::NotFound("未找到指定会话".to_owned()))?;
+        target.username = next_username;
+        target.login_save_prompted = true;
+        let updated = target.clone();
+        if let Err(error) = self.persist() {
+            self.store = previous;
+            let rollback = if password_changed {
+                match credential_snapshot {
+                    Some(value) => credentials.set(session_id, value).await,
+                    None => credentials.delete(session_id).await,
+                }
+            } else {
+                Ok(())
+            };
+            if rollback.is_err() {
+                return Err(AppError::Credential(
+                    "登录信息保存失败，且旧密码回滚失败，请重新检查凭据".to_owned(),
+                ));
+            }
+            return Err(error);
+        }
+        let state = resolve_credential_state(&updated, credentials).await?;
+        Ok(profile_with_state(updated, state))
     }
 
     async fn profile(
@@ -1007,6 +1113,39 @@ fn validate_auth_username(username: &str, auth: &SessionAuthInput) -> Result<(),
     Ok(())
 }
 
+async fn validate_password_username(
+    username: &str,
+    auth: &SessionAuthInput,
+    action: &CredentialAction,
+    old: Option<&StoredSession>,
+    credentials: &CredentialService,
+) -> Result<(), AppError> {
+    if !matches!(auth, SessionAuthInput::Password) || !username.trim().is_empty() {
+        return Ok(());
+    }
+    let password_present = match action {
+        CredentialAction::Replace { value } | CredentialAction::UseOnce { value } => {
+            !value.is_empty()
+        }
+        CredentialAction::Preserve => {
+            if let Some(old_session) =
+                old.filter(|session| matches!(session.auth, SessionAuth::Password))
+            {
+                credentials.get(&old_session.id).await?.is_some()
+            } else {
+                false
+            }
+        }
+        CredentialAction::Clear => false,
+    };
+    if password_present {
+        return Err(AppError::Validation(
+            "填写密码时必须同时填写账号".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_text(
     label: &str,
     value: &str,
@@ -1096,6 +1235,7 @@ mod tests {
             group: "未分组".to_owned(),
             tags: vec![],
             auth: SessionAuth::Password,
+            login_save_prompted: false,
         }
     }
 
@@ -1111,6 +1251,7 @@ mod tests {
             group: "未分组".to_owned(),
             tags: vec![],
             auth: SessionAuth::Password,
+            login_save_prompted: false,
         };
         let store = SessionStore {
             version: STORE_VERSION,
@@ -1131,6 +1272,43 @@ mod tests {
         assert!(validate_auth_username("  ", &private_key).is_err());
         assert!(validate_auth_username("root", &private_key).is_ok());
         assert!(validate_auth_username("", &SessionAuthInput::Password).is_ok());
+    }
+
+    #[tokio::test]
+    async fn password_requires_username_only_when_password_is_present() {
+        let credentials = CredentialService::new();
+        let password_auth = SessionAuthInput::Password;
+        assert!(validate_password_username(
+            "",
+            &password_auth,
+            &CredentialAction::Replace {
+                value: Zeroizing::new("secret".to_owned()),
+            },
+            None,
+            &credentials,
+        )
+        .await
+        .is_err());
+        assert!(validate_password_username(
+            "",
+            &password_auth,
+            &CredentialAction::Clear,
+            None,
+            &credentials,
+        )
+        .await
+        .is_ok());
+        assert!(validate_password_username(
+            "root",
+            &password_auth,
+            &CredentialAction::Replace {
+                value: Zeroizing::new("secret".to_owned()),
+            },
+            None,
+            &credentials,
+        )
+        .await
+        .is_ok());
     }
 
     #[test]

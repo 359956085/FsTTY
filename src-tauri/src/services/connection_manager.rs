@@ -52,6 +52,12 @@ pub struct ConnectionManager {
     inner: Arc<ConnectionManagerInner>,
 }
 
+#[derive(Default)]
+pub struct OneTimeLogin {
+    pub credential: Option<Zeroizing<String>>,
+    pub username: Option<String>,
+}
+
 struct ConnectionManagerInner {
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
@@ -287,18 +293,18 @@ impl ConnectionManager {
 
     pub async fn connect(
         &self,
-        session: StoredSession,
+        mut session: StoredSession,
         columns: u32,
         rows: u32,
         events: Channel<TerminalEvent>,
         credentials: &CredentialService,
-        one_time_credential: Option<Zeroizing<String>>,
+        one_time_login: Option<OneTimeLogin>,
     ) -> Result<ConnectResult, AppError> {
         validate_terminal_size(columns, rows)?;
+        let one_time_login = one_time_login.unwrap_or_default();
+        apply_one_time_username(&mut session, one_time_login.username)?;
         if session.username.trim().is_empty() {
-            return Err(AppError::Validation(
-                "当前会话缺少用户名，请先编辑会话".to_owned(),
-            ));
+            return Err(AppError::Validation("当前会话缺少用户名".to_owned()));
         }
         let cancellation = {
             let mut connecting = self.inner.connecting_sessions.lock().await;
@@ -318,7 +324,7 @@ impl ConnectionManager {
                 events,
                 ConnectionCredentialInput {
                     service: credentials,
-                    one_time: one_time_credential,
+                    one_time: one_time_login.credential,
                 },
                 &cancellation,
             ) => result,
@@ -2064,6 +2070,29 @@ fn validate_terminal_size(columns: u32, rows: u32) -> Result<(), AppError> {
     Ok(())
 }
 
+fn apply_one_time_username(
+    session: &mut StoredSession,
+    one_time_username: Option<String>,
+) -> Result<(), AppError> {
+    let Some(username) = one_time_username else {
+        return Ok(());
+    };
+    if !matches!(session.auth, SessionAuth::Password) {
+        return Err(AppError::Validation("临时账号只适用于密码认证".to_owned()));
+    }
+    if !session.username.trim().is_empty() {
+        return Err(AppError::Validation(
+            "会话已有账号，不能使用临时账号覆盖".to_owned(),
+        ));
+    }
+    let username = username.trim();
+    if username.is_empty() || username.len() > 128 || username.chars().any(char::is_control) {
+        return Err(AppError::Validation("用户名无效".to_owned()));
+    }
+    session.username = username.to_owned();
+    Ok(())
+}
+
 fn validate_uuid(label: &str, value: &str) -> Result<(), AppError> {
     Uuid::parse_str(value)
         .map(|_| ())
@@ -2075,6 +2104,44 @@ mod tests {
     use super::*;
     use crate::services::DeviceService;
     use zeroize::Zeroizing;
+
+    fn temporary_username_session(auth: SessionAuth) -> StoredSession {
+        StoredSession {
+            id: Uuid::new_v4().to_string(),
+            name: "临时账号测试".to_owned(),
+            host: "127.0.0.1".to_owned(),
+            port: 22,
+            username: String::new(),
+            group: "测试".to_owned(),
+            tags: vec![],
+            auth,
+            login_save_prompted: false,
+        }
+    }
+
+    #[test]
+    fn accepts_temporary_username_only_for_blank_password_session() {
+        let mut password_session = temporary_username_session(SessionAuth::Password);
+        apply_one_time_username(&mut password_session, Some(" root ".to_owned()))
+            .expect("密码会话应接受临时账号");
+        assert_eq!(password_session.username, "root");
+
+        let mut existing = temporary_username_session(SessionAuth::Password);
+        existing.username = "ubuntu".to_owned();
+        assert!(apply_one_time_username(&mut existing, Some("root".to_owned())).is_err());
+
+        let mut private_key = temporary_username_session(SessionAuth::PrivateKey {
+            source: PrivateKeySource::Inline,
+            path: None,
+            passphrase_required: false,
+        });
+        assert!(apply_one_time_username(&mut private_key, Some("root".to_owned())).is_err());
+        assert!(apply_one_time_username(
+            &mut temporary_username_session(SessionAuth::Password),
+            Some(" \n".to_owned()),
+        )
+        .is_err());
+    }
 
     #[test]
     fn classifies_only_closed_authentication_connections_as_interruptions() {
@@ -2344,6 +2411,7 @@ mod tests {
             group: "测试".to_owned(),
             tags: vec![],
             auth: SessionAuth::Password,
+            login_save_prompted: false,
         };
         credentials
             .set(&session.id, password.clone())
@@ -2655,6 +2723,7 @@ mod tests {
             group: "测试".to_owned(),
             tags: vec![],
             auth: SessionAuth::Password,
+            login_save_prompted: false,
         };
         credentials
             .set(&concurrent_session.id, Zeroizing::new(password.to_string()))
@@ -2693,6 +2762,7 @@ mod tests {
             group: "测试".to_owned(),
             tags: vec![],
             auth: SessionAuth::Password,
+            login_save_prompted: false,
         };
         credentials
             .set(
@@ -2741,6 +2811,7 @@ mod tests {
                     path: Some(private_key_path),
                     passphrase_required: false,
                 },
+                login_save_prompted: false,
             };
             let connected = manager
                 .connect(
@@ -2781,6 +2852,7 @@ mod tests {
                     path: Some(private_key_path),
                     passphrase_required: true,
                 },
+                login_save_prompted: false,
             };
             credentials
                 .set(&key_session.id, Zeroizing::new(passphrase))
@@ -2823,6 +2895,7 @@ mod tests {
                     path: Some(bad_key_path),
                     passphrase_required: true,
                 },
+                login_save_prompted: false,
             };
             credentials
                 .set(

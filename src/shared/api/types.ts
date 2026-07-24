@@ -56,7 +56,16 @@ export interface Session {
   tags: string[];
   auth: SessionAuth;
   credentialState: "stored" | "missing" | "notRequired";
+  loginSavePrompted: boolean;
 }
+
+export type LoginSaveDecision =
+  | {
+      mode: "save";
+      username?: string;
+      password?: string;
+    }
+  | { mode: "decline" };
 
 export interface CreateSessionPayload {
   name: string;

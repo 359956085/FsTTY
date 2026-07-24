@@ -4,8 +4,10 @@ import {
   KeyRound,
   Link,
   Link2Off,
+  Save,
   ShieldAlert,
   ShieldCheck,
+  UserRound,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +30,10 @@ import { hasControlCharacter } from "../../shared/validation/text";
 import type { TerminalDirectoryRequest } from "./useSessionConnections";
 import { retryInterruptedAuthentication } from "./authenticationRetry";
 import { createImeCompositionFallback } from "./imeCompositionFallback";
+import {
+  createTerminalLoginInputController,
+  type TerminalLoginPromptKind,
+} from "./terminalLoginPrompt";
 import {
   createRemoteRightDragState,
   shouldOpenLocalTerminalContextMenu,
@@ -58,6 +64,21 @@ interface TerminalActivityController {
   start: () => void;
   stop: () => void;
 }
+
+interface ConnectTerminalOptions {
+  fromCredentialPrompt?: boolean;
+  oneTimeCredential?: string;
+  oneTimeUsername?: string;
+}
+
+interface TemporaryLogin {
+  password?: string;
+  usedPassword: boolean;
+  usedUsername: boolean;
+  username?: string;
+}
+
+type LoginSavePromptKind = "username" | "password" | "both";
 
 interface TerminalPaneProps {
   active: boolean;
@@ -110,6 +131,9 @@ export const TerminalPane = memo(function TerminalPane({
   const resizeObserverActivityRef = useRef<TerminalActivityController | null>(null);
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
+  const terminalLoginInputRef = useRef(createTerminalLoginInputController());
+  const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
+  const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
   const connectionAttemptRef = useRef(0);
   const connectingRef = useRef(false);
@@ -120,7 +144,9 @@ export const TerminalPane = memo(function TerminalPane({
   const shellAtPromptRef = useRef(false);
   const shellIntegrationRef = useRef<ShellIntegration | null>(null);
   const autoConnectRef = useRef(autoConnect);
-  const connectTerminalRef = useRef<() => Promise<void>>(async () => undefined);
+  const connectTerminalRef = useRef<(options?: ConnectTerminalOptions) => Promise<void>>(
+    async () => undefined,
+  );
   const handleShellOscRef = useRef<(data: string) => boolean>(() => true);
   const reportStateRef = useRef<
     (state: ConnectionState, error?: string | null) => void
@@ -137,12 +163,16 @@ export const TerminalPane = memo(function TerminalPane({
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
-  const [credentialPrompt, setCredentialPrompt] = useState<
-    "password" | "privateKeyPassphrase" | null
-  >(null);
+  const [credentialPrompt, setCredentialPrompt] =
+    useState<"privateKeyPassphrase" | null>(null);
   const [credentialValue, setCredentialValue] = useState("");
   const [rememberCredential, setRememberCredential] = useState(true);
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
+  const [terminalLoginPrompt, setTerminalLoginPrompt] =
+    useState<TerminalLoginPromptKind | null>(null);
+  const [loginSavePrompt, setLoginSavePrompt] = useState<LoginSavePromptKind | null>(null);
+  const [loginSaveSubmitting, setLoginSaveSubmitting] = useState(false);
+  const [loginSaveError, setLoginSaveError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
 
@@ -161,6 +191,7 @@ export const TerminalPane = memo(function TerminalPane({
   reportClipboardErrorRef.current = reportClipboardError;
   copyTerminalSelectionRef.current = copyTerminalSelection;
   pasteTerminalClipboardRef.current = pasteTerminalClipboard;
+  handleTerminalLoginDataRef.current = handleTerminalLoginData;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -173,6 +204,92 @@ export const TerminalPane = memo(function TerminalPane({
     if (mountedRef.current) {
       onStateChange(runtimeId, state, error);
     }
+  }
+
+  function clearTemporaryLogin() {
+    terminalLoginInputRef.current.reset();
+    temporaryLoginRef.current = null;
+    if (mountedRef.current) {
+      setTerminalLoginPrompt(null);
+      setLoginSavePrompt(null);
+      setLoginSaveError(null);
+      setLoginSaveSubmitting(false);
+    }
+  }
+
+  function beginTerminalLoginPrompt(kind: TerminalLoginPromptKind) {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminalLoginInputRef.current.start(kind);
+    setTerminalLoginPrompt(kind);
+    terminal.write(
+      `[FsTTY] ${t(
+        kind === "username"
+          ? "sessions.terminalUsernamePrompt"
+          : "sessions.terminalPasswordPrompt",
+      )}`,
+    );
+    terminal.focus();
+  }
+
+  function handleTerminalLoginData(data: string) {
+    const controller = terminalLoginInputRef.current;
+    if (!controller.getPrompt()) {
+      return false;
+    }
+    const terminal = terminalRef.current;
+    const result = controller.handle(data);
+    if (result.echo) {
+      terminal?.write(result.echo);
+    }
+    if (result.kind === "pending") {
+      return true;
+    }
+    setTerminalLoginPrompt(null);
+    if (result.kind === "cancel") {
+      clearTemporaryLogin();
+      terminal?.writeln(`[FsTTY] ${t("sessions.terminalLoginCancelled")}`);
+      reportState("disconnected");
+      return true;
+    }
+
+    if (result.prompt === "username") {
+      const username = result.value.trim();
+      if (!username || username.length > 128 || hasControlCharacter(username)) {
+        terminal?.writeln(`[FsTTY] ${t("sessions.terminalUsernameInvalid")}`);
+        beginTerminalLoginPrompt("username");
+        return true;
+      }
+      temporaryLoginRef.current = {
+        password: temporaryLoginRef.current?.password,
+        usedPassword: temporaryLoginRef.current?.usedPassword ?? false,
+        usedUsername: true,
+        username,
+      };
+      void connectTerminalRef.current({ oneTimeUsername: username });
+      return true;
+    }
+
+    if (!result.value) {
+      terminal?.writeln(`[FsTTY] ${t("sessions.terminalPasswordRequired")}`);
+      beginTerminalLoginPrompt("password");
+      return true;
+    }
+    const current = temporaryLoginRef.current;
+    temporaryLoginRef.current = {
+      password: result.value,
+      usedPassword: true,
+      usedUsername: current?.usedUsername ?? false,
+      username: current?.username,
+    };
+    void connectTerminalRef.current({
+      fromCredentialPrompt: true,
+      oneTimeCredential: result.value,
+      oneTimeUsername: current?.username,
+    });
+    return true;
   }
 
   function reportClipboardError(kind: ClipboardMessageKind = "write") {
@@ -462,6 +579,7 @@ export const TerminalPane = memo(function TerminalPane({
     let disposeImeListeners: (() => void) | null = null;
     let remoteMouseListenersAttached = false;
     let resizeObserverActive = false;
+    const terminalLoginInput = terminalLoginInputRef.current;
 
     async function mountTerminal() {
       const container = containerRef.current;
@@ -861,6 +979,9 @@ export const TerminalPane = memo(function TerminalPane({
         (data) => handleShellOscRef.current(data),
       );
       terminal.onData((data) => {
+        if (handleTerminalLoginDataRef.current(data)) {
+          return;
+        }
         // 收到目录信号后，只要用户开始输入就不再视为干净提示符，避免自动 cd 污染命令行。
         shellAtPromptRef.current = false;
         sendInputRef.current(data);
@@ -915,6 +1036,8 @@ export const TerminalPane = memo(function TerminalPane({
       oscHandler?.dispose();
       clearPendingInput();
       resetShellIntegration();
+      terminalLoginInput.reset();
+      temporaryLoginRef.current = null;
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
@@ -976,6 +1099,7 @@ export const TerminalPane = memo(function TerminalPane({
       remoteRightDragStateRef.current.end();
     }
     if (!active || !visible) {
+      clearTemporaryLogin();
       terminalRef.current?.blur();
       clearPendingInput();
       return;
@@ -989,7 +1113,8 @@ export const TerminalPane = memo(function TerminalPane({
     return () => window.cancelAnimationFrame(frame);
   }, [active, connectionState, visible]);
 
-  async function connectTerminal(oneTimeCredential?: string, fromCredentialPrompt = false) {
+  async function connectTerminal(options: ConnectTerminalOptions = {}) {
+    const { fromCredentialPrompt = false, oneTimeCredential } = options;
     if (connectingRef.current || connectionState === "connecting" || connectionRef.current) {
       return;
     }
@@ -998,8 +1123,23 @@ export const TerminalPane = memo(function TerminalPane({
       reportState("error", t("sessions.terminalNotReady"));
       return;
     }
-    if (!session.username.trim()) {
-      reportState("error", t("sessions.usernameRequired"));
+    const oneTimeUsername =
+      options.oneTimeUsername ?? temporaryLoginRef.current?.username;
+    if (!session.username.trim() && !oneTimeUsername) {
+      if (session.auth.kind !== "password") {
+        reportState("error", t("sessions.usernameRequired"));
+        return;
+      }
+      clearPendingInput();
+      resetShellIntegration();
+      imeCompositionFallbackRef.current?.reset();
+      terminal.reset();
+      temporaryLoginRef.current = {
+        usedPassword: false,
+        usedUsername: false,
+      };
+      reportState("disconnected");
+      beginTerminalLoginPrompt("username");
       return;
     }
     clearPendingInput();
@@ -1036,6 +1176,7 @@ export const TerminalPane = memo(function TerminalPane({
           eventChannelRef.current = null;
           clearPendingInput();
           resetShellIntegration();
+          clearTemporaryLogin();
           terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
           reportState("error", event.message);
           return;
@@ -1045,6 +1186,7 @@ export const TerminalPane = memo(function TerminalPane({
         eventChannelRef.current = null;
         clearPendingInput();
         resetShellIntegration();
+        clearTemporaryLogin();
         terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
         reportState("disconnected");
       };
@@ -1055,6 +1197,7 @@ export const TerminalPane = memo(function TerminalPane({
         Math.max(1, terminal.rows),
         channel,
         oneTimeCredential,
+        oneTimeUsername,
       );
     };
 
@@ -1089,6 +1232,7 @@ export const TerminalPane = memo(function TerminalPane({
         eventChannelRef.current = null;
         clearPendingInput();
         setHostKeyChange(result.change);
+        clearTemporaryLogin();
         reportState("error", t("sessions.hostKeyChanged"));
         return;
       }
@@ -1096,10 +1240,17 @@ export const TerminalPane = memo(function TerminalPane({
         eventChannelRef.current = null;
         clearPendingInput();
         resetShellIntegration();
-        setCredentialPrompt(result.credentialKind);
-        setCredentialValue("");
-        setRememberCredential(true);
-        setDialogError(null);
+        if (
+          result.credentialKind === "password" &&
+          session.auth.kind === "password"
+        ) {
+          beginTerminalLoginPrompt("password");
+        } else {
+          setCredentialPrompt("privateKeyPassphrase");
+          setCredentialValue("");
+          setRememberCredential(true);
+          setDialogError(null);
+        }
         reportState("disconnected");
         return;
       }
@@ -1109,6 +1260,23 @@ export const TerminalPane = memo(function TerminalPane({
       setDialogError(null);
       flushInput();
       onConnected(runtimeId, result.connection);
+      const temporaryLogin = temporaryLoginRef.current;
+      if (
+        temporaryLogin &&
+        !session.loginSavePrompted &&
+        (temporaryLogin.usedUsername || temporaryLogin.usedPassword)
+      ) {
+        setLoginSavePrompt(
+          temporaryLogin.usedUsername && temporaryLogin.usedPassword
+            ? "both"
+            : temporaryLogin.usedUsername
+              ? "username"
+              : "password",
+        );
+        setLoginSaveError(null);
+      } else {
+        clearTemporaryLogin();
+      }
       startShellIntegration();
       fitAndResize();
     } catch (error) {
@@ -1129,10 +1297,23 @@ export const TerminalPane = memo(function TerminalPane({
                   : "sessions.privateKeyAuthenticationRejected",
               )
             : info.message;
-      if (fromCredentialPrompt) {
+      if (
+        fromCredentialPrompt &&
+        session.auth.kind === "password" &&
+        info.kind === "authenticationRejected"
+      ) {
+        const current = temporaryLoginRef.current;
+        temporaryLoginRef.current = current
+          ? { ...current, password: undefined }
+          : { usedPassword: false, usedUsername: false };
+        terminal.writeln(`\r\n[FsTTY] ${message}`);
+        beginTerminalLoginPrompt("password");
+        reportState("disconnected");
+      } else if (fromCredentialPrompt && session.auth.kind === "privateKey") {
         setDialogError(message);
         reportState("disconnected");
       } else {
+        clearTemporaryLogin();
         reportState("error", message);
       }
     } finally {
@@ -1145,11 +1326,7 @@ export const TerminalPane = memo(function TerminalPane({
       return;
     }
     if (!credentialValue) {
-      setDialogError(
-        credentialPrompt === "password"
-          ? t("sessions.credentialPasswordPrompt")
-          : t("sessions.credentialPassphrasePrompt"),
-      );
+      setDialogError(t("sessions.credentialPassphrasePrompt"));
       return;
     }
     setCredentialSubmitting(true);
@@ -1158,9 +1335,12 @@ export const TerminalPane = memo(function TerminalPane({
       if (rememberCredential) {
         await api.setSessionCredential(session.id, credentialValue);
         await onCredentialSavedRef.current();
-        await connectTerminal(undefined, true);
+        await connectTerminal({ fromCredentialPrompt: true });
       } else {
-        await connectTerminal(credentialValue, true);
+        await connectTerminal({
+          fromCredentialPrompt: true,
+          oneTimeCredential: credentialValue,
+        });
       }
     } catch (error) {
       setDialogError(resolveApiError(error, t("errors.unknown")));
@@ -1173,7 +1353,46 @@ export const TerminalPane = memo(function TerminalPane({
     setCredentialPrompt(null);
     setCredentialValue("");
     setDialogError(null);
+    clearTemporaryLogin();
     reportState("disconnected");
+  }
+
+  async function resolveLoginSavePrompt(save: boolean) {
+    if (!loginSavePrompt || loginSaveSubmitting) {
+      return;
+    }
+    const temporaryLogin = temporaryLoginRef.current;
+    if (save && !temporaryLogin) {
+      setLoginSaveError(t("sessions.loginSaveExpired"));
+      return;
+    }
+    setLoginSaveSubmitting(true);
+    setLoginSaveError(null);
+    try {
+      await api.resolveSessionLoginSavePrompt(
+        session.id,
+        save
+          ? {
+              mode: "save",
+              username: temporaryLogin?.usedUsername
+                ? temporaryLogin.username
+                : undefined,
+              password: temporaryLogin?.usedPassword
+                ? temporaryLogin.password
+                : undefined,
+            }
+          : { mode: "decline" },
+      );
+      await onCredentialSavedRef.current();
+      clearTemporaryLogin();
+      restoreTerminalFocus();
+    } catch (error) {
+      setLoginSaveError(resolveApiError(error, t("errors.unknown")));
+    } finally {
+      if (mountedRef.current) {
+        setLoginSaveSubmitting(false);
+      }
+    }
   }
 
   async function disconnectTerminal() {
@@ -1192,6 +1411,7 @@ export const TerminalPane = memo(function TerminalPane({
       eventChannelRef.current = null;
       clearPendingInput();
       resetShellIntegration();
+      clearTemporaryLogin();
       reportState("disconnected");
     } catch (error) {
       reportState("error", resolveApiError(error, t("errors.unknown")));
@@ -1237,7 +1457,7 @@ export const TerminalPane = memo(function TerminalPane({
           {t(CLIPBOARD_MESSAGE_KEYS[clipboardError])}
         </div>
       ) : null}
-      {connectionState !== "connected" ? (
+      {connectionState !== "connected" && !terminalLoginPrompt ? (
         <div className="terminal-connect-overlay">
           <Link2Off size={28} />
           <strong>{session.name}</strong>
@@ -1277,6 +1497,52 @@ export const TerminalPane = memo(function TerminalPane({
         />
       ) : null}
 
+      {loginSavePrompt ? (
+        <div className="dialog-backdrop terminal-dialog-backdrop">
+          <section aria-modal="true" className="dialog credential-dialog" role="dialog">
+            <header className="dialog-header">
+              <UserRound size={20} />
+              <h2>{t("sessions.loginSaveTitle")}</h2>
+            </header>
+            <div className="credential-dialog-body">
+              <p>
+                {t(
+                  loginSavePrompt === "both"
+                    ? "sessions.loginSaveBothPrompt"
+                    : loginSavePrompt === "username"
+                      ? "sessions.loginSaveUsernamePrompt"
+                      : "sessions.loginSavePasswordPrompt",
+                )}
+              </p>
+              <small>{t("sessions.loginSaveOnceHint")}</small>
+            </div>
+            {loginSaveError ? <div className="form-error">{loginSaveError}</div> : null}
+            <footer className="dialog-actions">
+              <Button
+                disabled={loginSaveSubmitting}
+                onClick={() => void resolveLoginSavePrompt(false)}
+                variant="ghost"
+              >
+                {t("sessions.doNotSave")}
+              </Button>
+              <Button
+                disabled={loginSaveSubmitting}
+                icon={<Save aria-hidden="true" size={16} />}
+                onClick={() => void resolveLoginSavePrompt(true)}
+              >
+                {t(
+                  loginSavePrompt === "both"
+                    ? "sessions.saveUsernameAndPassword"
+                    : loginSavePrompt === "username"
+                      ? "sessions.saveUsername"
+                      : "sessions.savePassword",
+                )}
+              </Button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
       {credentialPrompt ? (
         <div className="dialog-backdrop terminal-dialog-backdrop">
           <section aria-modal="true" className="dialog credential-dialog" role="dialog">
@@ -1286,11 +1552,7 @@ export const TerminalPane = memo(function TerminalPane({
             </header>
             <div className="credential-dialog-body">
               <label>
-                <span>
-                  {credentialPrompt === "password"
-                    ? t("sessions.credentialPasswordPrompt")
-                    : t("sessions.credentialPassphrasePrompt")}
-                </span>
+                <span>{t("sessions.credentialPassphrasePrompt")}</span>
                 <TextInput
                   autoComplete="current-password"
                   autoFocus
@@ -1359,7 +1621,14 @@ export const TerminalPane = memo(function TerminalPane({
             <p>{t("sessions.hostKeyWarning")}</p>
             {dialogError ? <div className="form-error">{dialogError}</div> : null}
             <footer className="dialog-actions">
-              <Button onClick={() => setHostKeyChallenge(null)} variant="ghost">
+              <Button
+                onClick={() => {
+                  setHostKeyChallenge(null);
+                  clearTemporaryLogin();
+                  reportState("disconnected");
+                }}
+                variant="ghost"
+              >
                 {t("sessions.cancel")}
               </Button>
               <Button
