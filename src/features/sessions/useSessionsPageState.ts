@@ -8,6 +8,7 @@ import type {
   UpdateSessionPayload,
 } from "../../shared/api/types";
 import {
+  normalizeCollapsedGroupNames,
   readWorkspacePreferences,
   updateWorkspacePreferences,
 } from "./workspacePreferences";
@@ -67,6 +68,8 @@ export function useSessionsPageState({
   const activeTabIdRef = useRef<string | null>(null);
   const openTabsRef = useRef<SessionTabState[]>([]);
   const favoriteSessionIdsRef = useRef<string[]>([]);
+  const collapsedGroupNamesRef = useRef<string[]>([]);
+  const persistedCollapsedGroupNamesRef = useRef<string[]>([]);
 
   const sessions = useMemo(
     () => groups.flatMap((group) => group.sessions),
@@ -114,6 +117,27 @@ export function useSessionsPageState({
     [],
   );
 
+  const applyCollapsedGroups = useCallback(
+    (groupNames: string[], persist = true) => {
+      const next = normalizeCollapsedGroupNames(groupNames);
+      if (!areStringArraysEqual(collapsedGroupNamesRef.current, next)) {
+        collapsedGroupNamesRef.current = next;
+        setCollapsedGroupNames(next);
+      }
+      if (
+        persist &&
+        !areStringArraysEqual(persistedCollapsedGroupNamesRef.current, next)
+      ) {
+        const saved = updateWorkspacePreferences({
+          collapsedGroupNames: next,
+        }).collapsedGroupNames;
+        persistedCollapsedGroupNamesRef.current = saved;
+      }
+      return next;
+    },
+    [],
+  );
+
   const refreshSessions = useCallback(async () => {
     if (listMutationPendingRef.current) return;
     const nextRequestId = requestId.current + 1;
@@ -137,15 +161,24 @@ export function useSessionsPageState({
         ? favoriteSessionIdsRef.current
         : stored?.favoriteSessionIds ?? [];
       const validFavoriteIds = candidateFavoriteIds.filter((id) => validIds.has(id));
+      const candidateCollapsedGroupNames = initialized.current
+        ? collapsedGroupNamesRef.current
+        : stored?.collapsedGroupNames ?? [];
+      if (!initialized.current) {
+        persistedCollapsedGroupNamesRef.current =
+          stored?.collapsedGroupNames ?? [];
+      }
+      const validGroupNames = new Set(nextGroups.map((group) => group.name));
+      const validCollapsedGroupNames = candidateCollapsedGroupNames.filter(
+        (name) => validGroupNames.has(name),
+      );
       initialized.current = true;
       groupsRef.current = nextGroups;
       setGroups(nextGroups);
       setSelectedSessionId((current) => {
         return current && validIds.has(current) ? current : null;
       });
-      setCollapsedGroupNames((current) =>
-        current.filter((name) => nextGroups.some((group) => group.name === name)),
-      );
+      applyCollapsedGroups(validCollapsedGroupNames);
       applyPreferences(validTabs, candidateActiveTabId, validFavoriteIds);
     } catch (nextError) {
       if (requestId.current === nextRequestId) {
@@ -154,7 +187,7 @@ export function useSessionsPageState({
     } finally {
       if (requestId.current === nextRequestId) setLoading(false);
     }
-  }, [applyPreferences, errorFallback]);
+  }, [applyCollapsedGroups, applyPreferences, errorFallback]);
 
   useEffect(() => {
     void refreshSessions();
@@ -218,13 +251,18 @@ export function useSessionsPageState({
     [applyPreferences, sessions],
   );
 
-  const toggleGroup = useCallback((groupName: string) => {
-    setCollapsedGroupNames((current) =>
-      current.includes(groupName)
-        ? current.filter((name) => name !== groupName)
-        : [...current, groupName],
-    );
-  }, []);
+  const toggleGroup = useCallback(
+    (groupName: string) => {
+      if (!groupsRef.current.some((group) => group.name === groupName)) return;
+      const current = collapsedGroupNamesRef.current;
+      applyCollapsedGroups(
+        current.includes(groupName)
+          ? current.filter((name) => name !== groupName)
+          : [...current, groupName],
+      );
+    },
+    [applyCollapsedGroups],
+  );
 
   const beginListMutation = useCallback(() => {
     if (listMutationPendingRef.current) return false;
@@ -289,6 +327,12 @@ export function useSessionsPageState({
       setGroups(next);
       try {
         await api.reorderSession(sessionId, targetGroupName, targetIndex);
+        const remainingGroupNames = new Set(next.map((group) => group.name));
+        applyCollapsedGroups(
+          collapsedGroupNamesRef.current.filter((name) =>
+            remainingGroupNames.has(name),
+          ),
+        );
         return true;
       } catch (nextError) {
         groupsRef.current = previous;
@@ -299,7 +343,12 @@ export function useSessionsPageState({
         finishListMutation();
       }
     },
-    [beginListMutation, errorFallback, finishListMutation],
+    [
+      applyCollapsedGroups,
+      beginListMutation,
+      errorFallback,
+      finishListMutation,
+    ],
   );
 
   const renameGroup = useCallback(
@@ -312,21 +361,23 @@ export function useSessionsPageState({
       }
       const normalizedName = newName.trim();
       const previous = groupsRef.current;
-      const previousCollapsed = collapsedGroupNames;
+      const previousCollapsed = collapsedGroupNamesRef.current;
+      const nextCollapsed = previousCollapsed.map((name) =>
+        name === groupName ? normalizedName : name,
+      );
       const next = renameGroupInState(previous, groupName, normalizedName);
       groupsRef.current = next;
       setGroups(next);
-      setCollapsedGroupNames((current) =>
-        current.map((name) => (name === groupName ? normalizedName : name)),
-      );
+      applyCollapsedGroups(nextCollapsed, false);
       try {
         await api.renameSessionGroup(groupName, normalizedName);
+        applyCollapsedGroups(nextCollapsed);
         return { ok: true, value: undefined } satisfies SessionListMutationResult;
       } catch (nextError) {
         const message = resolveApiError(nextError, errorFallback);
         groupsRef.current = previous;
         setGroups(previous);
-        setCollapsedGroupNames(previousCollapsed);
+        applyCollapsedGroups(previousCollapsed, false);
         setError(message);
         return { ok: false, error: message } satisfies SessionListMutationResult;
       } finally {
@@ -334,8 +385,8 @@ export function useSessionsPageState({
       }
     },
     [
+      applyCollapsedGroups,
       beginListMutation,
-      collapsedGroupNames,
       errorFallback,
       finishListMutation,
     ],
@@ -357,8 +408,8 @@ export function useSessionsPageState({
         );
         groupsRef.current = nextGroups;
         setGroups(nextGroups);
-        setCollapsedGroupNames((current) =>
-          current.filter((name) => name !== groupName),
+        applyCollapsedGroups(
+          collapsedGroupNamesRef.current.filter((name) => name !== groupName),
         );
         setSelectedSessionId((current) =>
           current && deletedSet.has(current) ? null : current,
@@ -398,6 +449,7 @@ export function useSessionsPageState({
     },
     [
       applyPreferences,
+      applyCollapsedGroups,
       beginListMutation,
       errorFallback,
       finishListMutation,
@@ -461,17 +513,19 @@ export function useSessionsPageState({
       )
         ? nextTabs[firstRemovedIndex]?.id ?? nextTabs[firstRemovedIndex - 1]?.id ?? null
         : activeTabIdRef.current;
-      setGroups((current) =>
-        {
-          const next = current
-          .map((group) => ({
-            ...group,
-            sessions: group.sessions.filter((session) => session.id !== sessionId),
-          }))
-          .filter((group) => group.sessions.length > 0);
-          groupsRef.current = next;
-          return next;
-        },
+      const nextGroups = groupsRef.current
+        .map((group) => ({
+          ...group,
+          sessions: group.sessions.filter((session) => session.id !== sessionId),
+        }))
+        .filter((group) => group.sessions.length > 0);
+      groupsRef.current = nextGroups;
+      setGroups(nextGroups);
+      const remainingGroupNames = new Set(nextGroups.map((group) => group.name));
+      applyCollapsedGroups(
+        collapsedGroupNamesRef.current.filter((name) =>
+          remainingGroupNames.has(name),
+        ),
       );
       setSelectedSessionId((current) => (current === sessionId ? null : current));
       applyPreferences(
@@ -535,5 +589,12 @@ function upsertSessionInGroups(groups: SessionGroup[], session: Session) {
     index === groupIndex
       ? { ...group, sessions: [...group.sessions, session] }
       : group,
+  );
+}
+
+function areStringArraysEqual(left: readonly string[], right: readonly string[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
   );
 }

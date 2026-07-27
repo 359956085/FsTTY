@@ -39,6 +39,7 @@ export interface WorkspacePreferences {
   layout: WorkspaceLayoutPreferences;
   tabs: WorkspaceTabsPreferences;
   favoriteSessionIds: string[];
+  collapsedGroupNames: string[];
   fileColumns: FileColumnPreferences;
 }
 
@@ -46,11 +47,14 @@ export interface WorkspacePreferencesPatch {
   layout?: Partial<WorkspaceLayoutPreferences>;
   tabs?: Partial<WorkspaceTabsPreferences>;
   favoriteSessionIds?: string[];
+  collapsedGroupNames?: string[];
   fileColumns?: Partial<FileColumnPreferences>;
 }
 
 const MAX_STORED_SESSION_IDS = 100;
 const MAX_SESSION_ID_LENGTH = 128;
+const MAX_STORED_GROUP_NAMES = 100;
+const MAX_GROUP_NAME_LENGTH = 128;
 
 function createDefaultPreferences(): WorkspacePreferences {
   return {
@@ -66,6 +70,7 @@ function createDefaultPreferences(): WorkspacePreferences {
       activeTabId: null,
     },
     favoriteSessionIds: [],
+    collapsedGroupNames: [],
     fileColumns: {
       name: FILE_COLUMN_LIMITS.name.defaultValue,
       size: FILE_COLUMN_LIMITS.size.defaultValue,
@@ -109,6 +114,25 @@ function readSessionIds(value: unknown, fallback: string[]) {
   );
 
   return [...new Set(ids)].slice(0, MAX_STORED_SESSION_IDS);
+}
+
+export function normalizeCollapsedGroupNames(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      value.filter(
+        (name): name is string =>
+          typeof name === "string" &&
+          name.length > 0 &&
+          name.length <= MAX_GROUP_NAME_LENGTH &&
+          name.trim() === name &&
+          !hasControlCharacter(name, false),
+      ),
+    ),
+  ].slice(0, MAX_STORED_GROUP_NAMES);
 }
 
 function readTabs(value: unknown) {
@@ -202,6 +226,7 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
       root.favoriteSessionIds,
       defaults.favoriteSessionIds,
     ),
+    collapsedGroupNames: normalizeCollapsedGroupNames(root.collapsedGroupNames),
     fileColumns: {
       name: readBoundedNumber(
         fileColumns.name,
@@ -262,11 +287,13 @@ export function updateWorkspacePreferences(
   patch: WorkspacePreferencesPatch,
 ): WorkspacePreferences {
   const current = readWorkspacePreferences();
-  // 深层合并四个独立区域，防止单项调整覆盖其他工作区偏好。
+  // 深层合并各个独立区域，防止单项调整覆盖其他工作区偏好。
   const next = normalizePreferences({
     layout: { ...current.layout, ...patch.layout },
     tabs: { ...current.tabs, ...patch.tabs },
     favoriteSessionIds: patch.favoriteSessionIds ?? current.favoriteSessionIds,
+    collapsedGroupNames:
+      patch.collapsedGroupNames ?? current.collapsedGroupNames,
     fileColumns: { ...current.fileColumns, ...patch.fileColumns },
   });
 
