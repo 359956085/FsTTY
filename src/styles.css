@@ -1191,6 +1191,11 @@ textarea:focus-visible,
   background: rgba(255, 255, 255, 0.035);
 }
 
+.file-row:not(.file-head):focus-visible {
+  outline: 1px solid rgba(85, 166, 255, 0.86);
+  outline-offset: -1px;
+}
+
 .file-row-movable {
   cursor: grab;
 }
@@ -1244,6 +1249,32 @@ textarea:focus-visible,
 
 .file-row > span:first-child svg.lucide-file-code-2 {
   color: var(--warning);
+}
+
+.file-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-inline-rename {
+  width: 100%;
+  min-width: 0;
+  height: 23px;
+  padding: 1px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  background: #111820;
+  color: var(--text);
+  font: inherit;
+  box-shadow: 0 0 0 2px rgba(45, 139, 246, 0.18);
+}
+
+.file-inline-rename-error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(255, 91, 91, 0.18);
 }
 
 .transfer-bar {

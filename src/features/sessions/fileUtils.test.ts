@@ -8,6 +8,7 @@ import {
   formatModifiedTime,
   formatSize,
   formatTransferSpeed,
+  isSlowRenameClick,
   isRemoteMoveCandidate,
   remoteParentPath,
 } from "./fileUtils";
@@ -49,6 +50,28 @@ describe("远程文件路径", () => {
     expect(canMoveRemoteEntry(folder, "/home/project")).toBe(false);
     expect(canMoveRemoteEntry(folder, "/home/project/build")).toBe(false);
     expect(canMoveRemoteEntry(folder, "/archive")).toBe(true);
+  });
+});
+
+describe("慢双击重命名", () => {
+  it("同一条目两次普通点击且间隔有效时触发", () => {
+    const previous = { path: "/home/file.txt", timeMs: 1000 };
+    expect(
+      isSlowRenameClick(previous, { path: "/home/file.txt", timeMs: 1800 }, 1),
+    ).toBe(true);
+  });
+
+  it("快速双击、不同条目和超时点击不触发", () => {
+    const previous = { path: "/home/file.txt", timeMs: 1000 };
+    expect(
+      isSlowRenameClick(previous, { path: "/home/file.txt", timeMs: 1200 }, 2),
+    ).toBe(false);
+    expect(
+      isSlowRenameClick(previous, { path: "/home/other.txt", timeMs: 1800 }, 1),
+    ).toBe(false);
+    expect(
+      isSlowRenameClick(previous, { path: "/home/file.txt", timeMs: 2600 }, 1),
+    ).toBe(false);
   });
 });
 

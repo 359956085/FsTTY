@@ -1,5 +1,24 @@
 import type { FileEntry } from "../../shared/api/types";
 
+export interface FileNameClick {
+  path: string;
+  timeMs: number;
+}
+
+export function isSlowRenameClick(
+  previous: FileNameClick | null,
+  current: FileNameClick,
+  clickDetail: number,
+  windowMs = 1500,
+) {
+  return (
+    clickDetail === 1 &&
+    previous?.path === current.path &&
+    current.timeMs > previous.timeMs &&
+    current.timeMs - previous.timeMs <= windowMs
+  );
+}
+
 export function isRemoteMoveCandidate(file: FileEntry) {
   return file.kind === "file" || file.kind === "folder";
 }
