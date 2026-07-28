@@ -100,6 +100,25 @@ The Settings page lets you:
 - Configure an empty, `http://`, `https://`, or `socks5://` update proxy.
 - Enable or disable remote clipboard writes through OSC 52.
 
+## MCP Automation
+
+FsTTY can run as an MCP server for agent-driven deployments and production diagnostics. It is disabled by default. Enable the service and authorize session groups under **Settings → MCP**.
+
+- stdio is local-only: `fstty.exe --mcp-stdio`
+- Streamable HTTP is for a LAN or VPN: `http://<FSTTY_HOST_IP>:37653/mcp`
+- Enabling HTTP binds to all IPv4 interfaces (`0.0.0.0`) and requires a Bearer Token stored in Windows Credential Manager.
+- HTTP uses plaintext transport. Use it only on a trusted LAN or VPN, and never expose it to the public internet.
+- `/mcp` targets native MCP clients such as Codex and IDEs and rejects requests containing `Origin`; browser-based MCP clients and CORS are unsupported.
+- Status and remote file reads default to enabled inside an authorized group; commands, edits, and deletion default to disabled.
+- Command execution can bypass file edit and deletion restrictions. Grant it only to trusted agents.
+- Unknown or changed host keys must first be confirmed in the FsTTY UI.
+- stdio `upload_local_file` and `download_remote_file` are restricted to Roots declared by the MCP client and are intended for same-host transfers.
+- HTTP uses `create_remote_file_download_link` and `create_remote_file_upload_link` to issue five-minute transfer links without relying on client Roots.
+- Link tools return a standard MCP `resource_link`, a text URL, and structured data. Automatic saving remains client-defined.
+- Download links support a single byte range for resuming. Upload links provide a same-origin file picker and also accept a raw `PUT` at the encoded file-name path.
+- A transfer link is its own credential and does not require the Bearer Token. Downloads may be retried sequentially while valid. An upload link expires after its first successful upload and never overwrites an existing remote file.
+- MCP audit logs contain only metadata such as tool, session, result, and duration; commands, file contents, and secrets are never logged.
+
 ## Security
 
 - When saving is enabled, passwords, pasted private key content, and private key passphrases are stored in the Windows credential vault, not in the regular session configuration.

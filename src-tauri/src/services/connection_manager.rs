@@ -15,9 +15,11 @@ use russh::keys::{
 };
 use russh::{ChannelMsg, Disconnect, MethodKind};
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::{FilePermissions, FileType as SftpFileType};
+use russh_sftp::protocol::{FilePermissions, FileType as SftpFileType, OpenFlags};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -26,7 +28,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tokio::fs::{File as LocalFile, OpenOptions as TokioOpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::time;
 use uuid::Uuid;
@@ -44,12 +46,29 @@ const MAX_PENDING_TERMINAL_MESSAGES: usize = 256;
 const MAX_TERMINAL_OUTPUT_BATCH_BYTES: usize = 64 * 1024;
 const TERMINAL_OUTPUT_BATCH_DELAY: Duration = Duration::from_millis(4);
 const MAX_EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_MCP_EXEC_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const TRANSFER_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_REMOTE_PATH_BYTES: usize = 4096;
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
+
+fn append_limited(target: &mut Vec<u8>, data: &[u8], limit: usize, truncated: &mut bool) {
+    let remaining = limit.saturating_sub(target.len());
+    let accepted = remaining.min(data.len());
+    target.extend_from_slice(&data[..accepted]);
+    *truncated |= accepted < data.len();
+}
 #[derive(Clone)]
 pub struct ConnectionManager {
     inner: Arc<ConnectionManagerInner>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: Option<u32>,
+    pub truncated: bool,
 }
 
 #[derive(Default)]
@@ -71,7 +90,7 @@ struct ConnectionManagerInner {
 struct ConnectionEntry {
     session_id: String,
     handle: Arc<Mutex<client::Handle<SshClient>>>,
-    terminal_tx: mpsc::Sender<TerminalControl>,
+    terminal_tx: Option<mpsc::Sender<TerminalControl>>,
     browser_sftp: Option<Arc<SftpSession>>,
 }
 
@@ -455,7 +474,7 @@ impl ConnectionManager {
         let entry = Arc::new(ConnectionEntry {
             session_id: session.id.clone(),
             handle,
-            terminal_tx,
+            terminal_tx: Some(terminal_tx),
             browser_sftp: browser_sftp.clone(),
         });
         // 与删除/关键字段更新共用连接门闩，避免取消后旧连接晚到并重新写回。
@@ -506,6 +525,96 @@ impl ConnectionManager {
                 home_path,
                 sftp_available: browser_sftp.is_some(),
             },
+        })
+    }
+
+    /// 为自动化创建无 PTY 连接。未知或变化的主机密钥必须回到界面确认。
+    pub async fn connect_headless(
+        &self,
+        session: StoredSession,
+        credentials: &CredentialService,
+    ) -> Result<SshConnection, AppError> {
+        if session.username.trim().is_empty() {
+            return Err(AppError::Validation("当前会话缺少用户名".to_owned()));
+        }
+        let observation = Arc::new(StdMutex::new(None));
+        let handler = SshClient {
+            host: session.host.clone(),
+            port: session.port,
+            known_hosts_path: self.inner.known_hosts_path.clone(),
+            known_hosts_lock: self.inner.known_hosts_lock.clone(),
+            observation: observation.clone(),
+        };
+        let config = client::Config {
+            keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_max: 3,
+            nodelay: true,
+            ..Default::default()
+        };
+        let mut handle = time::timeout(
+            CONNECT_TIMEOUT,
+            client::connect(
+                Arc::new(config),
+                (session.host.as_str(), session.port),
+                handler,
+            ),
+        )
+        .await
+        .map_err(|_| AppError::Connection("连接服务器超时".to_owned()))?
+        .map_err(|_| {
+            let observed = observation.lock().ok().and_then(|mut value| value.take());
+            match observed {
+                Some(HostObservation::Unknown(_)) => {
+                    AppError::Connection("主机密钥尚未信任，请先在 FsTTY 中确认".to_owned())
+                }
+                Some(HostObservation::Changed { .. }) => {
+                    AppError::Connection("主机密钥已变化，请先在 FsTTY 中确认".to_owned())
+                }
+                _ => AppError::Connection("无法建立 SSH 连接".to_owned()),
+            }
+        })?;
+        match authenticate(&mut handle, &session, credentials, None).await? {
+            AuthenticationOutcome::Authenticated => {}
+            AuthenticationOutcome::CredentialRequired(_) => {
+                return Err(AppError::Authentication(
+                    "缺少已保存凭据，MCP 不允许交互输入".to_owned(),
+                ));
+            }
+        }
+        let browser_sftp = open_sftp_with_handle(&mut handle).await.ok().map(Arc::new);
+        let home_path = match &browser_sftp {
+            Some(sftp) => time::timeout(SFTP_TIMEOUT, sftp.canonicalize("."))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(|path| normalize_remote_path(&path).ok())
+                .unwrap_or_else(|| "/".to_owned()),
+            None => "/".to_owned(),
+        };
+        let connection_id = Uuid::new_v4().to_string();
+        let entry = Arc::new(ConnectionEntry {
+            session_id: session.id.clone(),
+            handle: Arc::new(Mutex::new(handle)),
+            terminal_tx: None,
+            browser_sftp: browser_sftp.clone(),
+        });
+        self.inner
+            .connections
+            .write()
+            .await
+            .insert(connection_id.clone(), entry);
+        self.inner
+            .session_connections
+            .write()
+            .await
+            .entry(session.id.clone())
+            .or_default()
+            .insert(connection_id.clone());
+        Ok(SshConnection {
+            connection_id,
+            session_id: session.id,
+            home_path,
+            sftp_available: browser_sftp.is_some(),
         })
     }
 
@@ -599,6 +708,8 @@ impl ConnectionManager {
         let entry = self.entry(connection_id).await?;
         entry
             .terminal_tx
+            .as_ref()
+            .ok_or_else(|| AppError::Connection("当前连接没有终端".to_owned()))?
             .send(TerminalControl::Data(data.into_bytes()))
             .await
             .map_err(|_| AppError::Connection("终端连接已关闭".to_owned()))
@@ -614,6 +725,8 @@ impl ConnectionManager {
         let entry = self.entry(connection_id).await?;
         entry
             .terminal_tx
+            .as_ref()
+            .ok_or_else(|| AppError::Connection("当前连接没有终端".to_owned()))?
             .send(TerminalControl::Resize { columns, rows })
             .await
             .map_err(|_| AppError::Connection("终端连接已关闭".to_owned()))
@@ -625,7 +738,9 @@ impl ConnectionManager {
             return Ok(());
         };
         self.cancel_connection_transfers(connection_id).await;
-        let _ = entry.terminal_tx.send(TerminalControl::Close).await;
+        if let Some(terminal_tx) = &entry.terminal_tx {
+            let _ = terminal_tx.send(TerminalControl::Close).await;
+        }
         let handle = entry.handle.lock().await;
         let _ = handle
             .disconnect(Disconnect::ByApplication, "", "zh-CN")
@@ -832,6 +947,322 @@ impl ConnectionManager {
             }
         }
         Ok(())
+    }
+
+    pub async fn read_remote_file(
+        &self,
+        connection_id: &str,
+        path: &str,
+        offset: u64,
+        limit: usize,
+    ) -> Result<Vec<u8>, AppError> {
+        let path = normalize_remote_path(path)?;
+        if limit == 0 || limit > 1024 * 1024 {
+            return Err(AppError::Validation("远程文件读取大小无效".to_owned()));
+        }
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let mut file = sftp
+            .open(path)
+            .await
+            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|_| AppError::Sftp("无法定位远程文件".to_owned()))?;
+        let mut content = vec![0_u8; limit];
+        let read = file
+            .read(&mut content)
+            .await
+            .map_err(|_| AppError::Sftp("无法读取远程文件".to_owned()))?;
+        content.truncate(read);
+        Ok(content)
+    }
+
+    pub async fn write_remote_file_atomic(
+        &self,
+        connection_id: &str,
+        path: &str,
+        content: &[u8],
+    ) -> Result<(), AppError> {
+        let path = normalize_remote_path(path)?;
+        let parent = remote_parent_path(&path);
+        let temp =
+            checked_join_remote_path(&parent, &format!(".fstty-mcp-{}.part", Uuid::new_v4()))?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        if sftp
+            .try_exists(path.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法检查远程目标".to_owned()))?
+        {
+            return Err(AppError::Conflict("远程文件已存在".to_owned()));
+        }
+        let mut file = sftp
+            .create(temp.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法创建远程临时文件".to_owned()))?;
+        if file.write_all(content).await.is_err() || file.shutdown().await.is_err() {
+            let _ = sftp.remove_file(temp).await;
+            return Err(AppError::Sftp("写入远程文件失败".to_owned()));
+        }
+        if sftp.rename(temp.clone(), path).await.is_err() {
+            let _ = sftp.remove_file(temp).await;
+            return Err(AppError::Sftp("提交远程文件失败".to_owned()));
+        }
+        Ok(())
+    }
+
+    pub async fn upload_file_quiet(
+        &self,
+        connection_id: &str,
+        local_path: &Path,
+        remote_path: &str,
+    ) -> Result<u64, AppError> {
+        let remote_path = normalize_remote_path(remote_path)?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        if sftp.try_exists(remote_path.clone()).await.unwrap_or(false) {
+            return Err(AppError::Conflict("远程文件已存在".to_owned()));
+        }
+        let mut source = LocalFile::open(local_path)
+            .await
+            .map_err(|_| AppError::Validation("无法打开本地文件".to_owned()))?;
+        let mut target = sftp
+            .create(remote_path)
+            .await
+            .map_err(|_| AppError::Sftp("无法创建远程文件".to_owned()))?;
+        tokio::io::copy(&mut source, &mut target)
+            .await
+            .map_err(|_| AppError::Sftp("上传文件失败".to_owned()))
+    }
+
+    pub async fn download_file_quiet(
+        &self,
+        connection_id: &str,
+        remote_path: &str,
+        local_path: &Path,
+    ) -> Result<u64, AppError> {
+        let remote_path = normalize_remote_path(remote_path)?;
+        if local_path.exists() {
+            return Err(AppError::Conflict("本地文件已存在".to_owned()));
+        }
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let mut source = sftp
+            .open(remote_path)
+            .await
+            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        let mut target = LocalFile::create(local_path)
+            .await
+            .map_err(|_| AppError::Validation("无法创建本地文件".to_owned()))?;
+        tokio::io::copy(&mut source, &mut target)
+            .await
+            .map_err(|_| AppError::Sftp("下载文件失败".to_owned()))
+    }
+
+    pub(crate) async fn remote_file_info(
+        &self,
+        connection_id: &str,
+        remote_path: &str,
+    ) -> Result<(String, u64), AppError> {
+        let remote_path = normalize_remote_path(remote_path)?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let metadata = time::timeout(SFTP_TIMEOUT, sftp.symlink_metadata(remote_path.clone()))
+            .await
+            .map_err(|_| AppError::Sftp("读取远程文件信息超时".to_owned()))?
+            .map_err(|_| AppError::Sftp("无法读取远程文件信息".to_owned()))?;
+        if !metadata.file_type().is_file() {
+            return Err(AppError::Validation("只能下载普通文件".to_owned()));
+        }
+        Ok((remote_path, metadata.len()))
+    }
+
+    pub(crate) async fn remote_directory_path(
+        &self,
+        connection_id: &str,
+        remote_directory: &str,
+    ) -> Result<String, AppError> {
+        let remote_directory = normalize_remote_path(remote_directory)?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let metadata = time::timeout(SFTP_TIMEOUT, sftp.metadata(remote_directory.clone()))
+            .await
+            .map_err(|_| AppError::Sftp("读取远程目录信息超时".to_owned()))?
+            .map_err(|_| AppError::Sftp("无法读取远程目录信息".to_owned()))?;
+        if !metadata.file_type().is_dir() {
+            return Err(AppError::Validation("远程目标不是目录".to_owned()));
+        }
+        Ok(remote_directory)
+    }
+
+    pub(crate) async fn stream_remote_file<W>(
+        &self,
+        connection_id: &str,
+        remote_path: &str,
+        byte_range: (u64, u64),
+        destination: &mut W,
+        cancellation: &tokio_util::sync::CancellationToken,
+        idle_timeout: Duration,
+    ) -> Result<u64, AppError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let (offset, length) = byte_range;
+        let remote_path = normalize_remote_path(remote_path)?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let mut source = time::timeout(SFTP_TIMEOUT, sftp.open(remote_path))
+            .await
+            .map_err(|_| AppError::Sftp("打开远程文件超时".to_owned()))?
+            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        if offset > 0 {
+            time::timeout(idle_timeout, source.seek(SeekFrom::Start(offset)))
+                .await
+                .map_err(|_| AppError::Sftp("定位远程文件超时".to_owned()))?
+                .map_err(|_| AppError::Sftp("无法定位远程文件".to_owned()))?;
+        }
+
+        let mut buffer = vec![0_u8; TRANSFER_BUFFER_BYTES];
+        let mut transferred = 0_u64;
+        while transferred < length {
+            let remaining = length - transferred;
+            let read_limit = usize::try_from(remaining)
+                .unwrap_or(usize::MAX)
+                .min(buffer.len());
+            let read = tokio::select! {
+                _ = cancellation.cancelled() => {
+                    return Err(AppError::Connection("文件传输已取消".to_owned()));
+                }
+                result = time::timeout(idle_timeout, source.read(&mut buffer[..read_limit])) => {
+                    result
+                        .map_err(|_| AppError::Sftp("下载远程文件超时".to_owned()))?
+                        .map_err(|_| AppError::Sftp("读取远程文件失败".to_owned()))?
+                }
+            };
+            if read == 0 {
+                return Err(AppError::Sftp("远程文件在下载期间发生变化".to_owned()));
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    return Err(AppError::Connection("文件传输已取消".to_owned()));
+                }
+                result = time::timeout(idle_timeout, destination.write_all(&buffer[..read])) => {
+                    result
+                        .map_err(|_| AppError::Connection("发送下载数据超时".to_owned()))?
+                        .map_err(|_| AppError::Connection("下载客户端已断开".to_owned()))?;
+                }
+            }
+            transferred += read as u64;
+        }
+        time::timeout(idle_timeout, destination.flush())
+            .await
+            .map_err(|_| AppError::Connection("刷新下载数据超时".to_owned()))?
+            .map_err(|_| AppError::Connection("无法发送下载数据".to_owned()))?;
+        Ok(transferred)
+    }
+
+    pub(crate) async fn upload_remote_stream_exclusive<R>(
+        &self,
+        connection_id: &str,
+        remote_directory: &str,
+        file_name: &str,
+        source: &mut R,
+        cancellation: &tokio_util::sync::CancellationToken,
+        idle_timeout: Duration,
+    ) -> Result<(String, u64), AppError>
+    where
+        R: AsyncRead + Unpin,
+    {
+        validate_remote_name(file_name)?;
+        let remote_directory = normalize_remote_path(remote_directory)?;
+        let target = checked_join_remote_path(&remote_directory, file_name)?;
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let directory_metadata =
+            time::timeout(SFTP_TIMEOUT, sftp.metadata(remote_directory.clone()))
+                .await
+                .map_err(|_| AppError::Sftp("读取远程目录信息超时".to_owned()))?
+                .map_err(|_| AppError::Sftp("无法读取远程目录信息".to_owned()))?;
+        if !directory_metadata.file_type().is_dir() {
+            return Err(AppError::Validation("远程目标不是目录".to_owned()));
+        }
+        if time::timeout(SFTP_TIMEOUT, sftp.try_exists(target.clone()))
+            .await
+            .map_err(|_| AppError::Sftp("检查远程目标超时".to_owned()))?
+            .map_err(|_| AppError::Sftp("无法检查远程目标".to_owned()))?
+        {
+            return Err(AppError::Conflict("远程文件已存在".to_owned()));
+        }
+
+        // 排他创建是标准 SFTP 下唯一可移植的“绝不覆盖”保证；代价是上传中目标可见。
+        let destination = time::timeout(
+            SFTP_TIMEOUT,
+            sftp.open_with_flags(
+                target.clone(),
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            ),
+        )
+        .await
+        .map_err(|_| AppError::Sftp("创建远程文件超时".to_owned()))?;
+        let mut destination = match destination {
+            Ok(destination) => destination,
+            Err(_) => {
+                if sftp.try_exists(target.clone()).await.unwrap_or(false) {
+                    return Err(AppError::Conflict("远程文件已存在".to_owned()));
+                }
+                return Err(AppError::Sftp("无法创建远程文件".to_owned()));
+            }
+        };
+
+        let transfer = async {
+            let mut buffer = vec![0_u8; TRANSFER_BUFFER_BYTES];
+            let mut transferred = 0_u64;
+            loop {
+                let read = tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        return Err(AppError::Connection("文件传输已取消".to_owned()));
+                    }
+                    result = time::timeout(idle_timeout, source.read(&mut buffer)) => {
+                        result
+                            .map_err(|_| AppError::Connection("接收上传数据超时".to_owned()))?
+                            .map_err(|_| AppError::Connection("上传客户端已断开".to_owned()))?
+                    }
+                };
+                if read == 0 {
+                    break;
+                }
+                tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        return Err(AppError::Connection("文件传输已取消".to_owned()));
+                    }
+                    result = time::timeout(idle_timeout, destination.write_all(&buffer[..read])) => {
+                        result
+                            .map_err(|_| AppError::Sftp("写入远程文件超时".to_owned()))?
+                            .map_err(|_| AppError::Sftp("上传文件失败".to_owned()))?;
+                    }
+                }
+                transferred = transferred
+                    .checked_add(read as u64)
+                    .ok_or_else(|| AppError::Validation("上传文件过大".to_owned()))?;
+            }
+            time::timeout(idle_timeout, destination.shutdown())
+                .await
+                .map_err(|_| AppError::Sftp("提交远程文件超时".to_owned()))?
+                .map_err(|_| AppError::Sftp("提交远程文件失败".to_owned()))?;
+            Ok(transferred)
+        }
+        .await;
+
+        match transfer {
+            Ok(transferred) => Ok((target, transferred)),
+            Err(error) => {
+                let _ = time::timeout(SFTP_TIMEOUT, destination.shutdown()).await;
+                drop(destination);
+                let _ = time::timeout(SFTP_TIMEOUT, sftp.remove_file(target)).await;
+                Err(error)
+            }
+        }
     }
 
     pub async fn upload_file(
@@ -1133,6 +1564,60 @@ impl ConnectionManager {
         time::timeout(EXEC_TIMEOUT, collect)
             .await
             .map_err(|_| AppError::Connection("设备信息命令超时".to_owned()))?
+    }
+
+    pub async fn exec_command(
+        &self,
+        connection_id: &str,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<CommandOutput, AppError> {
+        let entry = self.entry(connection_id).await?;
+        let mut channel = {
+            let handle = entry.handle.lock().await;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|_| AppError::Connection("无法创建命令通道".to_owned()))?
+        };
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|_| AppError::Connection("无法执行远程命令".to_owned()))?;
+        let collect = async {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut exit_code = None;
+            let mut truncated = false;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => append_limited(
+                        &mut stdout,
+                        data.as_ref(),
+                        MAX_MCP_EXEC_OUTPUT_BYTES,
+                        &mut truncated,
+                    ),
+                    ChannelMsg::ExtendedData { data, .. } => append_limited(
+                        &mut stderr,
+                        data.as_ref(),
+                        MAX_MCP_EXEC_OUTPUT_BYTES.saturating_sub(stdout.len()),
+                        &mut truncated,
+                    ),
+                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
+                    ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            Ok(CommandOutput {
+                stdout,
+                stderr,
+                exit_code,
+                truncated,
+            })
+        };
+        time::timeout(timeout, collect)
+            .await
+            .map_err(|_| AppError::Connection("远程命令执行超时".to_owned()))?
     }
 
     pub async fn session_id(&self, connection_id: &str) -> Result<String, AppError> {

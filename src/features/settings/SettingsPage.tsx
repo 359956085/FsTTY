@@ -1,9 +1,16 @@
-import { RefreshCw } from "lucide-react";
+import { Copy, RefreshCw } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
-import type { AppSettings, Language } from "../../shared/api/types";
+import type {
+  AppSettings,
+  Language,
+  McpGroupPermission,
+  McpHttpStatus,
+  SessionGroup,
+} from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
@@ -22,8 +29,102 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [savingLanguage, setSavingLanguage] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
+  const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const [mcpPermissions, setMcpPermissions] = useState(settings.mcpGroupPermissions);
+  const [mcpPort, setMcpPort] = useState(String(settings.mcpHttpPort));
+  const [mcpHttpStatus, setMcpHttpStatus] = useState<McpHttpStatus | null>(null);
+  const [savingMcp, setSavingMcp] = useState(false);
+  const [mcpError, setMcpError] = useState<string | null>(null);
+  const [mcpSaveSucceeded, setMcpSaveSucceeded] = useState(false);
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
+  useEffect(() => setMcpPermissions(settings.mcpGroupPermissions), [settings.mcpGroupPermissions]);
+  useEffect(() => setMcpPort(String(settings.mcpHttpPort)), [settings.mcpHttpPort]);
+  useEffect(() => {
+    void api.listSessions().then(setGroups).catch(() => setGroups([]));
+    void api.getMcpHttpStatus().then(setMcpHttpStatus).catch(() => setMcpHttpStatus(null));
+  }, []);
+
+  function permissionFor(groupName: string): McpGroupPermission {
+    return (
+      mcpPermissions.find((permission) => permission.groupName === groupName) ?? {
+        groupName,
+        enabled: false,
+        sessionRead: true,
+        fileRead: true,
+        commandExecute: false,
+        fileWrite: false,
+        fileDelete: false,
+      }
+    );
+  }
+
+  function updatePermission(groupName: string, patch: Partial<McpGroupPermission>) {
+    const next = { ...permissionFor(groupName), ...patch };
+    setMcpError(null);
+    setMcpSaveSucceeded(false);
+    setMcpPermissions((current) => [
+      ...current.filter((permission) => permission.groupName !== groupName),
+      next,
+    ]);
+  }
+
+  async function saveMcpSettings(
+    enabled = settings.mcpEnabled,
+    httpEnabled = settings.mcpHttpEnabled,
+  ) {
+    setSavingMcp(true);
+    setMcpError(null);
+    setMcpSaveSucceeded(false);
+    try {
+      const parsedPort = Number(mcpPort);
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+        setMcpError(t("settings.mcpInvalidPort"));
+        return;
+      }
+      const next = await api.updateMcpSettings(
+        enabled,
+        httpEnabled,
+        parsedPort,
+        mcpPermissions,
+      );
+      setMcpPermissions(next.mcpGroupPermissions);
+      setMcpPort(String(next.mcpHttpPort));
+      onChange(next);
+      setMcpHttpStatus(await api.getMcpHttpStatus().catch(() => null));
+      setMcpSaveSucceeded(true);
+    } catch (nextError) {
+      setMcpError(resolveApiError(nextError, t("settings.mcpSaveFailed")));
+    } finally {
+      setSavingMcp(false);
+    }
+  }
+
+  async function copyMcpConfig(transport: "http" | "stdio") {
+    setMcpError(null);
+    try {
+      const config =
+        transport === "http"
+          ? await api.getMcpHttpClientConfig()
+          : await api.getMcpStdioClientConfig();
+      await writeText(config);
+    } catch (nextError) {
+      setMcpError(resolveApiError(nextError, t("errors.unknown")));
+    }
+  }
+
+  async function rotateMcpToken() {
+    setSavingMcp(true);
+    setMcpError(null);
+    try {
+      await api.rotateMcpHttpToken();
+      setMcpHttpStatus(await api.getMcpHttpStatus());
+    } catch (nextError) {
+      setMcpError(resolveApiError(nextError, t("errors.unknown")));
+    } finally {
+      setSavingMcp(false);
+    }
+  }
 
   async function handleLanguageChange(language: Language) {
     if (savingLanguage) {
@@ -161,6 +262,143 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
               role="switch"
               type="checkbox"
             />
+          </div>
+        </section>
+
+        <section aria-labelledby="mcp-settings-title" className="settings-panel settings-mcp-panel">
+          <header className="settings-panel-header">
+            <h2 id="mcp-settings-title">{t("settings.mcpTitle")}</h2>
+          </header>
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="mcp-enabled">
+                {t("settings.mcpEnabled")}
+              </label>
+              <small>{t("settings.mcpEnabledHint")}</small>
+            </div>
+            <input
+              checked={settings.mcpEnabled}
+              className="settings-auto-update-toggle"
+              disabled={savingMcp}
+              id="mcp-enabled"
+              onChange={(event) => void saveMcpSettings(event.target.checked)}
+              role="switch"
+              type="checkbox"
+            />
+          </div>
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="mcp-http-enabled">
+                {t("settings.mcpHttp")}
+              </label>
+              <small>
+                {mcpHttpStatus?.running
+                  ? t("settings.mcpRunning", { address: mcpHttpStatus.address })
+                  : t("settings.mcpStopped")}
+              </small>
+            </div>
+            <input
+              checked={settings.mcpHttpEnabled}
+              className="settings-auto-update-toggle"
+              disabled={savingMcp || !settings.mcpEnabled}
+              id="mcp-http-enabled"
+              onChange={(event) =>
+                void saveMcpSettings(settings.mcpEnabled, event.target.checked)
+              }
+              role="switch"
+              type="checkbox"
+            />
+          </div>
+          <div className="settings-row settings-proxy-row">
+            <div className="settings-row-copy">
+              <label className="settings-row-label" htmlFor="mcp-http-port">
+                {t("settings.mcpHttpPort")}
+              </label>
+              <small>{`http://<FSTTY_HOST_IP>:${mcpPort || "37653"}/mcp`}</small>
+            </div>
+            <TextInput
+              disabled={savingMcp}
+              id="mcp-http-port"
+              inputMode="numeric"
+              onChange={(event) => {
+                setMcpPort(event.target.value);
+                setMcpError(null);
+                setMcpSaveSucceeded(false);
+              }}
+              value={mcpPort}
+            />
+          </div>
+          <div className="settings-mcp-warning">{t("settings.mcpHttpWarning")}</div>
+          <div className="settings-mcp-warning">{t("settings.mcpCommandWarning")}</div>
+          <div className="settings-mcp-grid">
+            <span>{t("settings.mcpGroup")}</span>
+            <span>{t("settings.mcpAccess")}</span>
+            <span>{t("settings.mcpSessionRead")}</span>
+            <span>{t("settings.mcpFileRead")}</span>
+            <span>{t("settings.mcpCommand")}</span>
+            <span>{t("settings.mcpFileWrite")}</span>
+            <span>{t("settings.mcpDelete")}</span>
+            {groups.flatMap((group) => {
+              const permission = permissionFor(group.name);
+              const fields: (keyof McpGroupPermission)[] = [
+                "enabled",
+                "sessionRead",
+                "fileRead",
+                "commandExecute",
+                "fileWrite",
+                "fileDelete",
+              ];
+              return [
+                <strong key={`${group.name}-name`}>{group.name}</strong>,
+                ...fields.map((field) => (
+                  <input
+                    aria-label={`${group.name} ${String(field)}`}
+                    checked={Boolean(permission[field])}
+                    disabled={savingMcp}
+                    key={`${group.name}-${String(field)}`}
+                    onChange={(event) =>
+                      updatePermission(group.name, { [field]: event.target.checked })
+                    }
+                    type="checkbox"
+                  />
+                )),
+              ];
+            })}
+          </div>
+          {mcpError ? (
+            <div className="form-error settings-mcp-feedback" role="alert">
+              {mcpError}
+            </div>
+          ) : mcpSaveSucceeded ? (
+            <div className="form-success settings-mcp-feedback" role="status">
+              {t("settings.mcpSaved")}
+            </div>
+          ) : null}
+          <div className="settings-mcp-actions">
+            <Button
+              icon={<Copy aria-hidden="true" size={16} />}
+              onClick={() => void copyMcpConfig("stdio")}
+              variant="ghost"
+            >
+              {t("settings.mcpCopyStdioConfig")}
+            </Button>
+            <Button
+              icon={<Copy aria-hidden="true" size={16} />}
+              onClick={() => void copyMcpConfig("http")}
+              variant="ghost"
+            >
+              {t("settings.mcpCopyHttpConfig")}
+            </Button>
+            <Button
+              icon={<RefreshCw aria-hidden="true" size={16} />}
+              onClick={() => void rotateMcpToken()}
+              variant="ghost"
+            >
+              {t("settings.mcpRotateToken")}
+            </Button>
+            <Button disabled={savingMcp} onClick={() => void saveMcpSettings()}>
+              {t("settings.mcpSave")}
+            </Button>
           </div>
         </section>
 

@@ -7,6 +7,25 @@ export interface AppSettings {
   updateProxy: string;
   allowRemoteClipboardWrite: boolean;
   ignoredUpdateVersion: string | null;
+  mcpEnabled: boolean;
+  mcpHttpEnabled: boolean;
+  mcpHttpPort: number;
+  mcpGroupPermissions: McpGroupPermission[];
+}
+
+export interface McpGroupPermission {
+  groupName: string;
+  enabled: boolean;
+  sessionRead: boolean;
+  fileRead: boolean;
+  commandExecute: boolean;
+  fileWrite: boolean;
+  fileDelete: boolean;
+}
+
+export interface McpHttpStatus {
+  running: boolean;
+  address: string;
 }
 
 export interface SessionGroup {

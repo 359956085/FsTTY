@@ -23,6 +23,10 @@ export function App() {
     updateProxy: "",
     allowRemoteClipboardWrite: true,
     ignoredUpdateVersion: null,
+    mcpEnabled: false,
+    mcpHttpEnabled: false,
+    mcpHttpPort: 37653,
+    mcpGroupPermissions: [],
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);

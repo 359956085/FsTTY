@@ -9,20 +9,26 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
+- 新增本地 MCP 服务，支持 stdio 与带令牌的 Streamable HTTP；可按会话分组授权状态读取、文件读取、命令、编辑和删除能力。
 - 更新弹窗支持忽略当前版本；自动检查不再提示已忽略版本，手动检查仍可查看并安装。
 - 会话列表支持拖动调整分组和会话顺序、跨组移动会话，并可重命名或整组删除分组。
 - 远程文件和文件夹支持慢双击行内重命名，并修复拖动捕获导致点击无法识别的问题。
 - 会话分组的展开和收起状态会在应用重启后恢复。
+- 修复 MCP 分组权限保存失败，并避免仅修改权限时重启本地 HTTP 服务。
+- MCP HTTP 新增 5 分钟有效的上传、下载链接，支持浏览器选择文件、原始 PUT、单区间断点续传和严格不覆盖上传。
 
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
 
+- Added a local MCP server with stdio and token-protected Streamable HTTP transports, plus per-group permissions for status reads, file reads, commands, edits, and deletion.
 - The update dialog can now ignore the current version. Automatic checks suppress ignored versions, while manual checks can still show and install them.
 - The session list now supports drag-and-drop group and session ordering, moving sessions between groups, and renaming or deleting entire groups.
 - Remote files and folders can now be renamed inline with a slow double-click, including when pointer capture is active for dragging.
 - Session group expanded and collapsed states are now restored after restarting the app.
+- Fixed MCP group permissions failing to persist and avoided restarting the local HTTP server for permission-only changes.
+- MCP HTTP now provides five-minute upload and download links with a browser file picker, raw PUT uploads, single-range resume support, and strict no-overwrite uploads.
 
 <!-- release-notes:en-US:end -->
 

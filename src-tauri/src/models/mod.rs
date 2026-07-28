@@ -19,4 +19,4 @@ pub use session::{
     PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,
     SessionProfile, StoredSession, UpdateSessionPayload,
 };
-pub use settings::{AppSettings, Language};
+pub use settings::{AppSettings, Language, McpGroupPermission};

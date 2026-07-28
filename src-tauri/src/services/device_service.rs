@@ -33,6 +33,7 @@ cat /proc/net/route 2>/dev/null
 printf '%s\n' '__FSTTY_NETWORK__'
 cat /proc/net/dev 2>/dev/null"#;
 
+#[derive(Clone, Copy)]
 pub struct DeviceService;
 
 impl DeviceService {

@@ -8,6 +8,8 @@ import type {
   FileEntry,
   Language,
   LoginSaveDecision,
+  McpGroupPermission,
+  McpHttpStatus,
   Session,
   SessionGroup,
   TerminalEvent,
@@ -155,5 +157,30 @@ export const api = {
       updateProxy,
       allowRemoteClipboardWrite,
     });
+  },
+  updateMcpSettings(
+    enabled: boolean,
+    httpEnabled: boolean,
+    httpPort: number,
+    groupPermissions: McpGroupPermission[],
+  ) {
+    return invoke<AppSettings>("update_mcp_settings", {
+      enabled,
+      httpEnabled,
+      httpPort,
+      groupPermissions,
+    });
+  },
+  getMcpHttpClientConfig() {
+    return invoke<string>("get_mcp_http_client_config");
+  },
+  getMcpStdioClientConfig() {
+    return invoke<string>("get_mcp_stdio_client_config");
+  },
+  getMcpHttpStatus() {
+    return invoke<McpHttpStatus>("get_mcp_http_status");
+  },
+  rotateMcpHttpToken() {
+    return invoke<void>("rotate_mcp_http_token");
   },
 };

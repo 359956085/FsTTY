@@ -1781,6 +1781,47 @@ textarea:focus-visible,
   margin: 14px 0 20px;
 }
 
+.settings-mcp-warning {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-mcp-grid {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) repeat(6, minmax(58px, auto));
+  align-items: center;
+  gap: 8px 12px;
+  overflow-x: auto;
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-mcp-grid strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings-mcp-grid input {
+  justify-self: center;
+}
+
+.settings-mcp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.settings-mcp-feedback {
+  margin: 10px 0 0;
+}
+
 .dialog-backdrop.update-dialog-backdrop {
   z-index: 140;
 }

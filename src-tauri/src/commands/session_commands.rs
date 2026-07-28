@@ -107,7 +107,21 @@ pub async fn rename_session_group(
         .session_service
         .lock()
         .await
-        .rename_group(&group_name, &new_name)
+        .rename_group(&group_name, &new_name)?;
+    let settings_result = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .rename_mcp_group(&group_name, &new_name);
+    if let Err(error) = settings_result {
+        let _ = state
+            .session_service
+            .lock()
+            .await
+            .rename_group(&new_name, &group_name);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -122,18 +136,41 @@ pub async fn delete_session_group(
             .await
             .session_ids_in_group(&group_name)?
     };
+    let previous_settings = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .get();
+    state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .delete_mcp_group(&group_name)?;
     for session_id in &session_ids {
         state
             .connection_manager
             .disconnect_session(session_id)
             .await;
     }
-    state
+    let result = state
         .session_service
         .lock()
         .await
         .delete_group(&group_name, &state.credential_service)
-        .await
+        .await;
+    if result.is_err() {
+        let _ = state
+            .settings_service
+            .lock()
+            .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+            .update_mcp(
+                previous_settings.mcp_enabled,
+                previous_settings.mcp_http_enabled,
+                previous_settings.mcp_http_port,
+                previous_settings.mcp_group_permissions,
+            );
+    }
+    result
 }
 
 #[tauri::command]

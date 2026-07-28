@@ -100,6 +100,25 @@ NSIS 安装包支持简体中文和英文，并自动跟随 Windows 显示语言
 - 配置空值、`http://`、`https://` 或 `socks5://` 更新代理。
 - 开启或关闭远程程序通过 OSC 52 写入 Windows 剪贴板。
 
+## MCP 自动化
+
+FsTTY 可作为 MCP 服务，供 Agent 执行日常部署和生产排障。功能默认关闭，需在“设置 → MCP”中启用服务并授权会话分组。
+
+- stdio 仅供本机使用：`fstty.exe --mcp-stdio`
+- Streamable HTTP 用于局域网或 VPN：`http://<FSTTY_HOST_IP>:37653/mcp`
+- 开启 HTTP 后监听所有 IPv4 网络接口（`0.0.0.0`），并使用保存在 Windows 凭据库中的 Bearer Token。
+- HTTP 使用明文传输，仅应在可信局域网或 VPN 中使用，禁止暴露公网。
+- `/mcp` 面向 Codex、IDE 等原生 MCP 客户端，并拒绝带 `Origin` 的请求；不支持浏览器 MCP 客户端或 CORS。
+- 分组内状态读取和文件读取默认开启；命令、编辑、删除默认关闭。
+- 命令权限可绕过文件编辑和删除限制，仅应授权给可信 Agent。
+- 未知或变化的主机密钥必须先在 FsTTY 界面确认。
+- stdio 的 `upload_local_file`、`download_remote_file` 仅访问 MCP 客户端声明的 Roots，适合同机传输。
+- HTTP 使用 `create_remote_file_download_link`、`create_remote_file_upload_link` 签发 5 分钟有效的传输链接，不依赖客户端 Roots。
+- 链接工具同时返回标准 MCP `resource_link`、文本 URL 和结构化数据；是否自动保存由 MCP 客户端决定。
+- 下载链接支持单区间断点续传；上传链接可直接打开同源文件选择页，也可向文件名路径发送原始 `PUT`。
+- 传输链接本身即凭据，不再要求 Bearer Token。下载可在有效期内顺序重试；上传首次成功后立即失效，且绝不覆盖已有远程文件。
+- MCP 审计只记录工具、会话、结果和耗时等元数据，不记录命令、文件内容或秘密。
+
 ## 安全说明
 
 - 选择保存后，密码、粘贴私钥正文和私钥口令存入 Windows 系统凭据库，不写入普通会话配置。

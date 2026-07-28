@@ -1,4 +1,4 @@
-use crate::models::{AppError, AppSettings, Language};
+use crate::models::{AppError, AppSettings, Language, McpGroupPermission};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -86,6 +86,50 @@ impl SettingsService {
         self.replace(next)
     }
 
+    pub fn update_mcp(
+        &mut self,
+        enabled: bool,
+        http_enabled: bool,
+        http_port: u16,
+        group_permissions: Vec<McpGroupPermission>,
+    ) -> Result<AppSettings, AppError> {
+        if http_port == 0 {
+            return Err(AppError::Validation("MCP HTTP 端口无效".to_owned()));
+        }
+        let group_permissions = validate_mcp_permissions(group_permissions)?;
+        let mut next = self.settings.clone();
+        next.mcp_enabled = enabled;
+        next.mcp_http_enabled = http_enabled;
+        next.mcp_http_port = http_port;
+        next.mcp_group_permissions = group_permissions;
+        self.replace(next)
+    }
+
+    pub fn rename_mcp_group(&mut self, old_name: &str, new_name: &str) -> Result<(), AppError> {
+        let mut next = self.settings.clone();
+        if let Some(permission) = next
+            .mcp_group_permissions
+            .iter_mut()
+            .find(|permission| permission.group_name == old_name)
+        {
+            permission.group_name = new_name.to_owned();
+            next.mcp_group_permissions = validate_mcp_permissions(next.mcp_group_permissions)?;
+            self.replace(next)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_mcp_group(&mut self, group_name: &str) -> Result<(), AppError> {
+        let mut next = self.settings.clone();
+        let original_len = next.mcp_group_permissions.len();
+        next.mcp_group_permissions
+            .retain(|permission| permission.group_name != group_name);
+        if next.mcp_group_permissions.len() != original_len {
+            self.replace(next)?;
+        }
+        Ok(())
+    }
+
     pub fn set_ignored_update_version(&mut self, version: String) -> Result<AppSettings, AppError> {
         validate_release_version(&version)?;
         let mut next = self.settings.clone();
@@ -153,7 +197,37 @@ fn default_settings() -> AppSettings {
         update_proxy: String::new(),
         allow_remote_clipboard_write: true,
         ignored_update_version: None,
+        mcp_enabled: false,
+        mcp_http_enabled: false,
+        mcp_http_port: 37_653,
+        mcp_group_permissions: Vec::new(),
     }
+}
+
+fn validate_mcp_permissions(
+    permissions: Vec<McpGroupPermission>,
+) -> Result<Vec<McpGroupPermission>, AppError> {
+    if permissions.len() > 100 {
+        return Err(AppError::Validation("MCP 分组权限数量过多".to_owned()));
+    }
+    let mut result = Vec::with_capacity(permissions.len());
+    for permission in permissions {
+        let name = permission.group_name.trim();
+        if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
+            return Err(AppError::Validation("MCP 分组名称无效".to_owned()));
+        }
+        if result
+            .iter()
+            .any(|current: &McpGroupPermission| current.group_name == name)
+        {
+            return Err(AppError::Validation("MCP 分组权限重复".to_owned()));
+        }
+        result.push(McpGroupPermission {
+            group_name: name.to_owned(),
+            ..permission
+        });
+    }
+    Ok(result)
 }
 
 fn validate_release_version(version: &str) -> Result<(), AppError> {
@@ -237,6 +311,31 @@ mod tests {
         assert_eq!(restored.update_proxy, "http://127.0.0.1:7890");
         assert!(!restored.allow_remote_clipboard_write);
         assert_eq!(restored.ignored_update_version.as_deref(), Some("0.5.0"));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn persists_mcp_group_permissions() {
+        let directory = test_directory("settings-mcp-permissions");
+        let mut service = SettingsService::load(&directory);
+        let permission = McpGroupPermission {
+            group_name: "生产".to_owned(),
+            enabled: true,
+            session_read: true,
+            file_read: true,
+            command_execute: false,
+            file_write: false,
+            file_delete: false,
+        };
+
+        service
+            .update_mcp(true, true, 37_653, vec![permission.clone()])
+            .expect("保存 MCP 设置失败");
+
+        let restored = SettingsService::load(&directory).get();
+        assert!(restored.mcp_enabled);
+        assert!(restored.mcp_http_enabled);
+        assert_eq!(restored.mcp_group_permissions, vec![permission]);
         let _ = fs::remove_dir_all(directory);
     }
 
