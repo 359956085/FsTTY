@@ -962,6 +962,8 @@ const UPLOAD_PAGE: &str = r#"<!doctype html>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::McpGroupPermission;
+    use crate::services::SettingsService;
     use std::path::PathBuf;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -976,6 +978,59 @@ mod tests {
 
     fn token_from_url(url: &str) -> String {
         url.rsplit('/').next().expect("链接应包含票据").to_owned()
+    }
+
+    fn permission_runtime() -> (McpTransferRuntime, SettingsService, PathBuf, String) {
+        let directory =
+            std::env::temp_dir().join(format!("fstty-mcp-transfer-auth-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let session_id = Uuid::new_v4().to_string();
+        let sessions = json!({
+            "version": 1,
+            "sessions": [{
+                "id": session_id,
+                "name": "测试会话",
+                "host": "127.0.0.1",
+                "port": 22,
+                "username": "ubuntu",
+                "group": "生产",
+                "tags": [],
+                "auth": {
+                    "kind": "password"
+                },
+                "loginSavePrompted": false
+            }],
+            "pendingCredentialCleanupIds": []
+        });
+        std::fs::write(
+            directory.join("sessions.v1.json"),
+            serde_json::to_vec_pretty(&sessions).expect("无法序列化测试会话"),
+        )
+        .expect("无法写入测试会话");
+        let mut settings = SettingsService::load(&directory);
+        settings
+            .update_mcp(
+                true,
+                true,
+                37_653,
+                vec![McpGroupPermission {
+                    group_name: "生产".to_owned(),
+                    enabled: true,
+                    session_read: true,
+                    file_read: true,
+                    command_execute: false,
+                    file_write: true,
+                    file_delete: false,
+                }],
+            )
+            .expect("无法保存初始传输权限");
+        let state = AppState::new(directory.clone());
+        (
+            McpTransferRuntime::new(state, 37_653, CancellationToken::new()),
+            settings,
+            directory,
+            session_id,
+        )
     }
 
     #[test]
@@ -1103,6 +1158,65 @@ mod tests {
             StatusCode::NOT_FOUND
         );
 
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn 下载和上传请求热加载撤销后的权限() {
+        let (runtime, mut settings, directory, session_id) = permission_runtime();
+        let download = runtime
+            .issue_download(
+                "http://127.0.0.1:37653",
+                session_id.clone(),
+                "/tmp/report.txt".to_owned(),
+                "report.txt".to_owned(),
+            )
+            .await
+            .expect("无法签发下载票据");
+        let upload = runtime
+            .issue_upload("http://127.0.0.1:37653", session_id, "/tmp".to_owned())
+            .await
+            .expect("无法签发上传票据");
+        settings
+            .update_mcp(
+                true,
+                true,
+                37_653,
+                vec![McpGroupPermission {
+                    group_name: "生产".to_owned(),
+                    enabled: true,
+                    session_read: true,
+                    file_read: false,
+                    command_execute: false,
+                    file_write: false,
+                    file_delete: false,
+                }],
+            )
+            .expect("无法撤销传输权限");
+
+        let download_token = token_from_url(&download.url);
+        let head = head_download_file(
+            State(runtime.clone()),
+            Path(download_token.clone()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(head.status(), StatusCode::FORBIDDEN);
+        let get = download_file(
+            State(runtime.clone()),
+            Path(download_token),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(get.status(), StatusCode::FORBIDDEN);
+
+        let put = upload_file(
+            State(runtime),
+            Path((token_from_url(&upload.url), "report.txt".to_owned())),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::FORBIDDEN);
         let _ = std::fs::remove_dir_all(directory);
     }
 

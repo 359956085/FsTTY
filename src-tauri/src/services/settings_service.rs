@@ -66,6 +66,17 @@ impl SettingsService {
         self.settings.clone()
     }
 
+    pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
+        // MCP 独立进程需要同步语言和权限；主文件异常时必须失败关闭，不能回退旧授权。
+        let store = read_store(&self.store_path)?
+            .ok_or_else(|| AppError::Persistence("MCP 权限设置文件不存在".to_owned()))?;
+        let permissions = validate_mcp_permissions(store.settings.mcp_group_permissions)
+            .map_err(|_| AppError::Persistence("MCP 分组权限数据无效".to_owned()))?;
+        self.settings.language = store.settings.language;
+        self.settings.mcp_group_permissions = permissions;
+        Ok(())
+    }
+
     pub fn set_language(&mut self, language: Language) -> Result<AppSettings, AppError> {
         let mut next = self.settings.clone();
         next.language = language;
@@ -291,6 +302,18 @@ mod tests {
         directory
     }
 
+    fn mcp_permission(command_execute: bool) -> McpGroupPermission {
+        McpGroupPermission {
+            group_name: "生产".to_owned(),
+            enabled: true,
+            session_read: true,
+            file_read: true,
+            command_execute,
+            file_write: false,
+            file_delete: false,
+        }
+    }
+
     #[test]
     fn uses_defaults_and_restores_persisted_settings() {
         let directory = test_directory("settings-persist");
@@ -318,15 +341,7 @@ mod tests {
     fn persists_mcp_group_permissions() {
         let directory = test_directory("settings-mcp-permissions");
         let mut service = SettingsService::load(&directory);
-        let permission = McpGroupPermission {
-            group_name: "生产".to_owned(),
-            enabled: true,
-            session_read: true,
-            file_read: true,
-            command_execute: false,
-            file_write: false,
-            file_delete: false,
-        };
+        let permission = mcp_permission(false);
 
         service
             .update_mcp(true, true, 37_653, vec![permission.clone()])
@@ -336,6 +351,118 @@ mod tests {
         assert!(restored.mcp_enabled);
         assert!(restored.mcp_http_enabled);
         assert_eq!(restored.mcp_group_permissions, vec![permission]);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 热加载跨设置实例授予和撤销权限() {
+        let directory = test_directory("settings-mcp-hot-reload");
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(false)])
+            .expect("保存初始 MCP 权限失败");
+        let mut reader = SettingsService::load(&directory);
+
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(true)])
+            .expect("授予命令权限失败");
+        reader
+            .reload_mcp_runtime_settings()
+            .expect("热加载授权失败");
+        assert!(reader.get().mcp_group_permissions[0].command_execute);
+
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(false)])
+            .expect("撤销命令权限失败");
+        reader
+            .reload_mcp_runtime_settings()
+            .expect("热加载撤权失败");
+        assert!(!reader.get().mcp_group_permissions[0].command_execute);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 热加载只替换分组权限和语言() {
+        let directory = test_directory("settings-mcp-hot-reload-scope");
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(false)])
+            .expect("保存初始 MCP 权限失败");
+        let mut reader = SettingsService::load(&directory);
+        reader.settings.language = Language::EnUs;
+        reader.settings.mcp_enabled = false;
+        reader.settings.mcp_http_enabled = false;
+        reader.settings.mcp_http_port = 40_000;
+        reader.settings.update_proxy = "socks5://127.0.0.1:7890".to_owned();
+
+        writer
+            .update_mcp(true, true, 45_678, vec![mcp_permission(true)])
+            .expect("保存新 MCP 权限失败");
+        reader
+            .reload_mcp_runtime_settings()
+            .expect("热加载权限失败");
+        let settings = reader.get();
+        assert!(settings.mcp_group_permissions[0].command_execute);
+        assert_eq!(settings.language, Language::ZhCn);
+        assert!(!settings.mcp_enabled);
+        assert!(!settings.mcp_http_enabled);
+        assert_eq!(settings.mcp_http_port, 40_000);
+        assert_eq!(settings.update_proxy, "socks5://127.0.0.1:7890");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 热加载异常时不回退备份或旧授权() {
+        let directory = test_directory("settings-mcp-hot-reload-fail-closed");
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(true)])
+            .expect("保存初始 MCP 权限失败");
+        let mut reader = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, true, 37_653, vec![mcp_permission(false)])
+            .expect("保存撤权设置失败");
+        reader
+            .reload_mcp_runtime_settings()
+            .expect("热加载撤权失败");
+
+        fs::remove_file(directory.join(STORE_FILE)).expect("无法移除主设置文件");
+        assert!(reader.reload_mcp_runtime_settings().is_err());
+        assert!(!reader.get().mcp_group_permissions[0].command_execute);
+
+        fs::write(directory.join(STORE_FILE), b"damaged").expect("无法写入损坏设置");
+        assert!(reader.reload_mcp_runtime_settings().is_err());
+        assert!(!reader.get().mcp_group_permissions[0].command_execute);
+
+        let mut invalid_settings = writer.get();
+        invalid_settings.mcp_group_permissions = vec![mcp_permission(true), mcp_permission(false)];
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec_pretty(&SettingsStore {
+                version: STORE_VERSION,
+                settings: invalid_settings,
+            })
+            .expect("无法序列化重复权限"),
+        )
+        .expect("无法写入重复权限");
+        assert!(reader.reload_mcp_runtime_settings().is_err());
+        assert!(!reader.get().mcp_group_permissions[0].command_execute);
+
+        let mut invalid_name = mcp_permission(true);
+        invalid_name.group_name = "\n".to_owned();
+        let mut invalid_settings = writer.get();
+        invalid_settings.mcp_group_permissions = vec![invalid_name];
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec_pretty(&SettingsStore {
+                version: STORE_VERSION,
+                settings: invalid_settings,
+            })
+            .expect("无法序列化非法分组"),
+        )
+        .expect("无法写入非法分组");
+        assert!(reader.reload_mcp_runtime_settings().is_err());
+        assert!(!reader.get().mcp_group_permissions[0].command_execute);
         let _ = fs::remove_dir_all(directory);
     }
 

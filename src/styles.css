@@ -1600,9 +1600,10 @@ textarea:focus-visible,
 }
 
 .settings-page {
+  display: grid;
   height: 100%;
-  padding: 72px 48px 40px;
-  overflow: auto;
+  grid-template-columns: 200px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sr-only {
@@ -1618,9 +1619,63 @@ textarea:focus-visible,
 
 .settings-content {
   display: grid;
-  width: min(768px, 100%);
-  margin: 0 auto;
+  align-content: start;
+  min-width: 0;
+  overflow: auto;
+  padding: 56px max(32px, calc((100% - 820px) / 2)) 40px;
   gap: 24px;
+}
+
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 38px 12px;
+  border-right: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.settings-sidebar-item {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings-sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.settings-sidebar-item[aria-current="page"] {
+  border-color: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+}
+
+.settings-sidebar-item:focus-visible {
+  outline: 2px solid rgba(72, 159, 247, 0.75);
+  outline-offset: 1px;
+}
+
+.settings-section-heading {
+  min-height: 42px;
+}
+
+.settings-section-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.35;
 }
 
 .settings-panel {
@@ -1638,7 +1693,8 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--border);
 }
 
-.settings-panel-header h2 {
+.settings-panel-header h2,
+.settings-panel-header h3 {
   margin: 0;
   font-size: 16px;
   line-height: 1.3;
@@ -1791,6 +1847,26 @@ textarea:focus-visible,
   line-height: 1.5;
 }
 
+.settings-mcp-last-row {
+  border-bottom: 0;
+}
+
+.settings-mcp-risk-hint {
+  color: color-mix(in srgb, var(--danger) 72%, var(--muted));
+}
+
+.settings-mcp-icon-action {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+}
+
+.settings-mcp-port-input {
+  width: 92px;
+  height: 32px;
+  padding: 0 10px;
+}
+
 .settings-mcp-grid {
   display: grid;
   grid-template-columns: minmax(110px, 1fr) repeat(6, minmax(58px, auto));
@@ -1807,19 +1883,165 @@ textarea:focus-visible,
   font-weight: 500;
 }
 
+.settings-mcp-permission-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.settings-mcp-permission-info {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: default;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.settings-mcp-permission-info:hover {
+  color: var(--accent);
+  background: rgba(72, 159, 247, 0.12);
+}
+
+.settings-mcp-permission-info:focus-visible {
+  outline: 2px solid rgba(72, 159, 247, 0.75);
+  outline-offset: 1px;
+  color: var(--accent);
+}
+
+.settings-mcp-permission-tooltip {
+  position: fixed;
+  z-index: 210;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--panel-3);
+  color: var(--text);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .settings-mcp-grid input {
   justify-self: center;
 }
 
-.settings-mcp-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 10px;
+.settings-mcp-permissions-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-mcp-permissions-header .button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .settings-mcp-feedback {
   margin: 10px 0 0;
+}
+
+.settings-mcp-panel > .settings-mcp-feedback {
+  margin-bottom: 12px;
+}
+
+.settings-mcp-permission-feedback {
+  min-height: 45px;
+  padding: 10px 0 12px;
+}
+
+.settings-mcp-permission-feedback .settings-mcp-feedback {
+  margin: 0;
+}
+
+.settings-mcp-config-backdrop {
+  z-index: 180;
+}
+
+.dialog.settings-mcp-config-dialog {
+  width: min(720px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  border-color: rgba(190, 196, 202, 0.25);
+  background: rgba(28, 30, 32, 0.99);
+}
+
+.settings-mcp-config-dialog .dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-mcp-config-dialog .dialog-header .icon-button {
+  width: 30px;
+  height: 30px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.settings-mcp-config-body {
+  display: grid;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  padding: 18px 20px;
+  gap: 14px;
+}
+
+.settings-mcp-config-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-mcp-config-field .form-select {
+  width: min(320px, 100%);
+}
+
+.settings-mcp-config-field .form-select-trigger {
+  width: 100%;
+}
+
+.settings-mcp-config-preview {
+  min-height: 190px;
+  max-height: 330px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #d8dde2;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-mcp-config-secret-hint {
+  color: #d7ad78;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-mcp-config-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .dialog-backdrop.update-dialog-backdrop {
@@ -1957,7 +2179,25 @@ textarea:focus-visible,
 
 @media (max-width: 760px) {
   .settings-page {
-    padding: 36px 24px;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-sidebar {
+    flex-direction: row;
+    padding: 10px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-sidebar-item {
+    width: auto;
+    min-width: 104px;
+    justify-content: center;
+  }
+
+  .settings-content {
+    padding: 32px 24px;
   }
 
   .settings-panel {
@@ -1978,6 +2218,10 @@ textarea:focus-visible,
 
   .settings-update-control {
     justify-content: space-between;
+  }
+
+  .settings-mcp-port-input {
+    width: 100%;
   }
 }
 

@@ -110,10 +110,13 @@ FsTTY 可作为 MCP 服务，供 Agent 执行日常部署和生产排障。功�
 - HTTP 使用明文传输，仅应在可信局域网或 VPN 中使用，禁止暴露公网。
 - `/mcp` 面向 Codex、IDE 等原生 MCP 客户端，并拒绝带 `Origin` 的请求；不支持浏览器 MCP 客户端或 CORS。
 - 分组内状态读取和文件读取默认开启；命令、编辑、删除默认关闭。
+- Agent 可调用 `get_permission_guide`，按 FsTTY 当前界面语言获取目标工具所需权限和“设置 → MCP”操作步骤；该工具不会枚举未授权分组或修改权限。
+- stdio 与 HTTP 的分组权限保存后对下一次请求立即生效，无需重连；已开始的命令或传输继续完成。权限设置无法读取或校验失败时，后续请求会被拒绝。
 - 命令权限可绕过文件编辑和删除限制，仅应授权给可信 Agent。
 - 未知或变化的主机密钥必须先在 FsTTY 界面确认。
 - stdio 的 `upload_local_file`、`download_remote_file` 仅访问 MCP 客户端声明的 Roots，适合同机传输。
 - HTTP 使用 `create_remote_file_download_link`、`create_remote_file_upload_link` 签发 5 分钟有效的传输链接，不依赖客户端 Roots。
+- `search_remote_file` 可在不完整读取大文件的情况下按关键词扫描远程日志；前后上下文各支持 `0–50` 行，单次最多扫描 `16 MiB`，响应严格限制为 `8 MiB`，截断后可从 `nextOffset` 继续。
 - 链接工具同时返回标准 MCP `resource_link`、文本 URL 和结构化数据；是否自动保存由 MCP 客户端决定。
 - 下载链接支持单区间断点续传；上传链接可直接打开同源文件选择页，也可向文件名路径发送原始 `PUT`。
 - 传输链接本身即凭据，不再要求 Bearer Token。下载可在有效期内顺序重试；上传首次成功后立即失效，且绝不覆盖已有远程文件。

@@ -8,6 +8,7 @@ import type {
   FileEntry,
   Language,
   LoginSaveDecision,
+  McpClientTarget,
   McpGroupPermission,
   McpHttpStatus,
   Session,
@@ -171,11 +172,11 @@ export const api = {
       groupPermissions,
     });
   },
-  getMcpHttpClientConfig() {
-    return invoke<string>("get_mcp_http_client_config");
+  getMcpHttpClientConfig(clientTarget: McpClientTarget) {
+    return invoke<string>("get_mcp_http_client_config", { clientTarget });
   },
-  getMcpStdioClientConfig() {
-    return invoke<string>("get_mcp_stdio_client_config");
+  getMcpStdioClientConfig(clientTarget: McpClientTarget) {
+    return invoke<string>("get_mcp_stdio_client_config", { clientTarget });
   },
   getMcpHttpStatus() {
     return invoke<McpHttpStatus>("get_mcp_http_status");

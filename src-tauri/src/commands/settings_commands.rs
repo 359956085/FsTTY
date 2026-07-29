@@ -1,9 +1,22 @@
 use crate::models::{AppError, AppSettings, Language, McpGroupPermission};
 use crate::services::AppState;
+use serde::Serialize;
+use std::path::Path;
 use tauri::State;
 
 const MCP_HTTP_CLIENT_HOST_PLACEHOLDER: &str = "<FSTTY_HOST_IP>";
 const MCP_HTTP_LISTEN_HOST: &str = "0.0.0.0";
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpClientTarget {
+    GenericJson,
+    Codex,
+    Claude,
+    Cursor,
+    VsCode,
+    GeminiCli,
+}
 
 #[tauri::command]
 pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError> {
@@ -125,26 +138,67 @@ pub async fn update_mcp_settings(
 }
 
 #[tauri::command]
-pub async fn get_mcp_http_client_config(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn get_mcp_http_client_config(
+    state: State<'_, AppState>,
+    client_target: McpClientTarget,
+) -> Result<String, AppError> {
     let settings = state
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
         .get();
     let token = crate::mcp::get_or_create_http_token(&state).await?;
-    build_mcp_http_client_config(settings.mcp_http_port, token.as_str())
+    build_mcp_http_client_config(settings.mcp_http_port, token.as_str(), client_target)
 }
 
-fn build_mcp_http_client_config(http_port: u16, token: &str) -> Result<String, AppError> {
-    serde_json::to_string_pretty(&serde_json::json!({
-        "mcpServers": {
-            "fstty": {
-                "url": format!("http://{MCP_HTTP_CLIENT_HOST_PLACEHOLDER}:{http_port}/mcp"),
-                "headers": { "Authorization": format!("Bearer {token}") }
+fn build_mcp_http_client_config(
+    http_port: u16,
+    token: &str,
+    client_target: McpClientTarget,
+) -> Result<String, AppError> {
+    let url = format!("http://{MCP_HTTP_CLIENT_HOST_PLACEHOLDER}:{http_port}/mcp");
+    let authorization = format!("Bearer {token}");
+    match client_target {
+        McpClientTarget::Codex => Ok(format!(
+            "[mcp_servers.fstty]\nurl = {}\nhttp_headers = {{ Authorization = {} }}",
+            toml_string(&url),
+            toml_string(&authorization)
+        )),
+        McpClientTarget::VsCode => pretty_json(&serde_json::json!({
+            "servers": {
+                "fstty": {
+                    "type": "http",
+                    "url": url,
+                    "headers": { "Authorization": authorization }
+                }
             }
-        }
-    }))
-    .map_err(|_| AppError::Internal("无法生成 MCP 客户端配置".to_owned()))
+        })),
+        McpClientTarget::GeminiCli => pretty_json(&serde_json::json!({
+            "mcpServers": {
+                "fstty": {
+                    "httpUrl": url,
+                    "headers": { "Authorization": authorization }
+                }
+            }
+        })),
+        McpClientTarget::Claude => pretty_json(&serde_json::json!({
+            "mcpServers": {
+                "fstty": {
+                    "type": "http",
+                    "url": url,
+                    "headers": { "Authorization": authorization }
+                }
+            }
+        })),
+        McpClientTarget::GenericJson | McpClientTarget::Cursor => pretty_json(&serde_json::json!({
+            "mcpServers": {
+                "fstty": {
+                    "url": url,
+                    "headers": { "Authorization": authorization }
+                }
+            }
+        })),
+    }
 }
 
 fn mcp_http_listen_address(http_port: u16) -> String {
@@ -152,18 +206,69 @@ fn mcp_http_listen_address(http_port: u16) -> String {
 }
 
 #[tauri::command]
-pub fn get_mcp_stdio_client_config() -> Result<String, AppError> {
+pub fn get_mcp_stdio_client_config(client_target: McpClientTarget) -> Result<String, AppError> {
     let executable = std::env::current_exe()
         .map_err(|_| AppError::Internal("无法获取 FsTTY 程序路径".to_owned()))?;
-    serde_json::to_string_pretty(&serde_json::json!({
-        "mcpServers": {
-            "fstty": {
-                "command": executable,
-                "args": ["--mcp-stdio"]
+    build_mcp_stdio_client_config(&executable, client_target)
+}
+
+fn build_mcp_stdio_client_config(
+    executable: &Path,
+    client_target: McpClientTarget,
+) -> Result<String, AppError> {
+    let command = executable.to_string_lossy();
+    match client_target {
+        McpClientTarget::Codex => Ok(format!(
+            "[mcp_servers.fstty]\ncommand = {}\nargs = [\"--mcp-stdio\"]",
+            toml_string(command.as_ref())
+        )),
+        McpClientTarget::VsCode => pretty_json(&serde_json::json!({
+            "servers": {
+                "fstty": {
+                    "type": "stdio",
+                    "command": command,
+                    "args": ["--mcp-stdio"]
+                }
             }
+        })),
+        McpClientTarget::GenericJson
+        | McpClientTarget::Claude
+        | McpClientTarget::Cursor
+        | McpClientTarget::GeminiCli => pretty_json(&serde_json::json!({
+            "mcpServers": {
+                "fstty": {
+                    "command": command,
+                    "args": ["--mcp-stdio"]
+                }
+            }
+        })),
+    }
+}
+
+fn pretty_json(value: &impl Serialize) -> Result<String, AppError> {
+    serde_json::to_string_pretty(value)
+        .map_err(|_| AppError::Internal("无法生成 MCP 客户端配置".to_owned()))
+}
+
+fn toml_string(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() + 2);
+    encoded.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '"' => encoded.push_str("\\\""),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write;
+                let _ = write!(encoded, "\\u{:04X}", character as u32);
+            }
+            character => encoded.push(character),
         }
-    }))
-    .map_err(|_| AppError::Internal("无法生成 MCP stdio 配置".to_owned()))
+    }
+    encoded.push('"');
+    encoded
 }
 
 #[derive(serde::Serialize)]
@@ -226,7 +331,8 @@ mod tests {
 
     #[test]
     fn http_client_config_uses_host_placeholder_and_token() {
-        let config = build_mcp_http_client_config(37_653, "secret").unwrap();
+        let config =
+            build_mcp_http_client_config(37_653, "secret", McpClientTarget::GenericJson).unwrap();
         let value: serde_json::Value = serde_json::from_str(&config).unwrap();
 
         assert_eq!(
@@ -237,6 +343,30 @@ mod tests {
             value["mcpServers"]["fstty"]["headers"]["Authorization"],
             "Bearer secret"
         );
+    }
+
+    #[test]
+    fn client_configs_follow_agent_specific_shapes() {
+        let executable = Path::new(r"C:\Program Files\FsTTY\fstty.exe");
+        let vscode = build_mcp_stdio_client_config(executable, McpClientTarget::VsCode).unwrap();
+        let vscode: serde_json::Value = serde_json::from_str(&vscode).unwrap();
+        assert_eq!(vscode["servers"]["fstty"]["type"], "stdio");
+
+        let gemini =
+            build_mcp_http_client_config(37_653, "secret", McpClientTarget::GeminiCli).unwrap();
+        let gemini: serde_json::Value = serde_json::from_str(&gemini).unwrap();
+        assert_eq!(
+            gemini["mcpServers"]["fstty"]["httpUrl"],
+            "http://<FSTTY_HOST_IP>:37653/mcp"
+        );
+
+        let codex = build_mcp_stdio_client_config(executable, McpClientTarget::Codex).unwrap();
+        assert!(codex.contains("[mcp_servers.fstty]"));
+        assert!(codex.contains(r#"command = "C:\\Program Files\\FsTTY\\fstty.exe""#));
+
+        let codex_http =
+            build_mcp_http_client_config(37_653, "secret", McpClientTarget::Codex).unwrap();
+        assert!(codex_http.contains("http_headers = { Authorization = \"Bearer secret\" }"));
     }
 
     #[test]

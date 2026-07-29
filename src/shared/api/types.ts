@@ -28,6 +28,14 @@ export interface McpHttpStatus {
   address: string;
 }
 
+export type McpClientTarget =
+  | "genericJson"
+  | "codex"
+  | "claude"
+  | "cursor"
+  | "vsCode"
+  | "geminiCli";
+
 export interface SessionGroup {
   name: string;
   sessions: Session[];

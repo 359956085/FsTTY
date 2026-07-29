@@ -41,6 +41,7 @@ const SFTP_TIMEOUT: Duration = Duration::from_secs(10);
 const EXEC_TIMEOUT: Duration = Duration::from_secs(10);
 const HOST_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 const MAX_TERMINAL_INPUT_BYTES: usize = 64 * 1024;
+const MAX_REMOTE_SEARCH_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PENDING_TERMINAL_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_TERMINAL_MESSAGES: usize = 256;
 const MAX_TERMINAL_OUTPUT_BATCH_BYTES: usize = 64 * 1024;
@@ -75,6 +76,14 @@ pub struct CommandOutput {
 pub struct OneTimeLogin {
     pub credential: Option<Zeroizing<String>>,
     pub username: Option<String>,
+}
+
+pub(crate) struct RemoteFileWindow {
+    pub(crate) content: Vec<u8>,
+    pub(crate) offset: u64,
+    pub(crate) file_size: u64,
+    pub(crate) starts_at_line_boundary: bool,
+    pub(crate) end_of_file: bool,
 }
 
 struct ConnectionManagerInner {
@@ -976,6 +985,78 @@ impl ConnectionManager {
             .map_err(|_| AppError::Sftp("无法读取远程文件".to_owned()))?;
         content.truncate(read);
         Ok(content)
+    }
+
+    pub(crate) async fn read_remote_file_window(
+        &self,
+        connection_id: &str,
+        path: &str,
+        offset: u64,
+        tail: bool,
+        limit: usize,
+    ) -> Result<RemoteFileWindow, AppError> {
+        let path = normalize_remote_path(path)?;
+        if limit == 0 || limit > MAX_REMOTE_SEARCH_BYTES {
+            return Err(AppError::Validation(
+                "远程文件扫描大小必须在 1 字节到 16 MiB 之间".to_owned(),
+            ));
+        }
+        if tail && offset != 0 {
+            return Err(AppError::Validation(
+                "尾部扫描不能同时指定起始偏移".to_owned(),
+            ));
+        }
+        let entry = self.entry(connection_id).await?;
+        let sftp = open_sftp(&entry).await?;
+        let metadata = sftp
+            .metadata(path.clone())
+            .await
+            .map_err(|_| AppError::Sftp("无法读取远程文件信息".to_owned()))?;
+        if !metadata.file_type().is_file() {
+            return Err(AppError::Validation("远程目标不是普通文件".to_owned()));
+        }
+        let file_size = metadata.len();
+        let start = if tail {
+            file_size.saturating_sub(limit as u64)
+        } else {
+            offset.min(file_size)
+        };
+        let prefix_length = usize::from(start > 0);
+        let available = file_size.saturating_sub(start) as usize;
+        let content_length = available.min(limit);
+        let seek_offset = start.saturating_sub(prefix_length as u64);
+        let read_length = content_length.saturating_add(prefix_length);
+
+        let mut file = sftp
+            .open(path)
+            .await
+            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        file.seek(SeekFrom::Start(seek_offset))
+            .await
+            .map_err(|_| AppError::Sftp("无法定位远程文件".to_owned()))?;
+        let mut content = Vec::with_capacity(read_length);
+        file.take(read_length as u64)
+            .read_to_end(&mut content)
+            .await
+            .map_err(|_| AppError::Sftp("无法扫描远程文件".to_owned()))?;
+
+        let starts_at_line_boundary = if prefix_length == 0 {
+            true
+        } else {
+            let boundary = content.first().copied() == Some(b'\n');
+            if !content.is_empty() {
+                content.remove(0);
+            }
+            boundary
+        };
+        let end_of_file = start.saturating_add(content.len() as u64) >= file_size;
+        Ok(RemoteFileWindow {
+            content,
+            offset: start,
+            file_size,
+            starts_at_line_boundary,
+            end_of_file,
+        })
     }
 
     pub async fn write_remote_file_atomic(

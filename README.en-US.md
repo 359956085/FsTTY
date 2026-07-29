@@ -110,10 +110,13 @@ FsTTY can run as an MCP server for agent-driven deployments and production diagn
 - HTTP uses plaintext transport. Use it only on a trusted LAN or VPN, and never expose it to the public internet.
 - `/mcp` targets native MCP clients such as Codex and IDEs and rejects requests containing `Origin`; browser-based MCP clients and CORS are unsupported.
 - Status and remote file reads default to enabled inside an authorized group; commands, edits, and deletion default to disabled.
+- Agents can call `get_permission_guide` for the permissions required by a target tool and the **Settings → MCP** steps in the current FsTTY UI language. The tool neither lists unauthorized groups nor changes permissions.
+- Saved group permissions apply to the next stdio and HTTP request without reconnecting. Commands or transfers already in progress continue, while unreadable or invalid permission settings cause subsequent requests to be denied.
 - Command execution can bypass file edit and deletion restrictions. Grant it only to trusted agents.
 - Unknown or changed host keys must first be confirmed in the FsTTY UI.
 - stdio `upload_local_file` and `download_remote_file` are restricted to Roots declared by the MCP client and are intended for same-host transfers.
 - HTTP uses `create_remote_file_download_link` and `create_remote_file_upload_link` to issue five-minute transfer links without relying on client Roots.
+- `search_remote_file` scans large remote logs by keyword without reading the entire file. It supports `0–50` context lines on each side, scans up to `16 MiB` per call, strictly limits responses to `8 MiB`, and can continue from `nextOffset` after truncation.
 - Link tools return a standard MCP `resource_link`, a text URL, and structured data. Automatic saving remains client-defined.
 - Download links support a single byte range for resuming. Upload links provide a same-origin file picker and also accept a raw `PUT` at the encoded file-name path.
 - A transfer link is its own credential and does not require the Bearer Token. Downloads may be retried sequentially while valid. An upload link expires after its first successful upload and never overwrites an existing remote file.
