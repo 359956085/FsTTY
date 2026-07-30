@@ -136,7 +136,6 @@ export const TerminalPane = memo(function TerminalPane({
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
   const connectionAttemptGuardRef = useRef(createTerminalConnectionAttemptGuard());
-  const connectingRef = useRef(false);
   const consumedDirectoryRequestRef = useRef(0);
   const lastReportedDirectoryRef = useRef<string | null>(null);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
@@ -416,7 +415,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   sendInputRef.current = (data) => {
     const connection = connectionRef.current;
-    if (!connection && !connectingRef.current) {
+    if (!connection && !connectionAttemptGuardRef.current.isConnecting()) {
       return;
     }
     const nextInput = inputBufferRef.current + data;
@@ -1031,7 +1030,6 @@ export const TerminalPane = memo(function TerminalPane({
     return () => {
       disposed = true;
       connectionAttemptGuard.invalidate();
-      connectingRef.current = false;
       resizeObserverActivityRef.current?.stop();
       resizeObserverActivityRef.current = null;
       oscHandler?.dispose();
@@ -1113,7 +1111,11 @@ export const TerminalPane = memo(function TerminalPane({
 
   async function connectTerminal(options: ConnectTerminalOptions = {}) {
     const { fromCredentialPrompt = false, oneTimeCredential } = options;
-    if (connectingRef.current || connectionState === "connecting" || connectionRef.current) {
+    if (
+      connectionAttemptGuardRef.current.isConnecting() ||
+      connectionState === "connecting" ||
+      connectionRef.current
+    ) {
       return;
     }
     const terminal = terminalRef.current;
@@ -1145,7 +1147,6 @@ export const TerminalPane = memo(function TerminalPane({
     imeCompositionFallbackRef.current?.reset();
     terminal.reset();
     const attemptId = connectionAttemptGuardRef.current.begin();
-    connectingRef.current = true;
     setDialogError(null);
     setHostKeyChange(null);
     reportState("connecting");
@@ -1314,7 +1315,7 @@ export const TerminalPane = memo(function TerminalPane({
         reportState("error", message);
       }
     } finally {
-      connectingRef.current = false;
+      connectionAttemptGuardRef.current.finish(attemptId);
     }
   }
 

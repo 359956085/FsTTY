@@ -1,8 +1,6 @@
 import {
   Copy,
-  FolderOpen,
   Plug,
-  RefreshCw,
   RotateCcw,
   Settings2,
 } from "lucide-react";
@@ -19,17 +17,15 @@ import type {
   McpPermissionCatalogEntry,
   SessionGroup,
 } from "../../shared/api/types";
-import { Button } from "../../shared/ui/Button";
-import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
+import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import {
   McpConfigDialog,
   type McpConfigDialogState,
   type McpTransport,
 } from "./McpConfigDialog";
 import {
-  MCP_PERMISSION_TOOLTIP_ID,
   McpPermissionTooltip,
   type McpPermissionTooltipState,
 } from "./McpPermissionTooltip";
@@ -39,6 +35,7 @@ import {
   validateMcpPort,
 } from "./mcpPermissions";
 import { McpPermissionsPanel } from "./McpPermissionsPanel";
+import { SettingsIconAction } from "./SettingsIconAction";
 
 interface SettingsPageProps {
   onChange: (settings: AppSettings) => void;
@@ -504,170 +501,29 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
         </header>
 
         {activeSection === "general" ? (
-          <>
-            <section aria-labelledby="general-settings-title" className="settings-panel">
-              <header className="settings-panel-header">
-                <h3 id="general-settings-title">{t("settings.generalSettings")}</h3>
-              </header>
-              <div className="settings-row settings-language-row">
-                <span className="settings-row-label">{t("settings.language")}</span>
-                <Select<Language>
-                  ariaLabel={t("settings.language")}
-                  className="settings-language-select"
-                  disabled={savingLanguage}
-                  onChange={(language) => void handleLanguageChange(language)}
-                  options={[
-                    { value: "zh-CN", label: t("settings.chinese") },
-                    { value: "en-US", label: t("settings.english") },
-                  ]}
-                  value={settings.language}
-                />
-              </div>
-              <div className="settings-row settings-clipboard-row">
-                <div className="settings-row-copy">
-                  <label className="settings-row-label" htmlFor="remote-clipboard-write">
-                    {t("settings.remoteClipboardWrite")}
-                  </label>
-                  <small>{t("settings.remoteClipboardWriteHint")}</small>
-                </div>
-                <input
-                  aria-label={t("settings.remoteClipboardWrite")}
-                  checked={settings.allowRemoteClipboardWrite}
-                  className="settings-auto-update-toggle"
-                  disabled={savingUpdateSettings}
-                  id="remote-clipboard-write"
-                  onChange={(event) =>
-                    void saveUpdateSettings(
-                      settings.autoUpdate,
-                      proxy,
-                      event.target.checked,
-                    )
-                  }
-                  role="switch"
-                  type="checkbox"
-                />
-              </div>
-              <div className="settings-row settings-log-row">
-                <div className="settings-row-copy">
-                  <span className="settings-row-label">{t("settings.logs")}</span>
-                  <small>{t("settings.logsHint")}</small>
-                </div>
-                <button
-                  aria-describedby={
-                    mcpPermissionTooltip?.key === "open-log-directory"
-                      ? MCP_PERMISSION_TOOLTIP_ID
-                      : undefined
-                  }
-                  aria-label={t("settings.openLogDirectory")}
-                  className="icon-button settings-icon-action"
-                  disabled={openingLogDirectory}
-                  onBlur={() => setMcpPermissionTooltip(null)}
-                  onClick={() => void openLogDirectory()}
-                  onFocus={(event) =>
-                    showMcpPermissionTooltip(
-                      "open-log-directory",
-                      t("settings.openLogDirectory"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseEnter={(event) =>
-                    showMcpPermissionTooltip(
-                      "open-log-directory",
-                      t("settings.openLogDirectory"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseLeave={(event) => {
-                    if (document.activeElement !== event.currentTarget) {
-                      setMcpPermissionTooltip(null);
-                    }
-                  }}
-                  type="button"
-                >
-                  <FolderOpen aria-hidden="true" size={16} />
-                </button>
-              </div>
-              {logDirectoryError ? (
-                <div className="form-error settings-error" role="alert">
-                  {logDirectoryError}
-                </div>
-              ) : null}
-            </section>
-
-            <section aria-labelledby="version-settings-title" className="settings-panel">
-              <header className="settings-panel-header">
-                <h3 id="version-settings-title">{t("settings.version")}</h3>
-              </header>
-              <div className="settings-row">
-                <span className="settings-row-label">{t("settings.currentVersion")}</span>
-                <span className="settings-current-version">
-                  {updater.currentVersion ? `v${updater.currentVersion}` : "—"}
-                </span>
-              </div>
-              <div className="settings-row">
-                <span className="settings-row-label">{t("settings.checkUpdate")}</span>
-                <div className="settings-update-control">
-                  {status ? (
-                    <span aria-live="polite" className="settings-update-status">
-                      {status}
-                    </span>
-                  ) : null}
-                  <Button
-                    disabled={updater.busy || savingUpdateSettings}
-                    icon={<RefreshCw aria-hidden="true" size={16} />}
-                    onClick={() => void handleCheckForUpdates()}
-                  >
-                    {updater.phase === "checking"
-                      ? t("settings.checkingUpdate")
-                      : t("settings.checkUpdate")}
-                  </Button>
-                </div>
-              </div>
-              <div className="settings-row">
-                <div className="settings-row-copy">
-                  <label className="settings-row-label" htmlFor="auto-update">
-                    {t("settings.autoUpdate")}
-                  </label>
-                  <small>{t("settings.autoUpdateHint")}</small>
-                </div>
-                <input
-                  aria-label={t("settings.autoUpdate")}
-                  checked={settings.autoUpdate}
-                  className="settings-auto-update-toggle"
-                  disabled={savingUpdateSettings}
-                  id="auto-update"
-                  onChange={(event) => void saveUpdateSettings(event.target.checked)}
-                  role="switch"
-                  type="checkbox"
-                />
-              </div>
-              <div className="settings-row settings-proxy-row">
-                <div className="settings-row-copy">
-                  <label className="settings-row-label" htmlFor="update-proxy">
-                    {t("settings.updateProxy")}
-                  </label>
-                  <small>{t("settings.updateProxyHint")}</small>
-                </div>
-                <TextInput
-                  className="settings-proxy-input"
-                  disabled={savingUpdateSettings || updater.phase === "downloading"}
-                  id="update-proxy"
-                  onBlur={() => void saveUpdateSettings(settings.autoUpdate)}
-                  onChange={(event) => setProxy(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.currentTarget.blur();
-                    }
-                  }}
-                  placeholder="http://127.0.0.1:7890"
-                  value={proxy}
-                />
-              </div>
-              {visibleError ? (
-                <div className="form-error settings-error">{visibleError}</div>
-              ) : null}
-            </section>
-          </>
+          <GeneralSettingsPanel
+            activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+            error={visibleError}
+            logDirectoryError={logDirectoryError}
+            onAutoUpdateChange={(enabled) => void saveUpdateSettings(enabled)}
+            onCheckUpdates={() => void handleCheckForUpdates()}
+            onClipboardChange={(enabled) =>
+              void saveUpdateSettings(settings.autoUpdate, proxy, enabled)
+            }
+            onHideTooltip={() => setMcpPermissionTooltip(null)}
+            onLanguageChange={(language) => void handleLanguageChange(language)}
+            onOpenLogDirectory={() => void openLogDirectory()}
+            onProxyChange={setProxy}
+            onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
+            onShowTooltip={showMcpPermissionTooltip}
+            openingLogDirectory={openingLogDirectory}
+            proxy={proxy}
+            savingLanguage={savingLanguage}
+            savingUpdateSettings={savingUpdateSettings}
+            settings={settings}
+            status={status}
+            updater={updater}
+          />
         ) : (
           <>
             <section aria-labelledby="mcp-stdio-title" className="settings-panel settings-mcp-panel">
@@ -702,39 +558,16 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <span className="settings-row-label">{t("settings.mcpConfiguration")}</span>
                   <small>{t("settings.mcpStdioConfigHint")}</small>
                 </div>
-                <button
-                  aria-describedby={
-                    mcpPermissionTooltip?.key === "stdio-copy"
-                      ? MCP_PERMISSION_TOOLTIP_ID
-                      : undefined
-                  }
-                  aria-label={t("settings.mcpCopyConfig")}
-                  className="icon-button settings-icon-action"
-                  onBlur={() => setMcpPermissionTooltip(null)}
-                  onClick={() => openMcpConfigDialog("stdio")}
-                  onFocus={(event) =>
-                    showMcpPermissionTooltip(
-                      "stdio-copy",
-                      t("settings.mcpCopyConfig"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseEnter={(event) =>
-                    showMcpPermissionTooltip(
-                      "stdio-copy",
-                      t("settings.mcpCopyConfig"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseLeave={(event) => {
-                    if (document.activeElement !== event.currentTarget) {
-                      setMcpPermissionTooltip(null);
-                    }
-                  }}
-                  type="button"
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  label={t("settings.mcpCopyConfig")}
+                  onActivate={() => openMcpConfigDialog("stdio")}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="stdio-copy"
                 >
                   <Copy aria-hidden="true" size={16} />
-                </button>
+                </SettingsIconAction>
               </div>
               {mcpStdioError ? (
                 <div className="form-error settings-mcp-feedback" role="alert">
@@ -803,40 +636,17 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <span className="settings-row-label">{t("settings.mcpResetToken")}</span>
                   <small>{t("settings.mcpResetTokenHint")}</small>
                 </div>
-                <button
-                  aria-describedby={
-                    mcpPermissionTooltip?.key === "http-reset-token"
-                      ? MCP_PERMISSION_TOOLTIP_ID
-                      : undefined
-                  }
-                  aria-label={t("settings.mcpResetToken")}
-                  className="icon-button settings-icon-action"
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
                   disabled={savingMcp}
-                  onBlur={() => setMcpPermissionTooltip(null)}
-                  onClick={() => void rotateMcpToken()}
-                  onFocus={(event) =>
-                    showMcpPermissionTooltip(
-                      "http-reset-token",
-                      t("settings.mcpResetToken"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseEnter={(event) =>
-                    showMcpPermissionTooltip(
-                      "http-reset-token",
-                      t("settings.mcpResetToken"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseLeave={(event) => {
-                    if (document.activeElement !== event.currentTarget) {
-                      setMcpPermissionTooltip(null);
-                    }
-                  }}
-                  type="button"
+                  label={t("settings.mcpResetToken")}
+                  onActivate={() => void rotateMcpToken()}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="http-reset-token"
                 >
                   <RotateCcw aria-hidden="true" size={16} />
-                </button>
+                </SettingsIconAction>
               </div>
               <div className="settings-row settings-mcp-last-row">
                 <div className="settings-row-copy">
@@ -845,39 +655,16 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                     {t("settings.mcpHttpConfigHint")}
                   </small>
                 </div>
-                <button
-                  aria-describedby={
-                    mcpPermissionTooltip?.key === "http-copy"
-                      ? MCP_PERMISSION_TOOLTIP_ID
-                      : undefined
-                  }
-                  aria-label={t("settings.mcpCopyConfig")}
-                  className="icon-button settings-icon-action"
-                  onBlur={() => setMcpPermissionTooltip(null)}
-                  onClick={() => openMcpConfigDialog("http")}
-                  onFocus={(event) =>
-                    showMcpPermissionTooltip(
-                      "http-copy",
-                      t("settings.mcpCopyConfig"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseEnter={(event) =>
-                    showMcpPermissionTooltip(
-                      "http-copy",
-                      t("settings.mcpCopyConfig"),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseLeave={(event) => {
-                    if (document.activeElement !== event.currentTarget) {
-                      setMcpPermissionTooltip(null);
-                    }
-                  }}
-                  type="button"
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  label={t("settings.mcpCopyConfig")}
+                  onActivate={() => openMcpConfigDialog("http")}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="http-copy"
                 >
                   <Copy aria-hidden="true" size={16} />
-                </button>
+                </SettingsIconAction>
               </div>
               {mcpHttpError ? (
                 <div className="form-error settings-mcp-feedback" role="alert">
@@ -900,48 +687,21 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                     {mcpPromptError ?? t("settings.mcpAgentPromptHint")}
                   </small>
                 </div>
-                <button
-                  aria-describedby={
-                    mcpPermissionTooltip?.key === "agent-prompt-copy"
-                      ? MCP_PERMISSION_TOOLTIP_ID
-                      : undefined
-                  }
-                  aria-label={t("settings.mcpCopyPrompt")}
-                  className="icon-button settings-icon-action"
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
                   disabled={copyingMcpPrompt}
-                  onBlur={() => setMcpPermissionTooltip(null)}
-                  onClick={(event) => void copyMcpAgentPrompt(event.currentTarget)}
-                  onFocus={(event) =>
-                    showMcpPermissionTooltip(
-                      "agent-prompt-copy",
-                      t(
-                        mcpPromptCopied
-                          ? "settings.mcpPromptCopied"
-                          : "settings.mcpCopyPrompt",
-                      ),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseEnter={(event) =>
-                    showMcpPermissionTooltip(
-                      "agent-prompt-copy",
-                      t(
-                        mcpPromptCopied
-                          ? "settings.mcpPromptCopied"
-                          : "settings.mcpCopyPrompt",
-                      ),
-                      event.currentTarget,
-                    )
-                  }
-                  onMouseLeave={(event) => {
-                    if (document.activeElement !== event.currentTarget) {
-                      setMcpPermissionTooltip(null);
-                    }
-                  }}
-                  type="button"
+                  label={t(
+                    mcpPromptCopied
+                      ? "settings.mcpPromptCopied"
+                      : "settings.mcpCopyPrompt",
+                  )}
+                  onActivate={(target) => void copyMcpAgentPrompt(target)}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="agent-prompt-copy"
                 >
                   <Copy aria-hidden="true" size={16} />
-                </button>
+                </SettingsIconAction>
               </div>
             </section>
 
