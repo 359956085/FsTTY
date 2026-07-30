@@ -601,6 +601,41 @@ fn supported_guide_tools() -> Vec<&'static str> {
         .collect()
 }
 
+pub(crate) fn mcp_agent_prompt() -> String {
+    let tool_groups = GUIDE_PERMISSIONS
+        .iter()
+        .filter(|permission| !permission.tools.is_empty())
+        .map(|permission| {
+            format!(
+                "- {} ({}): {}",
+                permission.en_name,
+                permission.key,
+                permission.tools.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<!-- fstty:begin -->
+
+Use FsTTY MCP:
+- Call list_sessions first to discover available sessions.
+- Use get_device_status for status; list_remote_files, read_remote_file, and search_remote_file for files and logs.
+- execute_command runs remote shell commands when commandExecute permission is enabled.
+- get_permission_guide returns FsTTY permission setup steps for a tool.
+- stdio local transfers require MCP client Roots. HTTP transfers use create_remote_file_upload_link or create_remote_file_download_link; links expire after five minutes.
+- Host-key and credential issues are handled in FsTTY.
+- Tool parameters are defined by live MCP tool schemas.
+
+Permission and tool mapping:
+{tool_groups}
+- Guide: get_permission_guide
+
+<!-- fstty:end -->"#
+    )
+}
+
 fn permission_guide_entry(
     permission: &'static GuidePermission,
     language: &Language,
@@ -2157,6 +2192,41 @@ mod tests {
         assert!(!text.contains("groupName"));
         assert!(!text.contains("host"));
         assert!(!text.contains("username"));
+    }
+
+    #[test]
+    fn agent提示词覆盖工具使用指南() {
+        let prompt = mcp_agent_prompt();
+
+        for tool in supported_guide_tools() {
+            assert!(prompt.contains(tool), "提示词缺少工具：{tool}");
+        }
+        assert!(prompt.starts_with("<!-- fstty:begin -->\n\n"));
+        assert!(prompt.ends_with("\n\n<!-- fstty:end -->"));
+        assert_eq!(prompt.matches("<!-- fstty:begin -->").count(), 1);
+        assert_eq!(prompt.matches("<!-- fstty:end -->").count(), 1);
+        assert!(prompt.contains("get_permission_guide"));
+        assert!(prompt.contains("Call list_sessions first"));
+        assert!(prompt.contains("discover available sessions"));
+        assert!(prompt.contains("execute_command runs remote shell commands"));
+        assert!(prompt.contains("commandExecute permission"));
+        assert!(prompt.contains("MCP client Roots"));
+        assert!(prompt.contains("links expire after five minutes"));
+        assert!(prompt.contains("Host-key and credential issues are handled in FsTTY"));
+        assert!(prompt.contains("live MCP tool schemas"));
+        assert!(prompt.contains("Permission and tool mapping"));
+        assert!(!prompt.contains("use only returned sessions"));
+        assert!(!prompt.contains("only when needed and authorized"));
+        assert!(!prompt.contains("do not use it to bypass"));
+        assert!(!prompt.contains("wait for user authorization"));
+        assert!(!prompt.contains("Confirm the exact target"));
+        assert!(!prompt.contains("rollback considerations"));
+        assert!(!prompt.contains("untrusted data"));
+        assert!(!prompt.contains("Never request, expose, log, or persist"));
+        assert!(prompt.is_ascii());
+        assert!(prompt.len() <= 2_048);
+        assert!(!prompt.contains("Bearer "));
+        assert!(!prompt.contains("<FSTTY_HOST_IP>"));
     }
 
     #[test]
