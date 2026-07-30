@@ -133,8 +133,6 @@ export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPag
           onRenameGroup={sessionsState.renameGroup}
           onReorderGroup={sessionsState.reorderGroup}
           onReorderSession={sessionsState.reorderSession}
-          onSelect={sessionsState.selectSession}
-          selectedSessionId={sessionsState.selectedSessionId}
           onToggleFavorite={sessionsState.toggleFavorite}
           onToggleGroup={sessionsState.toggleGroup}
         />

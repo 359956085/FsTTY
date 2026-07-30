@@ -34,7 +34,6 @@ export type SessionFilter = "all" | "favorites";
 
 interface SessionListProps {
   groups: SessionGroup[];
-  selectedSessionId: string | null;
   query: string;
   filter: SessionFilter;
   favoriteSessionIds: readonly string[];
@@ -42,7 +41,6 @@ interface SessionListProps {
   mutationPending: boolean;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: SessionFilter) => void;
-  onSelect: (sessionId: string) => void;
   onOpen: (sessionId: string) => void;
   onToggleFavorite: (sessionId: string) => void;
   onToggleGroup: (groupName: string) => void;
@@ -114,7 +112,6 @@ type GroupOperation =
     };
 
 export function SessionList({
-  selectedSessionId,
   collapsedGroupNames,
   favoriteSessionIds,
   filter,
@@ -132,7 +129,6 @@ export function SessionList({
   onRenameGroup,
   onReorderGroup,
   onReorderSession,
-  onSelect,
   onToggleFavorite,
   onToggleGroup,
   query,
@@ -564,9 +560,7 @@ export function SessionList({
                     return (
                     <div
                       className={
-                        `${selectedSessionId === session.id
-                          ? "session-item session-item-active"
-                          : "session-item"}${
+                        `session-item${
                           dragSource?.kind === "session" &&
                           dragSource.sessionId === session.id
                             ? " session-drag-source"
@@ -578,7 +572,6 @@ export function SessionList({
                       key={session.id}
                       onContextMenu={(event) => {
                         event.preventDefault();
-                        onSelect(session.id);
                         setContextMenu({
                           kind: "session",
                           x: event.clientX,
@@ -590,8 +583,7 @@ export function SessionList({
                       <button
                         className="session-item-select"
                         onClick={(event) => {
-                          if (consumeSuppressedClick(event)) return;
-                          onSelect(session.id);
+                          consumeSuppressedClick(event);
                         }}
                         onPointerDown={(event) =>
                           beginDrag(event, {

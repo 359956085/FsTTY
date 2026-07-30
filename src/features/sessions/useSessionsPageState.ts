@@ -49,7 +49,6 @@ export function useSessionsPageState({
   errorFallback,
 }: UseSessionsPageStateOptions) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [openTabs, setOpenTabs] = useState<SessionTabState[]>([]);
   const [favoriteSessionIds, setFavoriteSessionIds] = useState<string[]>([]);
@@ -175,9 +174,6 @@ export function useSessionsPageState({
       initialized.current = true;
       groupsRef.current = nextGroups;
       setGroups(nextGroups);
-      setSelectedSessionId((current) => {
-        return current && validIds.has(current) ? current : null;
-      });
       applyCollapsedGroups(validCollapsedGroupNames);
       applyPreferences(validTabs, candidateActiveTabId, validFavoriteIds);
     } catch (nextError) {
@@ -196,10 +192,6 @@ export function useSessionsPageState({
     };
   }, [refreshSessions]);
 
-  const selectSession = useCallback((sessionId: string) => {
-    setSelectedSessionId(sessionId);
-  }, []);
-
   const openSessionTab = useCallback(
     (sessionId: string, autoConnect = true) => {
       const session = sessions.find((item) => item.id === sessionId);
@@ -207,10 +199,7 @@ export function useSessionsPageState({
       const tab: SessionTabState = {
         id: crypto.randomUUID(),
         sessionId,
-        autoConnect:
-          autoConnect &&
-          Boolean(session.username.trim()) &&
-          session.credentialState !== "missing",
+        autoConnect,
       };
       applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
     },
@@ -411,10 +400,6 @@ export function useSessionsPageState({
         applyCollapsedGroups(
           collapsedGroupNamesRef.current.filter((name) => name !== groupName),
         );
-        setSelectedSessionId((current) =>
-          current && deletedSet.has(current) ? null : current,
-        );
-
         const currentTabs = openTabsRef.current;
         const nextTabs = currentTabs.filter(
           (tab) => !deletedSet.has(tab.sessionId),
@@ -474,7 +459,6 @@ export function useSessionsPageState({
           groupsRef.current = next;
           return next;
         });
-        setSelectedSessionId(created.id);
         const tab: SessionTabState = {
           id: crypto.randomUUID(),
           sessionId: created.id,
@@ -527,7 +511,6 @@ export function useSessionsPageState({
           remainingGroupNames.has(name),
         ),
       );
-      setSelectedSessionId((current) => (current === sessionId ? null : current));
       applyPreferences(
         nextTabs,
         nextActiveTabId,
@@ -561,9 +544,7 @@ export function useSessionsPageState({
     reorderSession,
     saveError,
     saveSession,
-    selectSession,
     selectTab,
-    selectedSessionId,
     sessions,
     setDialogState: changeDialogState,
     setFilter,

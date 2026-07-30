@@ -1,5 +1,5 @@
-import { Download, RefreshCw } from "lucide-react";
-import { useEffect } from "react";
+import { Download, RefreshCw, X } from "lucide-react";
+import { lazy, Suspense, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../shared/ui/Button";
 import { selectLocalizedReleaseNotes } from "./releaseNotes";
@@ -8,6 +8,9 @@ import type { AppUpdaterController } from "./useAppUpdater";
 interface UpdateDialogProps {
   updater: AppUpdaterController;
 }
+
+// 更新弹窗很少出现，按需加载 Markdown 依赖，避免增加日常启动主包体积。
+const ReleaseNotesMarkdown = lazy(() => import("./ReleaseNotesMarkdown"));
 
 function formatReleaseDate(value: string, locale: string) {
   const date = new Date(value);
@@ -56,16 +59,33 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
 
   return (
     <div className="dialog-backdrop update-dialog-backdrop">
-      <section aria-modal="true" className="dialog update-dialog" role="dialog">
+      <section
+        aria-labelledby="update-dialog-title"
+        aria-modal="true"
+        className="dialog update-dialog"
+        role="dialog"
+      >
         <header className="dialog-header">
-          <Download aria-hidden="true" size={20} />
-          <h2>{t("settings.updateAvailableTitle")}</h2>
+          <div className="update-dialog-title">
+            <Download aria-hidden="true" size={22} />
+            <h2 id="update-dialog-title">{t("settings.updateAvailableTitle")}</h2>
+          </div>
+          <button
+            aria-label={t("sessions.close")}
+            className="icon-button update-dialog-close"
+            disabled={busy}
+            onClick={() => void updater.dismissUpdate()}
+            type="button"
+          >
+            <X aria-hidden="true" size={20} />
+          </button>
         </header>
         <div className="update-dialog-body">
           <div className="update-version-summary">
             <span>v{updater.currentVersion ?? "—"}</span>
             <span aria-hidden="true">→</span>
             <strong>v{update.version}</strong>
+            <span className="update-version-badge">{t("settings.newVersion")}</span>
           </div>
           {releaseDate ? (
             <div className="update-release-date">
@@ -74,7 +94,15 @@ export function UpdateDialog({ updater }: UpdateDialogProps) {
           ) : null}
           <div className="update-release-notes">
             <h3>{t("settings.releaseNotes")}</h3>
-            <div>{releaseNotes || t("settings.noReleaseNotes")}</div>
+            <Suspense
+              fallback={
+                <div className="update-release-markdown">
+                  {releaseNotes || t("settings.noReleaseNotes")}
+                </div>
+              }
+            >
+              <ReleaseNotesMarkdown content={releaseNotes || t("settings.noReleaseNotes")} />
+            </Suspense>
           </div>
           {updater.phase === "downloading" || updater.phase === "installing" ? (
             <div aria-live="polite" className="update-progress">

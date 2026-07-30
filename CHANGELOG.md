@@ -9,10 +9,14 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
+- 更新说明支持基础安全 Markdown，并按新设计调整版本更新弹窗。
+
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
+
+- Release notes now support basic safe Markdown, and the update dialog matches the new design.
 
 <!-- release-notes:en-US:end -->
 
