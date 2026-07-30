@@ -23,6 +23,19 @@ export interface McpGroupPermission {
   fileDelete: boolean;
 }
 
+export type McpPermissionKey =
+  | "enabled"
+  | "sessionRead"
+  | "fileRead"
+  | "commandExecute"
+  | "fileWrite"
+  | "fileDelete";
+
+export interface McpPermissionCatalogEntry {
+  permissionKey: McpPermissionKey;
+  tools: string[];
+}
+
 export interface McpHttpStatus {
   running: boolean;
   address: string;

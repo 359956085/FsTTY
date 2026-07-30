@@ -45,6 +45,11 @@ import {
   resolveTerminalClipboardShortcut,
   writeSystemClipboard,
 } from "./terminalClipboard";
+import {
+  syncTerminalActivity,
+  type TerminalActivityController,
+} from "./terminalActivity";
+import { createTerminalConnectionAttemptGuard } from "./terminalConnectionAttempt";
 
 const SHELL_OSC_IDENTIFIER = 777;
 const CLIPBOARD_MESSAGE_KEYS = {
@@ -58,11 +63,6 @@ interface ShellIntegration {
   functionName: string;
   stage: "detecting" | "installing" | "active" | "unsupported";
   token: string;
-}
-
-interface TerminalActivityController {
-  start: () => void;
-  stop: () => void;
 }
 
 interface ConnectTerminalOptions {
@@ -135,7 +135,7 @@ export const TerminalPane = memo(function TerminalPane({
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
-  const connectionAttemptRef = useRef(0);
+  const connectionAttemptGuardRef = useRef(createTerminalConnectionAttemptGuard());
   const connectingRef = useRef(false);
   const consumedDirectoryRequestRef = useRef(0);
   const lastReportedDirectoryRef = useRef<string | null>(null);
@@ -399,7 +399,7 @@ export const TerminalPane = memo(function TerminalPane({
           if (connectionRef.current?.connectionId !== connectionId) {
             return;
           }
-          connectionAttemptRef.current += 1;
+          connectionAttemptGuardRef.current.invalidate();
           connectionRef.current = null;
           eventChannelRef.current = null;
           clearPendingInput();
@@ -573,6 +573,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   useEffect(() => {
     let disposed = false;
+    const connectionAttemptGuard = connectionAttemptGuardRef.current;
     let observer: ResizeObserver | null = null;
     let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
@@ -1029,7 +1030,7 @@ export const TerminalPane = memo(function TerminalPane({
     });
     return () => {
       disposed = true;
-      connectionAttemptRef.current += 1;
+      connectionAttemptGuard.invalidate();
       connectingRef.current = false;
       resizeObserverActivityRef.current?.stop();
       resizeObserverActivityRef.current = null;
@@ -1085,20 +1086,17 @@ export const TerminalPane = memo(function TerminalPane({
   useEffect(() => {
     const resizeObserverActivity = resizeObserverActivityRef.current;
     const remoteMouseActivity = remoteMouseActivityRef.current;
-    if (active && visible) {
-      resizeObserverActivity?.start();
-    } else {
-      resizeObserverActivity?.stop();
-    }
-    if (active && visible && connectionState === "connected") {
-      remoteMouseActivity?.start();
-    } else {
-      remoteMouseActivity?.stop();
-    }
-    if (!active || !visible || connectionState !== "connected") {
+    const activity = syncTerminalActivity({
+      active,
+      connected: connectionState === "connected",
+      remoteMouse: remoteMouseActivity,
+      resizeObserver: resizeObserverActivity,
+      visible,
+    });
+    if (activity.shouldResetInteraction) {
       remoteRightDragStateRef.current.end();
     }
-    if (!active || !visible) {
+    if (!activity.shouldFit) {
       clearTemporaryLogin();
       terminalRef.current?.blur();
       clearPendingInput();
@@ -1146,14 +1144,13 @@ export const TerminalPane = memo(function TerminalPane({
     resetShellIntegration();
     imeCompositionFallbackRef.current?.reset();
     terminal.reset();
-    const attemptId = connectionAttemptRef.current + 1;
-    connectionAttemptRef.current = attemptId;
+    const attemptId = connectionAttemptGuardRef.current.begin();
     connectingRef.current = true;
     setDialogError(null);
     setHostKeyChange(null);
     reportState("connecting");
     const isCurrentAttempt = () =>
-      mountedRef.current && connectionAttemptRef.current === attemptId;
+      mountedRef.current && connectionAttemptGuardRef.current.isCurrent(attemptId);
     const canRetryAttempt = () => isCurrentAttempt() && activeRef.current;
     const runConnectAttempt = () => {
       const channel = new Channel<TerminalEvent>();
@@ -1171,7 +1168,7 @@ export const TerminalPane = memo(function TerminalPane({
           return;
         }
         if (event.kind === "error") {
-          connectionAttemptRef.current += 1;
+          connectionAttemptGuardRef.current.invalidate();
           connectionRef.current = null;
           eventChannelRef.current = null;
           clearPendingInput();
@@ -1181,7 +1178,7 @@ export const TerminalPane = memo(function TerminalPane({
           reportState("error", event.message);
           return;
         }
-        connectionAttemptRef.current += 1;
+        connectionAttemptGuardRef.current.invalidate();
         connectionRef.current = null;
         eventChannelRef.current = null;
         clearPendingInput();
@@ -1213,7 +1210,7 @@ export const TerminalPane = memo(function TerminalPane({
         reportState("disconnected");
         return;
       }
-      if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
+      if (!mountedRef.current || !connectionAttemptGuardRef.current.isCurrent(attemptId)) {
         if (result.kind === "connected") {
           await api
             .disconnectSession(result.connection.connectionId)
@@ -1280,7 +1277,7 @@ export const TerminalPane = memo(function TerminalPane({
       startShellIntegration();
       fitAndResize();
     } catch (error) {
-      if (!mountedRef.current || connectionAttemptRef.current !== attemptId) {
+      if (!mountedRef.current || !connectionAttemptGuardRef.current.isCurrent(attemptId)) {
         return;
       }
       eventChannelRef.current = null;
@@ -1406,7 +1403,7 @@ export const TerminalPane = memo(function TerminalPane({
     reportState("disconnecting");
     try {
       await api.disconnectSession(connection.connectionId);
-      connectionAttemptRef.current += 1;
+      connectionAttemptGuardRef.current.invalidate();
       connectionRef.current = null;
       eventChannelRef.current = null;
       clearPendingInput();

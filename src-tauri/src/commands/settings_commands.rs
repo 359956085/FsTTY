@@ -103,7 +103,8 @@ pub async fn update_mcp_settings(
         service.update_mcp(enabled, http_enabled, http_port, group_permissions)?
     };
     if settings.mcp_enabled && settings.mcp_http_enabled {
-        let token = http_token.expect("启用 HTTP 时已读取令牌");
+        let token = http_token
+            .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
         let runtime_result =
             if state.mcp_http_runtime.running_port().await == Some(settings.mcp_http_port) {
                 if state.mcp_http_runtime.update_token(token.to_string()).await {
@@ -234,6 +235,11 @@ pub fn get_mcp_stdio_client_config(client_target: McpClientTarget) -> Result<Str
 #[tauri::command]
 pub fn get_mcp_agent_prompt() -> String {
     crate::mcp::mcp_agent_prompt()
+}
+
+#[tauri::command]
+pub fn get_mcp_permission_catalog() -> Vec<crate::mcp::McpPermissionCatalogEntry> {
+    crate::mcp::permission_catalog()
 }
 
 fn build_mcp_stdio_client_config(

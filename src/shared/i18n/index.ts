@@ -245,6 +245,7 @@ void i18n.use(initReactI18next).init({
           mcpAccess: "访问",
           mcpAccessToolsHint: "所有 MCP 工具的分组访问前置权限",
           mcpPermissionTools: "对应工具：\n{{tools}}",
+          mcpPermissionCatalogLoadFailed: "无法加载工具目录，权限仍可编辑",
           mcpSessionRead: "状态读取",
           mcpFileRead: "文件读取",
           mcpCommand: "命令",
@@ -552,6 +553,8 @@ void i18n.use(initReactI18next).init({
           mcpAccess: "Access",
           mcpAccessToolsHint: "Required group access for all MCP tools",
           mcpPermissionTools: "Tools:\n{{tools}}",
+          mcpPermissionCatalogLoadFailed:
+            "Unable to load the tool catalog; permissions remain editable",
           mcpSessionRead: "Status",
           mcpFileRead: "File read",
           mcpCommand: "Command",

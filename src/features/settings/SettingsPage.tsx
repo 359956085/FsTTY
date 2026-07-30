@@ -1,16 +1,13 @@
 import {
   Copy,
   FolderOpen,
-  Info,
   Plug,
   RefreshCw,
   RotateCcw,
   Settings2,
-  X,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -19,12 +16,29 @@ import type {
   Language,
   McpClientTarget,
   McpGroupPermission,
+  McpPermissionCatalogEntry,
   SessionGroup,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
+import {
+  McpConfigDialog,
+  type McpConfigDialogState,
+  type McpTransport,
+} from "./McpConfigDialog";
+import {
+  MCP_PERMISSION_TOOLTIP_ID,
+  McpPermissionTooltip,
+  type McpPermissionTooltipState,
+} from "./McpPermissionTooltip";
+import {
+  permissionFrom,
+  permissionsChanged,
+  validateMcpPort,
+} from "./mcpPermissions";
+import { McpPermissionsPanel } from "./McpPermissionsPanel";
 
 interface SettingsPageProps {
   onChange: (settings: AppSettings) => void;
@@ -32,116 +46,8 @@ interface SettingsPageProps {
   updater: AppUpdaterController;
 }
 
-interface McpPermissionTooltip {
-  key: string;
-  text: string;
-  anchor: {
-    bottom: number;
-    left: number;
-    top: number;
-    width: number;
-  };
-}
-
 type SettingsSection = "general" | "mcp";
-type McpTransport = "http" | "stdio";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
-
-interface McpConfigDialogState {
-  config: string;
-  error: string | null;
-  loading: boolean;
-  target: McpClientTarget;
-  transport: McpTransport;
-}
-
-const MCP_PERMISSION_TOOLTIP_ID = "mcp-permission-tooltip";
-const MCP_PERMISSION_TOOLTIP_GAP = 6;
-const MCP_PERMISSION_TOOLTIP_MARGIN = 8;
-const MCP_PERMISSION_FIELDS = [
-  "enabled",
-  "sessionRead",
-  "fileRead",
-  "commandExecute",
-  "fileWrite",
-  "fileDelete",
-] as const satisfies readonly (keyof McpGroupPermission)[];
-
-const MCP_PERMISSION_HEADERS = [
-  {
-    labelKey: "settings.mcpAccess",
-    tools: [],
-  },
-  {
-    labelKey: "settings.mcpSessionRead",
-    tools: ["list_sessions", "get_device_status"],
-  },
-  {
-    labelKey: "settings.mcpFileRead",
-    tools: [
-      "list_remote_files",
-      "read_remote_file",
-      "search_remote_file",
-      "download_remote_file",
-      "create_remote_file_download_link",
-    ],
-  },
-  {
-    labelKey: "settings.mcpCommand",
-    tools: ["execute_command"],
-  },
-  {
-    labelKey: "settings.mcpFileWrite",
-    tools: [
-      "write_remote_file",
-      "upload_local_file",
-      "create_remote_directory",
-      "rename_remote_entry",
-      "move_remote_entry",
-      "create_remote_file_upload_link",
-    ],
-  },
-  {
-    labelKey: "settings.mcpDelete",
-    tools: ["delete_remote_entry"],
-  },
-] as const;
-
-function defaultMcpPermission(groupName: string): McpGroupPermission {
-  return {
-    groupName,
-    enabled: false,
-    sessionRead: true,
-    fileRead: true,
-    commandExecute: false,
-    fileWrite: false,
-    fileDelete: false,
-  };
-}
-
-function permissionFrom(
-  permissions: readonly McpGroupPermission[],
-  groupName: string,
-): McpGroupPermission {
-  return (
-    permissions.find((permission) => permission.groupName === groupName) ??
-    defaultMcpPermission(groupName)
-  );
-}
-
-function permissionsChanged(
-  groups: readonly SessionGroup[],
-  draft: readonly McpGroupPermission[],
-  saved: readonly McpGroupPermission[],
-): boolean {
-  return groups.some((group) => {
-    const draftPermission = permissionFrom(draft, group.name);
-    const savedPermission = permissionFrom(saved, group.name);
-    return MCP_PERMISSION_FIELDS.some(
-      (field) => draftPermission[field] !== savedPermission[field],
-    );
-  });
-}
 
 export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -154,6 +60,10 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
   const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const [mcpPermissionCatalog, setMcpPermissionCatalog] = useState<
+    McpPermissionCatalogEntry[]
+  >([]);
+  const [mcpPermissionCatalogFailed, setMcpPermissionCatalogFailed] = useState(false);
   const [mcpPermissions, setMcpPermissions] = useState(settings.mcpGroupPermissions);
   const [savedMcpPermissions, setSavedMcpPermissions] = useState(settings.mcpGroupPermissions);
   const savedMcpPermissionsRef = useRef(settings.mcpGroupPermissions);
@@ -164,8 +74,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [mcpPermissionError, setMcpPermissionError] = useState<string | null>(null);
   const [mcpPermissionSaveSucceeded, setMcpPermissionSaveSucceeded] = useState(false);
   const [mcpPermissionTooltip, setMcpPermissionTooltip] =
-    useState<McpPermissionTooltip | null>(null);
-  const mcpPermissionTooltipRef = useRef<HTMLDivElement | null>(null);
+    useState<McpPermissionTooltipState | null>(null);
   const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
   const mcpConfigRequestRef = useRef(0);
   const [copyingMcpPrompt, setCopyingMcpPrompt] = useState(false);
@@ -187,34 +96,38 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   }, [groups, settings.mcpGroupPermissions]);
   useEffect(() => setMcpPort(String(settings.mcpHttpPort)), [settings.mcpHttpPort]);
   useEffect(() => {
-    void api.listSessions().then(setGroups).catch(() => setGroups([]));
+    let active = true;
+    void api
+      .listSessions()
+      .then((nextGroups) => {
+        if (active) {
+          setGroups(nextGroups);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setGroups([]);
+        }
+      });
+    void api
+      .getMcpPermissionCatalog()
+      .then((catalog) => {
+        if (active) {
+          setMcpPermissionCatalog(catalog);
+          setMcpPermissionCatalogFailed(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMcpPermissionCatalog([]);
+          setMcpPermissionCatalogFailed(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
   useEffect(() => setMcpPermissionTooltip(null), [settings.language]);
-  useEffect(() => {
-    if (!mcpConfigDialog) {
-      return;
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        mcpConfigRequestRef.current += 1;
-        setMcpConfigDialog(null);
-      }
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [mcpConfigDialog]);
-  useEffect(() => {
-    if (!mcpPermissionTooltip) {
-      return;
-    }
-    const close = () => setMcpPermissionTooltip(null);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [mcpPermissionTooltip]);
   useEffect(
     () => () => {
       if (mcpPromptCopiedTimerRef.current !== null) {
@@ -223,34 +136,6 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     },
     [],
   );
-  useLayoutEffect(() => {
-    const tooltip = mcpPermissionTooltipRef.current;
-    if (!tooltip || !mcpPermissionTooltip) {
-      return;
-    }
-    const tooltipRect = tooltip.getBoundingClientRect();
-    const { anchor } = mcpPermissionTooltip;
-    const centeredLeft = anchor.left + anchor.width / 2 - tooltipRect.width / 2;
-    const left = Math.min(
-      Math.max(centeredLeft, MCP_PERMISSION_TOOLTIP_MARGIN),
-      window.innerWidth - tooltipRect.width - MCP_PERMISSION_TOOLTIP_MARGIN,
-    );
-    const below = anchor.bottom + MCP_PERMISSION_TOOLTIP_GAP;
-    const above = anchor.top - tooltipRect.height - MCP_PERMISSION_TOOLTIP_GAP;
-    const top =
-      below + tooltipRect.height <= window.innerHeight - MCP_PERMISSION_TOOLTIP_MARGIN ||
-      above < MCP_PERMISSION_TOOLTIP_MARGIN
-        ? below
-        : above;
-    const maxTop = Math.max(
-      MCP_PERMISSION_TOOLTIP_MARGIN,
-      window.innerHeight - tooltipRect.height - MCP_PERMISSION_TOOLTIP_MARGIN,
-    );
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${Math.min(Math.max(top, MCP_PERMISSION_TOOLTIP_MARGIN), maxTop)}px`;
-    tooltip.style.visibility = "visible";
-  }, [mcpPermissionTooltip]);
-
   function showMcpPermissionTooltip(
     key: string,
     text: string,
@@ -376,10 +261,10 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     void loadMcpConfig(transport, target);
   }
 
-  function closeMcpConfigDialog() {
+  const closeMcpConfigDialog = useCallback(() => {
     mcpConfigRequestRef.current += 1;
     setMcpConfigDialog(null);
-  }
+  }, []);
 
   async function copyMcpConfig() {
     if (!mcpConfigDialog?.config) {
@@ -451,8 +336,8 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   }
 
   async function saveHttpPort() {
-    const parsedPort = Number(mcpPort);
-    if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    const parsedPort = validateMcpPort(mcpPort);
+    if (parsedPort === null) {
       setMcpHttpError(t("settings.mcpInvalidPort"));
       return;
     }
@@ -1060,187 +945,36 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
               </div>
             </section>
 
-            <section
-              aria-labelledby="mcp-permissions-title"
-              className="settings-panel settings-mcp-panel"
-            >
-              <header className="settings-panel-header settings-mcp-permissions-header">
-                <h3 id="mcp-permissions-title">{t("settings.mcpPermissions")}</h3>
-                <Button
-                  disabled={savingMcp || !mcpPermissionsDirty}
-                  onClick={() => void saveMcpSettings("permissions")}
-                >
-                  {t("settings.mcpSave")}
-                </Button>
-              </header>
-              <div className="settings-mcp-warning">{t("settings.mcpCommandWarning")}</div>
-              <div className="settings-mcp-grid">
-                <span>{t("settings.mcpGroup")}</span>
-                {MCP_PERMISSION_HEADERS.map(({ labelKey, tools }) => {
-                  const label = t(labelKey);
-                  const tooltip =
-                    tools.length === 0
-                      ? t("settings.mcpAccessToolsHint")
-                      : t("settings.mcpPermissionTools", { tools: tools.join("\n") });
-                  return (
-                    <span className="settings-mcp-permission-header" key={labelKey}>
-                      {label}
-                      <span
-                        aria-label={`${label}: ${tooltip.split("\n").join(", ")}`}
-                        aria-describedby={
-                          mcpPermissionTooltip?.key === labelKey
-                            ? MCP_PERMISSION_TOOLTIP_ID
-                            : undefined
-                        }
-                        className="settings-mcp-permission-info"
-                        onBlur={() => setMcpPermissionTooltip(null)}
-                        onFocus={(event) =>
-                          showMcpPermissionTooltip(labelKey, tooltip, event.currentTarget)
-                        }
-                        onMouseEnter={(event) =>
-                          showMcpPermissionTooltip(labelKey, tooltip, event.currentTarget)
-                        }
-                        onMouseLeave={(event) => {
-                          if (document.activeElement !== event.currentTarget) {
-                            setMcpPermissionTooltip(null);
-                          }
-                        }}
-                        role="img"
-                        tabIndex={0}
-                      >
-                        <Info aria-hidden="true" size={13} />
-                      </span>
-                    </span>
-                  );
-                })}
-                {groups.flatMap((group) => {
-                  const permission = permissionFor(group.name);
-                  return [
-                    <strong key={`${group.name}-name`}>{group.name}</strong>,
-                    ...MCP_PERMISSION_FIELDS.map((field) => (
-                      <input
-                        aria-label={`${group.name} ${String(field)}`}
-                        checked={Boolean(permission[field])}
-                        disabled={savingMcp}
-                        key={`${group.name}-${String(field)}`}
-                        onChange={(event) =>
-                          updatePermission(group.name, { [field]: event.target.checked })
-                        }
-                        type="checkbox"
-                      />
-                    )),
-                  ];
-                })}
-              </div>
-              <div className="settings-mcp-permission-feedback" aria-live="polite">
-                {mcpPermissionError ? (
-                  <div className="form-error settings-mcp-feedback" role="alert">
-                    {mcpPermissionError}
-                  </div>
-                ) : mcpPermissionSaveSucceeded ? (
-                  <div className="form-success settings-mcp-feedback" role="status">
-                    {t("settings.mcpSaved")}
-                  </div>
-                ) : null}
-              </div>
-            </section>
+            <McpPermissionsPanel
+              catalog={mcpPermissionCatalog}
+              catalogFailed={mcpPermissionCatalogFailed}
+              dirty={mcpPermissionsDirty}
+              error={mcpPermissionError}
+              groups={groups}
+              onHideTooltip={() => setMcpPermissionTooltip(null)}
+              onSave={() => void saveMcpSettings("permissions")}
+              onShowTooltip={showMcpPermissionTooltip}
+              onUpdate={updatePermission}
+              permissions={mcpPermissions}
+              saveSucceeded={mcpPermissionSaveSucceeded}
+              saving={savingMcp}
+              tooltipKey={mcpPermissionTooltip?.key ?? null}
+            />
           </>
         )}
       </div>
 
-      {mcpPermissionTooltip
-        ? createPortal(
-            <div
-              className="settings-mcp-permission-tooltip"
-              id={MCP_PERMISSION_TOOLTIP_ID}
-              ref={mcpPermissionTooltipRef}
-              role="tooltip"
-            >
-              {mcpPermissionTooltip.text}
-            </div>,
-            document.body,
-          )
-        : null}
-
-      {mcpConfigDialog
-        ? createPortal(
-            <div
-              className="dialog-backdrop settings-mcp-config-backdrop"
-              onMouseDown={(event) => {
-                if (event.currentTarget === event.target) {
-                  closeMcpConfigDialog();
-                }
-              }}
-            >
-              <section
-                aria-labelledby="mcp-config-dialog-title"
-                aria-modal="true"
-                className="dialog settings-mcp-config-dialog"
-                role="dialog"
-              >
-                <header className="dialog-header">
-                  <h2 id="mcp-config-dialog-title">
-                    {t("settings.mcpConfigDialogTitle", {
-                      transport: mcpConfigDialog.transport,
-                    })}
-                  </h2>
-                  <button
-                    aria-label={t("sessions.close")}
-                    className="icon-button"
-                    onClick={closeMcpConfigDialog}
-                    type="button"
-                  >
-                    <X aria-hidden="true" size={18} />
-                  </button>
-                </header>
-                <div className="settings-mcp-config-body">
-                  <label className="settings-mcp-config-field">
-                    <span>{t("settings.mcpClient")}</span>
-                    <Select<McpClientTarget>
-                      ariaLabel={t("settings.mcpClient")}
-                      onChange={(target) =>
-                        void loadMcpConfig(mcpConfigDialog.transport, target)
-                      }
-                      options={mcpClientOptions}
-                      value={mcpConfigDialog.target}
-                    />
-                  </label>
-                  <div className="settings-mcp-config-field">
-                    <span>{t("settings.mcpConfigPreview")}</span>
-                    <pre className="settings-mcp-config-preview" tabIndex={0}>
-                      {mcpConfigDialog.loading
-                        ? t("settings.mcpConfigLoading")
-                        : mcpConfigDialog.config}
-                    </pre>
-                  </div>
-                  {mcpConfigDialog.transport === "http" ? (
-                    <small className="settings-mcp-config-secret-hint">
-                      {t("settings.mcpConfigSecretHint")}
-                    </small>
-                  ) : null}
-                  {mcpConfigDialog.error ? (
-                    <div className="form-error" role="alert">
-                      {mcpConfigDialog.error}
-                    </div>
-                  ) : null}
-                </div>
-                <footer className="dialog-actions">
-                  <Button onClick={closeMcpConfigDialog} variant="ghost">
-                    {t("sessions.close")}
-                  </Button>
-                  <Button
-                    disabled={mcpConfigDialog.loading || !mcpConfigDialog.config}
-                    icon={<Copy aria-hidden="true" size={16} />}
-                    onClick={() => void copyMcpConfig()}
-                  >
-                    {t("settings.mcpCopyConfig")}
-                  </Button>
-                </footer>
-              </section>
-            </div>,
-            document.body,
-          )
-        : null}
+      <McpPermissionTooltip
+        onClose={() => setMcpPermissionTooltip(null)}
+        tooltip={mcpPermissionTooltip}
+      />
+      <McpConfigDialog
+        dialog={mcpConfigDialog}
+        onClose={closeMcpConfigDialog}
+        onCopy={() => void copyMcpConfig()}
+        onTargetChange={(transport, target) => void loadMcpConfig(transport, target)}
+        options={mcpClientOptions}
+      />
     </section>
   );
 }

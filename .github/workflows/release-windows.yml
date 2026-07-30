@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npm run build
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked
       - name: 注入更新公钥
         shell: pwsh
         env:

@@ -19,7 +19,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt::{Display, Formatter},
     sync::Arc,
     time::{Duration, Instant},
@@ -31,7 +31,22 @@ use zeroize::Zeroizing;
 
 const CONNECTION_IDLE: Duration = Duration::from_secs(300);
 const MCP_TOKEN_ACCOUNT: &str = "__mcp_http_token";
-const MAX_SEARCH_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+mod catalog;
+mod search;
+
+use catalog::permission_guide_response;
+#[cfg(test)]
+use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
+pub(crate) use catalog::{mcp_agent_prompt, permission_catalog, McpPermissionCatalogEntry};
+#[cfg(test)]
+use search::{
+    default_search_scan_bytes, RemoteFileSearchMatch, RemoteFileSearchResult,
+    MAX_SEARCH_RESPONSE_BYTES,
+};
+use search::{
+    search_json_result, search_remote_text, validate_search_remote_file_args,
+    RemoteFileSearchInput, SearchRemoteFileArgs,
+};
 
 #[derive(Clone, Default)]
 pub struct McpHttpRuntime {
@@ -316,67 +331,6 @@ struct ReadFileArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-struct SearchRemoteFileArgs {
-    /// FsTTY 会话 ID。
-    session_id: String,
-    /// 要扫描的远程普通文件绝对路径。
-    path: String,
-    /// 查询文本，长度为 1–1024 字节，不能包含换行或控制字符。
-    #[schemars(length(min = 1, max = 1024))]
-    query: String,
-    /// 扫描起始字节偏移；启用 tail 时必须为 0。
-    #[serde(default)]
-    offset: u64,
-    /// 是否从文件尾部向前取一个扫描窗口。
-    #[serde(default)]
-    tail: bool,
-    /// 单次扫描字节数，范围为 1–16 MiB。
-    #[serde(default = "default_search_scan_bytes")]
-    #[schemars(range(min = 1, max = 16_777_216))]
-    scan_bytes: usize,
-    /// 是否区分查询文本的大小写。
-    #[serde(default)]
-    case_sensitive: bool,
-    /// 每个匹配项之前返回的上下文行数，范围为 0–50。
-    #[serde(default)]
-    #[schemars(range(min = 0, max = 50))]
-    before_lines: usize,
-    /// 每个匹配项之后返回的上下文行数，范围为 0–50。
-    #[serde(default)]
-    #[schemars(range(min = 0, max = 50))]
-    after_lines: usize,
-    /// 最多返回的匹配项数量，范围为 1–50。
-    #[serde(default = "default_search_max_matches")]
-    #[schemars(range(min = 1, max = 50))]
-    max_matches: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteFileSearchMatch {
-    byte_offset: u64,
-    line: String,
-    before: Vec<String>,
-    after: Vec<String>,
-    line_truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteFileSearchResult {
-    matches: Vec<RemoteFileSearchMatch>,
-    start_offset: u64,
-    next_offset: u64,
-    file_size: u64,
-    scanned_bytes: usize,
-    end_of_file: bool,
-    match_limit_reached: bool,
-    lossy_decoding: bool,
-    output_truncated: bool,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
 struct CommandArgs {
     session_id: String,
     command: String,
@@ -467,446 +421,12 @@ struct SafeSession {
     auth_kind: &'static str,
 }
 
-#[derive(Debug)]
-struct GuidePermission {
-    key: &'static str,
-    zh_name: &'static str,
-    en_name: &'static str,
-    tools: &'static [&'static str],
-    zh_warning: Option<&'static str>,
-    en_warning: Option<&'static str>,
-}
-
-const GUIDE_PERMISSIONS: &[GuidePermission] = &[
-    GuidePermission {
-        key: "enabled",
-        zh_name: "分组访问",
-        en_name: "Group access",
-        tools: &[],
-        zh_warning: None,
-        en_warning: None,
-    },
-    GuidePermission {
-        key: "sessionRead",
-        zh_name: "会话与状态读取",
-        en_name: "Session and status read",
-        tools: &["list_sessions", "get_device_status"],
-        zh_warning: None,
-        en_warning: None,
-    },
-    GuidePermission {
-        key: "fileRead",
-        zh_name: "远程文件读取",
-        en_name: "Remote file read",
-        tools: &[
-            "list_remote_files",
-            "read_remote_file",
-            "search_remote_file",
-            "download_remote_file",
-            "create_remote_file_download_link",
-        ],
-        zh_warning: None,
-        en_warning: None,
-    },
-    GuidePermission {
-        key: "commandExecute",
-        zh_name: "命令执行",
-        en_name: "Command execution",
-        tools: &["execute_command"],
-        zh_warning: Some("命令执行属于高风险权限，可绕过文件编辑和删除限制。"),
-        en_warning: Some(
-            "Command execution is high risk and can bypass file editing and deletion restrictions.",
-        ),
-    },
-    GuidePermission {
-        key: "fileWrite",
-        zh_name: "文件编辑",
-        en_name: "File editing",
-        tools: &[
-            "write_remote_file",
-            "upload_local_file",
-            "create_remote_directory",
-            "rename_remote_entry",
-            "move_remote_entry",
-            "create_remote_file_upload_link",
-        ],
-        zh_warning: None,
-        en_warning: None,
-    },
-    GuidePermission {
-        key: "fileDelete",
-        zh_name: "文件删除",
-        en_name: "File deletion",
-        tools: &["delete_remote_entry"],
-        zh_warning: Some("文件删除属于破坏性操作，远程删除无法撤销。"),
-        en_warning: Some("File deletion is destructive and cannot be undone remotely."),
-    },
-];
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PermissionGuideEntry {
-    permission_key: &'static str,
-    permission_name: &'static str,
-    tools: &'static [&'static str],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    warning: Option<&'static str>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PermissionGuideResponse {
-    locale: &'static str,
-    settings_path: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    target_tool: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    permission_key: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    permission_name: Option<&'static str>,
-    steps: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    warning: Option<&'static str>,
-    permissions: Vec<PermissionGuideEntry>,
-}
-
-impl GuidePermission {
-    fn name(&self, language: &Language) -> &'static str {
-        if matches!(language, Language::EnUs) {
-            self.en_name
-        } else {
-            self.zh_name
-        }
-    }
-
-    fn warning(&self, language: &Language) -> Option<&'static str> {
-        if matches!(language, Language::EnUs) {
-            self.en_warning
-        } else {
-            self.zh_warning
-        }
-    }
-}
-
-fn guide_permission_for_tool(tool_name: &str) -> Option<&'static GuidePermission> {
-    GUIDE_PERMISSIONS
-        .iter()
-        .find(|permission| permission.tools.contains(&tool_name))
-}
-
-fn supported_guide_tools() -> Vec<&'static str> {
-    GUIDE_PERMISSIONS
-        .iter()
-        .flat_map(|permission| permission.tools.iter().copied())
-        .collect()
-}
-
-pub(crate) fn mcp_agent_prompt() -> String {
-    let tool_groups = GUIDE_PERMISSIONS
-        .iter()
-        .filter(|permission| !permission.tools.is_empty())
-        .map(|permission| {
-            format!(
-                "- {} ({}): {}",
-                permission.en_name,
-                permission.key,
-                permission.tools.join(", ")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        r#"<!-- fstty:begin -->
-
-Use FsTTY MCP:
-- Call list_sessions first to discover available sessions.
-- Use get_device_status for status; list_remote_files, read_remote_file, and search_remote_file for files and logs.
-- execute_command runs remote shell commands when commandExecute permission is enabled.
-- get_permission_guide returns FsTTY permission setup steps for a tool.
-- stdio local transfers require MCP client Roots. HTTP transfers use create_remote_file_upload_link or create_remote_file_download_link; links expire after five minutes.
-- Host-key and credential issues are handled in FsTTY.
-- Tool parameters are defined by live MCP tool schemas.
-
-Permission and tool mapping:
-{tool_groups}
-- Guide: get_permission_guide
-
-<!-- fstty:end -->"#
-    )
-}
-
-fn permission_guide_entry(
-    permission: &'static GuidePermission,
-    language: &Language,
-) -> PermissionGuideEntry {
-    PermissionGuideEntry {
-        permission_key: permission.key,
-        permission_name: permission.name(language),
-        tools: permission.tools,
-        warning: permission.warning(language),
-    }
-}
-
-fn permission_guide_response(
-    language: &Language,
-    tool_name: Option<String>,
-) -> Result<PermissionGuideResponse, String> {
-    let target_permission = tool_name
-        .as_deref()
-        .map(|tool_name| {
-            guide_permission_for_tool(tool_name)
-                .ok_or_else(|| permission_guide_unknown_tool(language))
-        })
-        .transpose()?;
-    let english = matches!(language, Language::EnUs);
-    let settings_path = if english {
-        "Settings > MCP"
-    } else {
-        "设置 > MCP"
-    };
-    let mut steps = if english {
-        vec![
-            "Open Settings > MCP in FsTTY.".to_owned(),
-            "Find the group that contains the target session.".to_owned(),
-            "Enable Group access.".to_owned(),
-        ]
-    } else {
-        vec![
-            "打开 FsTTY 的“设置 > MCP”。".to_owned(),
-            "找到目标会话所属分组。".to_owned(),
-            "开启“分组访问”。".to_owned(),
-        ]
-    };
-    match target_permission {
-        Some(permission) => {
-            steps.push(if english {
-                format!("Enable {}.", permission.name(language))
-            } else {
-                format!("开启“{}”。", permission.name(language))
-            });
-        }
-        None => steps.push(if english {
-            "Enable the permissions required by the task.".to_owned()
-        } else {
-            "按任务需要开启对应权限。".to_owned()
-        }),
-    }
-    steps.push(if english {
-        "Select Save MCP settings.".to_owned()
-    } else {
-        "点击“保存 MCP 设置”。".to_owned()
-    });
-    let permissions = match target_permission {
-        Some(permission) => vec![
-            permission_guide_entry(&GUIDE_PERMISSIONS[0], language),
-            permission_guide_entry(permission, language),
-        ],
-        None => GUIDE_PERMISSIONS
-            .iter()
-            .map(|permission| permission_guide_entry(permission, language))
-            .collect(),
-    };
-    Ok(PermissionGuideResponse {
-        locale: if english { "en-US" } else { "zh-CN" },
-        settings_path,
-        target_tool: tool_name,
-        permission_key: target_permission.map(|permission| permission.key),
-        permission_name: target_permission.map(|permission| permission.name(language)),
-        steps,
-        warning: target_permission.and_then(|permission| permission.warning(language)),
-        permissions,
-    })
-}
-
-fn permission_guide_unknown_tool(language: &Language) -> String {
-    let tools = supported_guide_tools().join(", ");
-    if matches!(language, Language::EnUs) {
-        format!("Unknown tool. Supported tools: {tools}")
-    } else {
-        format!("未知工具。支持的工具：{tools}")
-    }
-}
-
 fn default_timeout() -> u64 {
     60
 }
 
 fn default_read_limit() -> usize {
     1024 * 1024
-}
-
-fn default_search_scan_bytes() -> usize {
-    4 * 1024 * 1024
-}
-
-fn default_search_max_matches() -> usize {
-    50
-}
-
-fn validate_search_remote_file_args(args: &SearchRemoteFileArgs) -> Result<(), &'static str> {
-    if args.query.is_empty()
-        || args.query.len() > 1_024
-        || args.query.chars().any(|character| {
-            matches!(character, '\0' | '\r' | '\n') || character.is_control() && character != '\t'
-        })
-    {
-        return Err("查询文本必须为 1 到 1024 字节，且不能包含换行或控制字符");
-    }
-    if args.scan_bytes == 0 || args.scan_bytes > 16 * 1024 * 1024 {
-        return Err("scanBytes 必须在 1 字节到 16 MiB 之间");
-    }
-    if args.before_lines > 50 || args.after_lines > 50 {
-        return Err("beforeLines 和 afterLines 必须在 0 到 50 之间");
-    }
-    if args.max_matches == 0 || args.max_matches > 50 {
-        return Err("maxMatches 必须在 1 到 50 之间");
-    }
-    Ok(())
-}
-
-struct RemoteFileSearchInput<'a> {
-    content: &'a [u8],
-    start_offset: u64,
-    file_size: u64,
-    starts_at_line_boundary: bool,
-    window_reaches_end: bool,
-    query: &'a str,
-    case_sensitive: bool,
-    before_lines: usize,
-    after_lines: usize,
-    max_matches: usize,
-}
-
-fn search_remote_text(input: RemoteFileSearchInput<'_>) -> RemoteFileSearchResult {
-    const MAX_OUTPUT_LINE_CHARS: usize = 2_048;
-
-    let normalized_query = (!input.case_sensitive).then(|| input.query.to_lowercase());
-    let mut matches: Vec<RemoteFileSearchMatch> = Vec::new();
-    let mut before = VecDeque::with_capacity(input.before_lines);
-    let mut pending_after: Vec<(usize, usize)> = Vec::new();
-    let mut cursor = 0;
-    let mut lossy_decoding = false;
-    let mut match_limit_reached = false;
-
-    // 扫描窗口可能从一行中间开始；丢弃残行，避免返回误导性匹配。
-    if !input.starts_at_line_boundary {
-        match input.content.iter().position(|byte| *byte == b'\n') {
-            Some(position) => cursor = position + 1,
-            None => {
-                return RemoteFileSearchResult {
-                    matches,
-                    start_offset: input.start_offset,
-                    next_offset: input
-                        .start_offset
-                        .saturating_add(input.content.len() as u64),
-                    file_size: input.file_size,
-                    scanned_bytes: input.content.len(),
-                    end_of_file: input.window_reaches_end,
-                    match_limit_reached,
-                    lossy_decoding,
-                    output_truncated: false,
-                };
-            }
-        }
-    }
-
-    while cursor < input.content.len() {
-        let remaining = &input.content[cursor..];
-        let newline = remaining.iter().position(|byte| *byte == b'\n');
-        if newline.is_none() && !input.window_reaches_end {
-            break;
-        }
-        let line_length = newline.unwrap_or(remaining.len());
-        let next_cursor = cursor
-            .saturating_add(line_length)
-            .saturating_add(usize::from(newline.is_some()));
-        let mut line_bytes = &input.content[cursor..cursor + line_length];
-        if line_bytes.last() == Some(&b'\r') {
-            line_bytes = &line_bytes[..line_bytes.len() - 1];
-        }
-        lossy_decoding |= std::str::from_utf8(line_bytes).is_err();
-        let full_line = String::from_utf8_lossy(line_bytes);
-        let preview: String = full_line.chars().take(MAX_OUTPUT_LINE_CHARS).collect();
-        let line_truncated = full_line.chars().count() > MAX_OUTPUT_LINE_CHARS;
-
-        for (match_index, remaining_lines) in &mut pending_after {
-            if *remaining_lines > 0 {
-                matches[*match_index].after.push(preview.clone());
-                *remaining_lines -= 1;
-            }
-        }
-        pending_after.retain(|(_, remaining_lines)| *remaining_lines > 0);
-
-        if !match_limit_reached {
-            let matched = if let Some(normalized_query) = normalized_query.as_deref() {
-                full_line.to_lowercase().contains(normalized_query)
-            } else {
-                full_line.contains(input.query)
-            };
-            if matched {
-                let match_index = matches.len();
-                matches.push(RemoteFileSearchMatch {
-                    byte_offset: input.start_offset.saturating_add(cursor as u64),
-                    line: preview.clone(),
-                    before: before.iter().cloned().collect(),
-                    after: Vec::with_capacity(input.after_lines),
-                    line_truncated,
-                });
-                if input.after_lines > 0 {
-                    pending_after.push((match_index, input.after_lines));
-                }
-                if matches.len() >= input.max_matches {
-                    match_limit_reached = true;
-                }
-            }
-        }
-
-        if input.before_lines > 0 {
-            before.push_back(preview);
-            while before.len() > input.before_lines {
-                before.pop_front();
-            }
-        }
-        cursor = next_cursor;
-        if match_limit_reached && pending_after.is_empty() {
-            break;
-        }
-    }
-
-    let next_offset = input.start_offset.saturating_add(cursor as u64);
-    RemoteFileSearchResult {
-        matches,
-        start_offset: input.start_offset,
-        next_offset,
-        file_size: input.file_size,
-        scanned_bytes: cursor,
-        end_of_file: next_offset >= input.file_size,
-        match_limit_reached,
-        lossy_decoding,
-        output_truncated: false,
-    }
-}
-
-fn search_json_result(mut result: RemoteFileSearchResult) -> CallToolResult {
-    loop {
-        let Ok(text) = serde_json::to_string(&result) else {
-            return tool_error("无法序列化远程文件搜索结果");
-        };
-        let response = CallToolResult::success(vec![ContentBlock::text(text)]);
-        if serde_json::to_vec(&response).is_ok_and(|bytes| bytes.len() <= MAX_SEARCH_RESPONSE_BYTES)
-        {
-            return response;
-        }
-
-        // 从尾部裁剪完整匹配项，确保续扫偏移始终落在首个未返回的匹配处。
-        let Some(removed) = result.matches.pop() else {
-            return tool_error("远程文件搜索结果超过 8 MiB 输出限制");
-        };
-        result.output_truncated = true;
-        result.next_offset = removed.byte_offset;
-        result.end_of_file = false;
-    }
 }
 
 #[tool_router]
@@ -1792,11 +1312,8 @@ async fn rooted_path(
                 .and_then(|parent| std::fs::canonicalize(parent).ok())
                 .and_then(|parent| requested.file_name().map(|name| parent.join(name)))
         };
-        if candidate
-            .as_ref()
-            .is_some_and(|candidate| candidate.starts_with(&root_path))
-        {
-            return Ok(candidate.expect("已检查本地路径"));
+        if let Some(candidate) = candidate.filter(|candidate| candidate.starts_with(&root_path)) {
+            return Ok(candidate);
         }
     }
     Err(McpError::invalid_request("本地路径不在 MCP Roots 内", None))

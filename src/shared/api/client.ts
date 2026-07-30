@@ -11,6 +11,7 @@ import type {
   McpClientTarget,
   McpGroupPermission,
   McpHttpStatus,
+  McpPermissionCatalogEntry,
   Session,
   SessionGroup,
   TerminalEvent,
@@ -183,6 +184,9 @@ export const api = {
   },
   getMcpAgentPrompt() {
     return invoke<string>("get_mcp_agent_prompt");
+  },
+  getMcpPermissionCatalog() {
+    return invoke<McpPermissionCatalogEntry[]>("get_mcp_permission_catalog");
   },
   getMcpHttpStatus() {
     return invoke<McpHttpStatus>("get_mcp_http_status");
