@@ -142,6 +142,9 @@ export const api = {
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
   },
+  openLogDirectory() {
+    return invoke<void>("open_log_directory");
+  },
   setLanguage(language: Language) {
     return invoke<AppSettings>("set_language", { language });
   },
@@ -177,6 +180,9 @@ export const api = {
   },
   getMcpStdioClientConfig(clientTarget: McpClientTarget) {
     return invoke<string>("get_mcp_stdio_client_config", { clientTarget });
+  },
+  getMcpAgentPrompt() {
+    return invoke<string>("get_mcp_agent_prompt");
   },
   getMcpHttpStatus() {
     return invoke<McpHttpStatus>("get_mcp_http_status");

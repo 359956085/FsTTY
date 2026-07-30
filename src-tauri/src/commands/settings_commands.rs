@@ -2,7 +2,8 @@ use crate::models::{AppError, AppSettings, Language, McpGroupPermission};
 use crate::services::AppState;
 use serde::Serialize;
 use std::path::Path;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 const MCP_HTTP_CLIENT_HOST_PLACEHOLDER: &str = "<FSTTY_HOST_IP>";
 const MCP_HTTP_LISTEN_HOST: &str = "0.0.0.0";
@@ -26,6 +27,15 @@ pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, AppEr
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
 
     Ok(service.get())
+}
+
+#[tauri::command]
+pub fn open_log_directory(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    std::fs::create_dir_all(&state.log_directory)
+        .map_err(|error| AppError::Persistence(format!("无法创建日志目录：{error}")))?;
+    app.opener()
+        .open_path(state.log_directory.to_string_lossy(), None::<&str>)
+        .map_err(|error| AppError::Internal(format!("无法打开日志目录：{error}")))
 }
 
 #[tauri::command]
@@ -119,6 +129,10 @@ pub async fn update_mcp_settings(
                     .await
             };
         if let Err(error) = runtime_result {
+            log::error!(
+                "MCP HTTP 服务切换失败：port={}，error={error}",
+                settings.mcp_http_port
+            );
             let mut service = state
                 .settings_service
                 .lock()
@@ -131,8 +145,13 @@ pub async fn update_mcp_settings(
             )?;
             return Err(error);
         }
+        log::info!("MCP HTTP 服务运行：port={}", settings.mcp_http_port);
     } else {
         state.mcp_http_runtime.stop().await;
+        log::info!("MCP HTTP 服务已停止");
+    }
+    if previous.mcp_enabled != settings.mcp_enabled {
+        log::info!("MCP stdio 服务状态变更：enabled={}", settings.mcp_enabled);
     }
     Ok(settings)
 }
@@ -210,6 +229,11 @@ pub fn get_mcp_stdio_client_config(client_target: McpClientTarget) -> Result<Str
     let executable = std::env::current_exe()
         .map_err(|_| AppError::Internal("无法获取 FsTTY 程序路径".to_owned()))?;
     build_mcp_stdio_client_config(&executable, client_target)
+}
+
+#[tauri::command]
+pub fn get_mcp_agent_prompt() -> String {
+    crate::mcp::mcp_agent_prompt()
 }
 
 fn build_mcp_stdio_client_config(
@@ -322,6 +346,7 @@ pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), App
                 .await?;
         }
     }
+    log::info!("MCP HTTP Token 已重置");
     Ok(())
 }
 

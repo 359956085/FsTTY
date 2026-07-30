@@ -1,4 +1,6 @@
+mod app_paths;
 mod commands;
+mod logging;
 mod mcp;
 mod mcp_transfer;
 mod models;
@@ -7,13 +9,13 @@ mod services;
 use commands::{
     cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
     delete_session, delete_session_group, disconnect_session, download_file, forget_host_key,
-    get_app_settings, get_device_status, get_mcp_http_client_config, get_mcp_http_status,
-    get_mcp_stdio_client_config, get_system_clipboard_content_kind, list_remote_files,
-    list_sessions, move_remote_entry, rename_remote_entry, rename_session_group, reorder_session,
-    reorder_session_group, resize_terminal, resolve_session_login_save_prompt,
-    rotate_mcp_http_token, set_ignored_update_version, set_language, set_session_credential,
-    trust_host_key, update_app_settings, update_mcp_settings, update_session, upload_file,
-    write_terminal,
+    get_app_settings, get_device_status, get_mcp_agent_prompt, get_mcp_http_client_config,
+    get_mcp_http_status, get_mcp_stdio_client_config, get_system_clipboard_content_kind,
+    list_remote_files, list_sessions, move_remote_entry, open_log_directory, rename_remote_entry,
+    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
+    resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
+    set_language, set_session_credential, trust_host_key, update_app_settings, update_mcp_settings,
+    update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -33,41 +35,31 @@ fn show_main_window(app: &AppHandle) {
 }
 
 pub fn run_mcp_stdio() -> Result<(), String> {
-    let app_data_dir = platform_app_data_dir()?;
+    let paths = app_paths::prepare_app_paths()?;
+    logging::prepare_log_directory(&paths.app_data_dir, &paths.log_dir)?;
+    logging::init_stdio(paths.log_dir)?;
+    for warning in paths.migration_warnings {
+        log::warn!("{warning}");
+    }
+    log::info!("FsTTY MCP stdio 服务启动");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    runtime.block_on(mcp::run_stdio(app_data_dir))
-}
-
-fn platform_app_data_dir() -> Result<std::path::PathBuf, String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var_os("APPDATA")
-            .map(std::path::PathBuf::from)
-            .map(|path| path.join("com.fengshi.fstty"))
-            .ok_or_else(|| "无法确定应用数据目录".to_owned())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let root = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(std::path::PathBuf::from)
-                    .map(|path| path.join(".config"))
-            })
-            .ok_or_else(|| "无法确定应用数据目录".to_owned())?;
-        Ok(root.join("com.fengshi.fstty"))
-    }
+    runtime.block_on(mcp::run_stdio(paths.app_data_dir))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let paths = app_paths::prepare_app_paths().expect("初始化 FsTTY 应用数据目录失败");
+    logging::prepare_log_directory(&paths.app_data_dir, &paths.log_dir)
+        .expect("初始化 FsTTY 日志目录失败");
+    let runtime_log_dir = paths.log_dir.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(logging::tauri_plugin(runtime_log_dir))
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -79,9 +71,12 @@ pub fn run() {
                 )
                 .build(),
         )
-        .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
-            let state = AppState::new(app_data_dir);
+        .setup(move |app| {
+            for warning in &paths.migration_warnings {
+                log::warn!("{warning}");
+            }
+            log::info!("FsTTY GUI 启动");
+            let state = AppState::new(paths.app_data_dir.clone());
             let startup_state = state.clone();
             app.manage(state);
             tauri::async_runtime::spawn(async move {
@@ -94,14 +89,19 @@ pub fn run() {
                     settings.filter(|settings| settings.mcp_enabled && settings.mcp_http_enabled)
                 {
                     if let Ok(token) = crate::mcp::get_or_create_http_token(&startup_state).await {
-                        let _ = startup_state
+                        if let Err(error) = startup_state
                             .mcp_http_runtime
                             .start(
                                 startup_state.clone(),
                                 settings.mcp_http_port,
                                 token.to_string(),
                             )
-                            .await;
+                            .await
+                        {
+                            log::error!("MCP HTTP 服务启动失败：{error}");
+                        }
+                    } else {
+                        log::error!("MCP HTTP Token 初始化失败");
                     }
                 }
             });
@@ -173,10 +173,12 @@ pub fn run() {
             set_language,
             update_app_settings,
             update_mcp_settings,
+            get_mcp_agent_prompt,
             get_mcp_http_client_config,
             get_mcp_stdio_client_config,
             get_mcp_http_status,
-            rotate_mcp_http_token
+            rotate_mcp_http_token,
+            open_log_directory
         ])
         .run(tauri::generate_context!())
         .expect("启动 FsTTY 失败");

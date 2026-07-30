@@ -18,6 +18,7 @@ pub use settings_service::SettingsService;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub log_directory: PathBuf,
     pub session_service: Arc<Mutex<SessionService>>,
     pub credential_service: CredentialService,
     pub connection_manager: ConnectionManager,
@@ -30,14 +31,16 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app_data_dir: PathBuf) -> Self {
+        let log_directory = app_data_dir.join("logs");
         Self {
+            log_directory: log_directory.clone(),
             session_service: Arc::new(Mutex::new(SessionService::load(&app_data_dir))),
             credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new(&app_data_dir),
             device_service: DeviceService,
             settings_service: Arc::new(StdMutex::new(SettingsService::load(&app_data_dir))),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),
-            mcp_audit_service: McpAuditService::new(&app_data_dir),
+            mcp_audit_service: McpAuditService::new(&log_directory),
             mcp_operation_lock_service: McpOperationLockService::new(&app_data_dir),
         }
     }

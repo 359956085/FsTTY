@@ -12,7 +12,7 @@ pub use session_commands::{
     upload_file, write_terminal,
 };
 pub use settings_commands::{
-    get_app_settings, get_mcp_http_client_config, get_mcp_http_status, get_mcp_stdio_client_config,
-    rotate_mcp_http_token, set_ignored_update_version, set_language, update_app_settings,
-    update_mcp_settings,
+    get_app_settings, get_mcp_agent_prompt, get_mcp_http_client_config, get_mcp_http_status,
+    get_mcp_stdio_client_config, open_log_directory, rotate_mcp_http_token,
+    set_ignored_update_version, set_language, update_app_settings, update_mcp_settings,
 };

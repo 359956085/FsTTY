@@ -1,26 +1,22 @@
+use crate::logging::{local_timestamp, DailyLogWriter};
 use fs2::FileExt;
 use serde::Serialize;
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
-
-const AUDIT_MAX_BYTES: u64 = 10 * 1024 * 1024;
-const AUDIT_BACKUPS: usize = 3;
 
 #[derive(Clone)]
 pub struct McpAuditService {
-    path: PathBuf,
-    write_lock: Arc<Mutex<()>>,
+    writer: Arc<Mutex<DailyLogWriter>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuditRecord<'a> {
-    timestamp_ms: u128,
+    timestamp: String,
     client: &'a str,
     transport: &'a str,
     tool: &'a str,
@@ -30,10 +26,9 @@ struct AuditRecord<'a> {
 }
 
 impl McpAuditService {
-    pub fn new(app_data_dir: &Path) -> Self {
+    pub fn new(log_directory: &Path) -> Self {
         Self {
-            path: app_data_dir.join("mcp-audit.jsonl"),
-            write_lock: Arc::new(Mutex::new(())),
+            writer: Arc::new(Mutex::new(DailyLogWriter::new(log_directory, "mcp-audit"))),
         }
     }
 
@@ -45,17 +40,11 @@ impl McpAuditService {
         result: &str,
         duration: Duration,
     ) {
-        let Ok(_guard) = self.write_lock.lock() else {
+        let Ok(mut writer) = self.writer.lock() else {
             return;
         };
-        if rotate_if_needed(&self.path).is_err() {
-            return;
-        }
         let record = AuditRecord {
-            timestamp_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
+            timestamp: local_timestamp(),
             client: "mcp-client",
             transport,
             tool,
@@ -66,32 +55,8 @@ impl McpAuditService {
         let Ok(line) = serde_json::to_string(&record) else {
             return;
         };
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-        {
-            let _ = writeln!(file, "{line}");
-        }
+        let _ = writer.write_line(line.as_bytes());
     }
-}
-
-fn rotate_if_needed(path: &Path) -> std::io::Result<()> {
-    if path.metadata().map(|metadata| metadata.len()).unwrap_or(0) < AUDIT_MAX_BYTES {
-        return Ok(());
-    }
-    let backup_path = |index: usize| PathBuf::from(format!("{}.{}", path.display(), index));
-    let _ = fs::remove_file(backup_path(AUDIT_BACKUPS));
-    for index in (1..AUDIT_BACKUPS).rev() {
-        let source = backup_path(index);
-        if source.exists() {
-            fs::rename(source, backup_path(index + 1))?;
-        }
-    }
-    if path.exists() {
-        fs::rename(path, backup_path(1))?;
-    }
-    Ok(())
 }
 
 pub struct McpOperationLock {
@@ -171,8 +136,24 @@ mod tests {
             "success",
             Duration::from_millis(12),
         );
-        let content =
-            fs::read_to_string(directory.join("mcp-audit.jsonl")).expect("应写入审计日志");
+        let path = fs::read_dir(&directory)
+            .expect("应读取审计目录")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("mcp-audit-") && name.ends_with(".log"))
+            })
+            .expect("应生成审计日志");
+        let content = fs::read_to_string(path).expect("应读取审计日志");
+        let record: serde_json::Value =
+            serde_json::from_str(content.trim()).expect("日志应为 JSON");
+        let timestamp = record["timestamp"].as_str().expect("应包含格式化时间");
+        assert_eq!(timestamp.len(), 29);
+        assert_eq!(&timestamp[4..5], "-");
+        assert_eq!(&timestamp[10..11], "T");
+        assert!(record.get("timestampMs").is_none());
         assert!(content.contains("\"tool\":\"execute_command\""));
         assert!(!content.contains("rm -rf"));
         let _ = fs::remove_dir_all(directory);

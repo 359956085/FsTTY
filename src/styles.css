@@ -1709,7 +1709,7 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--border);
 }
 
-.settings-clipboard-row,
+.settings-log-row,
 .settings-proxy-row {
   border-bottom: 0;
 }
@@ -1730,6 +1730,10 @@ textarea:focus-visible,
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.settings-row-copy small.settings-mcp-inline-error {
+  color: var(--danger);
 }
 
 .settings-language-select {
@@ -1855,7 +1859,7 @@ textarea:focus-visible,
   color: color-mix(in srgb, var(--danger) 72%, var(--muted));
 }
 
-.settings-mcp-icon-action {
+.settings-icon-action {
   flex: 0 0 auto;
   width: 32px;
   height: 32px;

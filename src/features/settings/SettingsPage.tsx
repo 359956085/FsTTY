@@ -1,4 +1,13 @@
-import { Copy, Info, Plug, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import {
+  Copy,
+  FolderOpen,
+  Info,
+  Plug,
+  RefreshCw,
+  RotateCcw,
+  Settings2,
+  X,
+} from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -138,6 +147,8 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const [error, setError] = useState<string | null>(null);
+  const [logDirectoryError, setLogDirectoryError] = useState<string | null>(null);
+  const [openingLogDirectory, setOpeningLogDirectory] = useState(false);
   const [proxy, setProxy] = useState(settings.updateProxy);
   const [savingLanguage, setSavingLanguage] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
@@ -157,6 +168,11 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const mcpPermissionTooltipRef = useRef<HTMLDivElement | null>(null);
   const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
   const mcpConfigRequestRef = useRef(0);
+  const [copyingMcpPrompt, setCopyingMcpPrompt] = useState(false);
+  const [mcpPromptCopied, setMcpPromptCopied] = useState(false);
+  const [mcpPromptError, setMcpPromptError] = useState<string | null>(null);
+  const mcpPromptCopyInFlightRef = useRef(false);
+  const mcpPromptCopiedTimerRef = useRef<number | null>(null);
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
   useEffect(() => {
@@ -199,6 +215,14 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
       window.removeEventListener("scroll", close, true);
     };
   }, [mcpPermissionTooltip]);
+  useEffect(
+    () => () => {
+      if (mcpPromptCopiedTimerRef.current !== null) {
+        window.clearTimeout(mcpPromptCopiedTimerRef.current);
+      }
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const tooltip = mcpPermissionTooltipRef.current;
     if (!tooltip || !mcpPermissionTooltip) {
@@ -376,6 +400,44 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     }
   }
 
+  async function copyMcpAgentPrompt(target: HTMLButtonElement) {
+    if (mcpPromptCopyInFlightRef.current) {
+      return;
+    }
+    mcpPromptCopyInFlightRef.current = true;
+    setCopyingMcpPrompt(true);
+    setMcpPromptCopied(false);
+    setMcpPromptError(null);
+    if (mcpPromptCopiedTimerRef.current !== null) {
+      window.clearTimeout(mcpPromptCopiedTimerRef.current);
+      mcpPromptCopiedTimerRef.current = null;
+    }
+    try {
+      const prompt = await api.getMcpAgentPrompt();
+      await writeText(prompt);
+      setMcpPromptCopied(true);
+      showMcpPermissionTooltip(
+        "agent-prompt-copy",
+        t("settings.mcpPromptCopied"),
+        target,
+      );
+      mcpPromptCopiedTimerRef.current = window.setTimeout(() => {
+        setMcpPromptCopied(false);
+        setMcpPermissionTooltip((current) =>
+          current?.key === "agent-prompt-copy" ? null : current,
+        );
+        mcpPromptCopiedTimerRef.current = null;
+      }, 2_000);
+    } catch (nextError) {
+      setMcpPromptError(
+        resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
+      );
+    } finally {
+      mcpPromptCopyInFlightRef.current = false;
+      setCopyingMcpPrompt(false);
+    }
+  }
+
   async function rotateMcpToken() {
     setSavingMcp(true);
     setMcpHttpError(null);
@@ -419,6 +481,23 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
       setError(resolveApiError(nextError, t("errors.unknown")));
     } finally {
       setSavingLanguage(false);
+    }
+  }
+
+  async function openLogDirectory() {
+    if (openingLogDirectory) {
+      return;
+    }
+    setOpeningLogDirectory(true);
+    setLogDirectoryError(null);
+    try {
+      await api.openLogDirectory();
+    } catch (nextError) {
+      setLogDirectoryError(
+        resolveApiError(nextError, t("settings.openLogDirectoryFailed")),
+      );
+    } finally {
+      setOpeningLogDirectory(false);
     }
   }
 
@@ -583,6 +662,51 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   type="checkbox"
                 />
               </div>
+              <div className="settings-row settings-log-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.logs")}</span>
+                  <small>{t("settings.logsHint")}</small>
+                </div>
+                <button
+                  aria-describedby={
+                    mcpPermissionTooltip?.key === "open-log-directory"
+                      ? MCP_PERMISSION_TOOLTIP_ID
+                      : undefined
+                  }
+                  aria-label={t("settings.openLogDirectory")}
+                  className="icon-button settings-icon-action"
+                  disabled={openingLogDirectory}
+                  onBlur={() => setMcpPermissionTooltip(null)}
+                  onClick={() => void openLogDirectory()}
+                  onFocus={(event) =>
+                    showMcpPermissionTooltip(
+                      "open-log-directory",
+                      t("settings.openLogDirectory"),
+                      event.currentTarget,
+                    )
+                  }
+                  onMouseEnter={(event) =>
+                    showMcpPermissionTooltip(
+                      "open-log-directory",
+                      t("settings.openLogDirectory"),
+                      event.currentTarget,
+                    )
+                  }
+                  onMouseLeave={(event) => {
+                    if (document.activeElement !== event.currentTarget) {
+                      setMcpPermissionTooltip(null);
+                    }
+                  }}
+                  type="button"
+                >
+                  <FolderOpen aria-hidden="true" size={16} />
+                </button>
+              </div>
+              {logDirectoryError ? (
+                <div className="form-error settings-error" role="alert">
+                  {logDirectoryError}
+                </div>
+              ) : null}
             </section>
 
             <section aria-labelledby="version-settings-title" className="settings-panel">
@@ -700,7 +824,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                       : undefined
                   }
                   aria-label={t("settings.mcpCopyConfig")}
-                  className="icon-button settings-mcp-icon-action"
+                  className="icon-button settings-icon-action"
                   onBlur={() => setMcpPermissionTooltip(null)}
                   onClick={() => openMcpConfigDialog("stdio")}
                   onFocus={(event) =>
@@ -801,7 +925,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                       : undefined
                   }
                   aria-label={t("settings.mcpResetToken")}
-                  className="icon-button settings-mcp-icon-action"
+                  className="icon-button settings-icon-action"
                   disabled={savingMcp}
                   onBlur={() => setMcpPermissionTooltip(null)}
                   onClick={() => void rotateMcpToken()}
@@ -843,7 +967,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                       : undefined
                   }
                   aria-label={t("settings.mcpCopyConfig")}
-                  className="icon-button settings-mcp-icon-action"
+                  className="icon-button settings-icon-action"
                   onBlur={() => setMcpPermissionTooltip(null)}
                   onClick={() => openMcpConfigDialog("http")}
                   onFocus={(event) =>
@@ -875,6 +999,65 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   {mcpHttpError}
                 </div>
               ) : null}
+            </section>
+
+            <section
+              aria-labelledby="mcp-prompt-title"
+              className="settings-panel settings-mcp-panel"
+            >
+              <header className="settings-panel-header">
+                <h3 id="mcp-prompt-title">{t("settings.mcpPrompt")}</h3>
+              </header>
+              <div className="settings-row settings-mcp-last-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.mcpAgentPrompt")}</span>
+                  <small className={mcpPromptError ? "settings-mcp-inline-error" : undefined}>
+                    {mcpPromptError ?? t("settings.mcpAgentPromptHint")}
+                  </small>
+                </div>
+                <button
+                  aria-describedby={
+                    mcpPermissionTooltip?.key === "agent-prompt-copy"
+                      ? MCP_PERMISSION_TOOLTIP_ID
+                      : undefined
+                  }
+                  aria-label={t("settings.mcpCopyPrompt")}
+                  className="icon-button settings-icon-action"
+                  disabled={copyingMcpPrompt}
+                  onBlur={() => setMcpPermissionTooltip(null)}
+                  onClick={(event) => void copyMcpAgentPrompt(event.currentTarget)}
+                  onFocus={(event) =>
+                    showMcpPermissionTooltip(
+                      "agent-prompt-copy",
+                      t(
+                        mcpPromptCopied
+                          ? "settings.mcpPromptCopied"
+                          : "settings.mcpCopyPrompt",
+                      ),
+                      event.currentTarget,
+                    )
+                  }
+                  onMouseEnter={(event) =>
+                    showMcpPermissionTooltip(
+                      "agent-prompt-copy",
+                      t(
+                        mcpPromptCopied
+                          ? "settings.mcpPromptCopied"
+                          : "settings.mcpCopyPrompt",
+                      ),
+                      event.currentTarget,
+                    )
+                  }
+                  onMouseLeave={(event) => {
+                    if (document.activeElement !== event.currentTarget) {
+                      setMcpPermissionTooltip(null);
+                    }
+                  }}
+                  type="button"
+                >
+                  <Copy aria-hidden="true" size={16} />
+                </button>
+              </div>
             </section>
 
             <section

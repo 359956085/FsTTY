@@ -99,6 +99,7 @@ The Settings page lets you:
 - Check for updates at startup. FsTTY still asks for confirmation when an update is available and never installs it silently.
 - Configure an empty, `http://`, `https://`, or `socks5://` update proxy.
 - Enable or disable remote clipboard writes through OSC 52.
+- Open `%APPDATA%\FsTTY\logs` to inspect runtime and MCP audit logs. Logs are retained for up to 15 days.
 
 ## MCP Automation
 
@@ -111,6 +112,7 @@ FsTTY can run as an MCP server for agent-driven deployments and production diagn
 - `/mcp` targets native MCP clients such as Codex and IDEs and rejects requests containing `Origin`; browser-based MCP clients and CORS are unsupported.
 - Status and remote file reads default to enabled inside an authorized group; commands, edits, and deletion default to disabled.
 - Agents can call `get_permission_guide` for the permissions required by a target tool and the **Settings → MCP** steps in the current FsTTY UI language. The tool neither lists unauthorized groups nor changes permissions.
+- **Settings → MCP → Prompt** copies an English Agent usage guide generated from the backend's live tool-to-permission mapping. It helps Agents follow least-privilege, transfer, and production-safety rules without including tokens, sessions, or credentials.
 - Saved group permissions apply to the next stdio and HTTP request without reconnecting. Commands or transfers already in progress continue, while unreadable or invalid permission settings cause subsequent requests to be denied.
 - Command execution can bypass file edit and deletion restrictions. Grant it only to trusted agents.
 - Unknown or changed host keys must first be confirmed in the FsTTY UI.

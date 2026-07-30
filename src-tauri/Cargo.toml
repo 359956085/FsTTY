@@ -1,6 +1,6 @@
 [package]
 name = "fstty"
-version = "0.5.0"
+version = "1.0.0"
 description = "FsTTY"
 authors = ["fengshi"]
 edition = "2021"
@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 fs2 = "0.4"
+log = "0.4"
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.3"
 rmcp = { version = "=3.0.0-beta.3", features = ["transport-io", "transport-streamable-http-server"] }
@@ -24,8 +25,11 @@ serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "=2.3.2"
 tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }

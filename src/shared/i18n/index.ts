@@ -222,6 +222,10 @@ void i18n.use(initReactI18next).init({
           remoteClipboardWrite: "远程剪贴板写入",
           remoteClipboardWriteHint:
             "允许 tmux 和远程程序通过 OSC 52 写入 Windows 剪贴板",
+          logs: "日志",
+          logsHint: "日志最多保留 15 天",
+          openLogDirectory: "打开日志目录",
+          openLogDirectoryFailed: "无法打开日志目录",
           mcpTitle: "MCP",
           mcpEnabled: "stdio",
           mcpEnable: "启用",
@@ -260,6 +264,13 @@ void i18n.use(initReactI18next).init({
           mcpResetTokenHint:
             "访问需要 Bearer Token，复制配置获取 token；重置后旧令牌立即失效；签发的上传、下载链接本身即凭据，5 分钟有效，请勿转发",
           mcpHttpConfigHint: "选择 Agent 并生成带访问令牌的 HTTP 配置",
+          mcpPrompt: "提示词",
+          mcpAgentPrompt: "Agent 提示词",
+          mcpAgentPromptHint:
+            "复制使用指南，帮助 Agent 全面了解并正确使用 FsTTY MCP 工具",
+          mcpCopyPrompt: "复制提示词",
+          mcpPromptCopied: "已复制",
+          mcpPromptCopyFailed: "无法复制 Agent 提示词",
           mcpSave: "保存",
           mcpSaved: "权限设置已保存；分组权限对新请求立即生效",
           mcpSaveFailed: "无法保存 MCP 设置",
@@ -517,6 +528,10 @@ void i18n.use(initReactI18next).init({
           remoteClipboardWrite: "Remote clipboard writes",
           remoteClipboardWriteHint:
             "Allow tmux and remote programs to write to the Windows clipboard through OSC 52.",
+          logs: "Logs",
+          logsHint: "Logs are retained for up to 15 days",
+          openLogDirectory: "Open log folder",
+          openLogDirectoryFailed: "Unable to open the log folder",
           mcpTitle: "MCP",
           mcpEnabled: "stdio",
           mcpEnable: "Enable",
@@ -556,6 +571,13 @@ void i18n.use(initReactI18next).init({
             "Access requires a Bearer Token. Copy the configuration to obtain the token; resetting immediately invalidates the previous token. Issued upload and download links are credentials, expire after five minutes, and must not be shared.",
           mcpHttpConfigHint:
             "Select an Agent and generate an HTTP configuration containing the access token.",
+          mcpPrompt: "Prompt",
+          mcpAgentPrompt: "Agent prompt",
+          mcpAgentPromptHint:
+            "Copy the usage guide to help the Agent fully understand and correctly use FsTTY MCP tools",
+          mcpCopyPrompt: "Copy prompt",
+          mcpPromptCopied: "Copied",
+          mcpPromptCopyFailed: "Unable to copy the Agent prompt",
           mcpSave: "Save",
           mcpSaved: "Permission settings saved. Group permissions apply to new requests immediately.",
           mcpSaveFailed: "Unable to save MCP settings",
