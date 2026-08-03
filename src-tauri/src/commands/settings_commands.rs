@@ -66,6 +66,18 @@ pub fn update_app_settings(
 }
 
 #[tauri::command]
+pub fn update_log_settings(
+    state: State<'_, AppState>,
+    record_mcp_tool_inputs: bool,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    service.update_log_settings(record_mcp_tool_inputs)
+}
+
+#[tauri::command]
 pub fn set_ignored_update_version(
     state: State<'_, AppState>,
     version: String,

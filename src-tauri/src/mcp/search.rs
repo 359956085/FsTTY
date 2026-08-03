@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 pub(super) const MAX_SEARCH_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SearchRemoteFileArgs {
     /// FsTTY 会话 ID。

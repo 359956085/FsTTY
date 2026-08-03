@@ -224,9 +224,14 @@ void i18n.use(initReactI18next).init({
           remoteClipboardWriteHint:
             "允许 tmux 和远程程序通过 OSC 52 写入 Windows 剪贴板",
           logs: "日志",
+          logDirectory: "日志目录",
           logsHint: "日志最多保留 15 天",
           openLogDirectory: "打开日志目录",
           openLogDirectoryFailed: "无法打开日志目录",
+          recordMcpToolInputs: "记录 MCP 工具输入",
+          recordMcpToolInputsHint:
+            "记录命令、路径等工具参数到 MCP 审计日志；文件正文仅记录长度和 SHA-256",
+          logSettingsSaveFailed: "无法保存日志设置",
           mcpTitle: "MCP",
           mcpEnabled: "stdio",
           mcpEnable: "启用",
@@ -557,9 +562,14 @@ void i18n.use(initReactI18next).init({
           remoteClipboardWriteHint:
             "Allow tmux and remote programs to write to the Windows clipboard through OSC 52.",
           logs: "Logs",
+          logDirectory: "Log folder",
           logsHint: "Logs are retained for up to 15 days",
           openLogDirectory: "Open log folder",
           openLogDirectoryFailed: "Unable to open the log folder",
+          recordMcpToolInputs: "Log MCP tool inputs",
+          recordMcpToolInputsHint:
+            "Log tool parameters such as commands and paths to the MCP audit log. File content is replaced by its length and SHA-256. Off by default.",
+          logSettingsSaveFailed: "Unable to save log settings",
           mcpTitle: "MCP",
           mcpEnabled: "stdio",
           mcpEnable: "Enable",

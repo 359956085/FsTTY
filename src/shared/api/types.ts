@@ -6,6 +6,7 @@ export interface AppSettings {
   autoUpdate: boolean;
   updateProxy: string;
   allowRemoteClipboardWrite: boolean;
+  recordMcpToolInputs: boolean;
   ignoredUpdateVersion: string | null;
   mcpEnabled: boolean;
   mcpHttpEnabled: boolean;

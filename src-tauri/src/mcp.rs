@@ -17,7 +17,8 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -285,6 +286,7 @@ struct AuditGuard {
     session_id: Option<String>,
     started: Instant,
     succeeded: bool,
+    input: Option<Value>,
 }
 
 impl AuditGuard {
@@ -301,24 +303,25 @@ impl Drop for AuditGuard {
             self.session_id.as_deref(),
             if self.succeeded { "success" } else { "error" },
             self.started.elapsed(),
+            self.input.as_ref(),
         );
     }
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct SessionArgs {
     session_id: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct ListFilesArgs {
     session_id: String,
     path: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct ReadFileArgs {
     session_id: String,
@@ -329,7 +332,7 @@ struct ReadFileArgs {
     limit: usize,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct CommandArgs {
     session_id: String,
@@ -338,7 +341,7 @@ struct CommandArgs {
     timeout_seconds: u64,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct WriteFileArgs {
     session_id: String,
@@ -348,7 +351,20 @@ struct WriteFileArgs {
     base64: bool,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+fn write_file_audit_input(args: &WriteFileArgs) -> Value {
+    // 文件正文可能包含密钥或大段源码，只保留可核对内容一致性的摘要。
+    let content_sha256 = format!("{:x}", Sha256::digest(args.content.as_bytes()));
+    json!({
+        "sessionId": args.session_id,
+        "path": args.path,
+        "contentOmitted": true,
+        "contentBytes": args.content.len(),
+        "contentSha256": content_sha256,
+        "base64": args.base64,
+    })
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateDirectoryArgs {
     session_id: String,
@@ -356,7 +372,7 @@ struct CreateDirectoryArgs {
     name: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct RenameArgs {
     session_id: String,
@@ -364,7 +380,7 @@ struct RenameArgs {
     new_name: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct MoveArgs {
     session_id: String,
@@ -372,14 +388,14 @@ struct MoveArgs {
     target_directory: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct DeleteArgs {
     session_id: String,
     path: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct LocalTransferArgs {
     session_id: String,
@@ -387,21 +403,21 @@ struct LocalTransferArgs {
     remote_path: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct DownloadLinkArgs {
     session_id: String,
     remote_path: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct UploadLinkArgs {
     session_id: String,
     remote_directory: String,
 }
 
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct PermissionGuideArgs {
     #[serde(default)]
@@ -457,7 +473,34 @@ impl McpService {
         }
     }
 
-    fn audit(&self, tool: &'static str, session_id: Option<&str>) -> AuditGuard {
+    fn audit<T: Serialize>(
+        &self,
+        tool: &'static str,
+        session_id: Option<&str>,
+        input: &T,
+    ) -> AuditGuard {
+        let input = current_mcp_settings(&self.state)
+            .ok()
+            .filter(|settings| settings.record_mcp_tool_inputs)
+            .and_then(|_| serde_json::to_value(input).ok());
+        self.audit_guard(tool, session_id, input)
+    }
+
+    fn audit_write_file(&self, args: &WriteFileArgs) -> AuditGuard {
+        // 开关关闭时不计算正文摘要，避免默认路径承担大文件哈希开销。
+        let input = current_mcp_settings(&self.state)
+            .ok()
+            .filter(|settings| settings.record_mcp_tool_inputs)
+            .map(|_| write_file_audit_input(args));
+        self.audit_guard("write_remote_file", Some(&args.session_id), input)
+    }
+
+    fn audit_guard(
+        &self,
+        tool: &'static str,
+        session_id: Option<&str>,
+        input: Option<Value>,
+    ) -> AuditGuard {
         AuditGuard {
             service: self.state.mcp_audit_service.clone(),
             transport: self.transport,
@@ -465,6 +508,7 @@ impl McpService {
             session_id: session_id.map(ToOwned::to_owned),
             started: Instant::now(),
             succeeded: false,
+            input,
         }
     }
 
@@ -490,7 +534,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<PermissionGuideArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("get_permission_guide", None);
+        let audit = self.audit("get_permission_guide", None, &args);
         let settings = self.settings()?;
         let response = permission_guide_response(&settings.language, args.tool_name)
             .map_err(|message| McpError::invalid_params(message, None))?;
@@ -507,7 +551,7 @@ impl McpService {
         )
     )]
     async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("list_sessions", None);
+        let audit = self.audit("list_sessions", None, &json!({}));
         let settings = self.settings()?;
         if !settings.mcp_enabled {
             return Ok(tool_error("MCP 服务未启用"));
@@ -558,7 +602,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<SessionArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("get_device_status", Some(&args.session_id));
+        let audit = self.audit("get_device_status", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::SessionRead)
             .await?;
@@ -584,7 +628,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<ListFilesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("list_remote_files", Some(&args.session_id));
+        let audit = self.audit("list_remote_files", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileRead)
             .await?;
@@ -610,7 +654,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<ReadFileArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("read_remote_file", Some(&args.session_id));
+        let audit = self.audit("read_remote_file", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileRead)
             .await?;
@@ -642,10 +686,9 @@ impl McpService {
         &self,
         Parameters(args): Parameters<SearchRemoteFileArgs>,
     ) -> Result<CallToolResult, McpError> {
+        let audit = self.audit("search_remote_file", Some(&args.session_id), &args);
         validate_search_remote_file_args(&args)
             .map_err(|message| McpError::invalid_params(message, None))?;
-
-        let audit = self.audit("search_remote_file", Some(&args.session_id));
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileRead)
             .await?;
@@ -689,7 +732,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<CommandArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("execute_command", Some(&args.session_id));
+        let audit = self.audit("execute_command", Some(&args.session_id), &args);
         if args.command.is_empty() || args.command.len() > 64 * 1024 {
             return Ok(tool_error("命令为空或过长"));
         }
@@ -731,7 +774,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<WriteFileArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("write_remote_file", Some(&args.session_id));
+        let audit = self.audit_write_file(&args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileWrite)
             .await?;
@@ -764,7 +807,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<CreateDirectoryArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("create_remote_directory", Some(&args.session_id));
+        let audit = self.audit("create_remote_directory", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileWrite)
             .await?;
@@ -790,7 +833,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<RenameArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("rename_remote_entry", Some(&args.session_id));
+        let audit = self.audit("rename_remote_entry", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileWrite)
             .await?;
@@ -816,7 +859,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<MoveArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("move_remote_entry", Some(&args.session_id));
+        let audit = self.audit("move_remote_entry", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileWrite)
             .await?;
@@ -842,7 +885,7 @@ impl McpService {
         &self,
         Parameters(args): Parameters<DeleteArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("delete_remote_entry", Some(&args.session_id));
+        let audit = self.audit("delete_remote_entry", Some(&args.session_id), &args);
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileDelete)
             .await?;
@@ -869,7 +912,11 @@ impl McpService {
         Parameters(args): Parameters<DownloadLinkArgs>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("create_remote_file_download_link", Some(&args.session_id));
+        let audit = self.audit(
+            "create_remote_file_download_link",
+            Some(&args.session_id),
+            &args,
+        );
         let runtime = self
             .transfer_runtime
             .as_ref()
@@ -931,7 +978,11 @@ impl McpService {
         Parameters(args): Parameters<UploadLinkArgs>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("create_remote_file_upload_link", Some(&args.session_id));
+        let audit = self.audit(
+            "create_remote_file_upload_link",
+            Some(&args.session_id),
+            &args,
+        );
         let runtime = self
             .transfer_runtime
             .as_ref()
@@ -995,7 +1046,7 @@ impl McpService {
         Parameters(args): Parameters<LocalTransferArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("upload_local_file", Some(&args.session_id));
+        let audit = self.audit("upload_local_file", Some(&args.session_id), &args);
         let local_path = rooted_path(&context, &args.local_path, true).await?;
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileWrite)
@@ -1024,7 +1075,7 @@ impl McpService {
         Parameters(args): Parameters<LocalTransferArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("download_remote_file", Some(&args.session_id));
+        let audit = self.audit("download_remote_file", Some(&args.session_id), &args);
         let local_path = rooted_path(&context, &args.local_path, false).await?;
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileRead)
@@ -1355,6 +1406,25 @@ impl ServerHandler for McpService {
 mod tests {
     use super::*;
     use crate::services::SettingsService;
+
+    #[test]
+    fn 写文件审计输入隐藏正文并记录长度和摘要() {
+        let input = write_file_audit_input(&WriteFileArgs {
+            session_id: "session-a".to_owned(),
+            path: "/tmp/file".to_owned(),
+            content: "secret".to_owned(),
+            base64: false,
+        });
+
+        assert_eq!(input["contentOmitted"], true);
+        assert_eq!(input["contentBytes"], 6);
+        assert_eq!(
+            input["contentSha256"],
+            "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
+        );
+        assert!(input.get("content").is_none());
+        assert!(!input.to_string().contains("secret"));
+    }
 
     fn mcp_permission(command_execute: bool) -> McpGroupPermission {
         McpGroupPermission {
@@ -1797,6 +1867,52 @@ mod tests {
             service.settings().expect("热加载英文失败").language,
             Language::EnUs
         );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 同一服务实例热加载工具输入日志开关() {
+        let directory =
+            std::env::temp_dir().join(format!("fstty-mcp-audit-setting-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, false, 37_653, Vec::new())
+            .expect("保存 MCP 设置失败");
+        let state = AppState::new(directory.clone());
+        let service = McpService::new(state, "stdio");
+
+        service
+            .audit(
+                "execute_command",
+                Some("session-a"),
+                &json!({"command": "secret"}),
+            )
+            .succeed();
+        writer
+            .update_log_settings(true)
+            .expect("开启工具输入日志失败");
+        service
+            .audit(
+                "execute_command",
+                Some("session-a"),
+                &json!({"command": "visible"}),
+            )
+            .succeed();
+
+        let content = std::fs::read_dir(directory.join("logs"))
+            .expect("应读取日志目录")
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mcp-audit-")
+            })
+            .and_then(|entry| std::fs::read_to_string(entry.path()).ok())
+            .expect("应读取审计日志");
+        assert!(!content.contains("secret"));
+        assert!(content.contains("input: command=\"visible\""));
         let _ = std::fs::remove_dir_all(directory);
     }
 

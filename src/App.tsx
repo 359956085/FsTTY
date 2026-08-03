@@ -27,6 +27,7 @@ export function App() {
     mcpHttpEnabled: false,
     mcpHttpPort: 37653,
     mcpGroupPermissions: [],
+    recordMcpToolInputs: false,
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);

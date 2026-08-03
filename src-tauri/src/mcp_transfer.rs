@@ -799,6 +799,7 @@ fn record_transfer(
         Some(session_id),
         if succeeded { "success" } else { "error" },
         started.elapsed(),
+        None,
     );
 }
 

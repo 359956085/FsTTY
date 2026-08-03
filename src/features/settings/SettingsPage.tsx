@@ -68,9 +68,11 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const [error, setError] = useState<string | null>(null);
   const [logDirectoryError, setLogDirectoryError] = useState<string | null>(null);
+  const [logSettingsError, setLogSettingsError] = useState<string | null>(null);
   const [openingLogDirectory, setOpeningLogDirectory] = useState(false);
   const [proxy, setProxy] = useState(settings.updateProxy);
   const [savingLanguage, setSavingLanguage] = useState(false);
+  const [savingLogSettings, setSavingLogSettings] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
   const [groups, setGroups] = useState<SessionGroup[]>([]);
@@ -504,6 +506,21 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     }
   }
 
+  async function saveLogSettings(recordMcpToolInputs: boolean) {
+    if (savingLogSettings) {
+      return;
+    }
+    setSavingLogSettings(true);
+    setLogSettingsError(null);
+    try {
+      onChange(await api.updateLogSettings(recordMcpToolInputs));
+    } catch (nextError) {
+      setLogSettingsError(resolveApiError(nextError, t("settings.logSettingsSaveFailed")));
+    } finally {
+      setSavingLogSettings(false);
+    }
+  }
+
   async function saveUpdateSettings(
     autoUpdate: boolean,
     updateProxy = proxy,
@@ -626,6 +643,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             activeTooltipKey={mcpPermissionTooltip?.key ?? null}
             error={visibleError}
             logDirectoryError={logDirectoryError}
+            logSettingsError={logSettingsError}
             onAutoUpdateChange={(enabled) => void saveUpdateSettings(enabled)}
             onCheckUpdates={() => void handleCheckForUpdates()}
             onClipboardChange={(enabled) =>
@@ -634,12 +652,14 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             onHideTooltip={() => setMcpPermissionTooltip(null)}
             onLanguageChange={(language) => void handleLanguageChange(language)}
             onOpenLogDirectory={() => void openLogDirectory()}
+            onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
             onProxyChange={setProxy}
             onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
             onShowTooltip={showMcpPermissionTooltip}
             openingLogDirectory={openingLogDirectory}
             proxy={proxy}
             savingLanguage={savingLanguage}
+            savingLogSettings={savingLogSettings}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}
             status={status}

@@ -67,13 +67,14 @@ impl SettingsService {
     }
 
     pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
-        // MCP 独立进程需要同步语言和权限；主文件异常时必须失败关闭，不能回退旧授权。
+        // MCP 独立进程需要同步语言、权限和审计开关；主文件异常时必须失败关闭，不能回退旧授权。
         let store = read_store(&self.store_path)?
             .ok_or_else(|| AppError::Persistence("MCP 权限设置文件不存在".to_owned()))?;
         let permissions = validate_mcp_permissions(store.settings.mcp_group_permissions)
             .map_err(|_| AppError::Persistence("MCP 分组权限数据无效".to_owned()))?;
         self.settings.language = store.settings.language;
         self.settings.mcp_group_permissions = permissions;
+        self.settings.record_mcp_tool_inputs = store.settings.record_mcp_tool_inputs;
         Ok(())
     }
 
@@ -113,6 +114,15 @@ impl SettingsService {
         next.mcp_http_enabled = http_enabled;
         next.mcp_http_port = http_port;
         next.mcp_group_permissions = group_permissions;
+        self.replace(next)
+    }
+
+    pub fn update_log_settings(
+        &mut self,
+        record_mcp_tool_inputs: bool,
+    ) -> Result<AppSettings, AppError> {
+        let mut next = self.settings.clone();
+        next.record_mcp_tool_inputs = record_mcp_tool_inputs;
         self.replace(next)
     }
 
@@ -207,6 +217,7 @@ fn default_settings() -> AppSettings {
         auto_update: true,
         update_proxy: String::new(),
         allow_remote_clipboard_write: true,
+        record_mcp_tool_inputs: false,
         ignored_update_version: None,
         mcp_enabled: false,
         mcp_http_enabled: false,
@@ -355,6 +366,21 @@ mod tests {
     }
 
     #[test]
+    fn 日志设置默认关闭并持久化() {
+        let directory = test_directory("settings-log-inputs");
+        let mut service = SettingsService::load(&directory);
+        assert!(!service.get().record_mcp_tool_inputs);
+
+        service.update_log_settings(true).expect("保存日志设置失败");
+        assert!(
+            SettingsService::load(&directory)
+                .get()
+                .record_mcp_tool_inputs
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn 热加载跨设置实例授予和撤销权限() {
         let directory = test_directory("settings-mcp-hot-reload");
         let mut writer = SettingsService::load(&directory);
@@ -382,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn 热加载只替换分组权限和语言() {
+    fn 热加载只替换mcp运行时字段() {
         let directory = test_directory("settings-mcp-hot-reload-scope");
         let mut writer = SettingsService::load(&directory);
         writer
@@ -398,12 +424,16 @@ mod tests {
         writer
             .update_mcp(true, true, 45_678, vec![mcp_permission(true)])
             .expect("保存新 MCP 权限失败");
+        writer
+            .update_log_settings(true)
+            .expect("保存 MCP 日志设置失败");
         reader
             .reload_mcp_runtime_settings()
             .expect("热加载权限失败");
         let settings = reader.get();
         assert!(settings.mcp_group_permissions[0].command_execute);
         assert_eq!(settings.language, Language::ZhCn);
+        assert!(settings.record_mcp_tool_inputs);
         assert!(!settings.mcp_enabled);
         assert!(!settings.mcp_http_enabled);
         assert_eq!(settings.mcp_http_port, 40_000);
@@ -482,6 +512,7 @@ mod tests {
 
         let restored = SettingsService::load(&directory).get();
         assert!(restored.allow_remote_clipboard_write);
+        assert!(!restored.record_mcp_tool_inputs);
         assert_eq!(restored.ignored_update_version, None);
         let _ = fs::remove_dir_all(directory);
     }
@@ -563,6 +594,8 @@ mod tests {
 
         assert!(service.set_language(Language::EnUs).is_err());
         assert_eq!(service.get(), default_settings());
+        assert!(service.update_log_settings(true).is_err());
+        assert!(!service.get().record_mcp_tool_inputs);
         let _ = fs::remove_dir_all(directory);
     }
 }

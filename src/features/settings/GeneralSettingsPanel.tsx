@@ -11,18 +11,21 @@ interface GeneralSettingsPanelProps {
   activeTooltipKey: string | null;
   error: string | null;
   logDirectoryError: string | null;
+  logSettingsError: string | null;
   onAutoUpdateChange: (enabled: boolean) => void;
   onCheckUpdates: () => void;
   onClipboardChange: (enabled: boolean) => void;
   onHideTooltip: () => void;
   onLanguageChange: (language: Language) => void;
   onOpenLogDirectory: () => void;
+  onRecordMcpToolInputsChange: (enabled: boolean) => void;
   onProxyChange: (value: string) => void;
   onProxyCommit: () => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
   openingLogDirectory: boolean;
   proxy: string;
   savingLanguage: boolean;
+  savingLogSettings: boolean;
   savingUpdateSettings: boolean;
   settings: AppSettings;
   status: string | null;
@@ -33,18 +36,21 @@ export function GeneralSettingsPanel({
   activeTooltipKey,
   error,
   logDirectoryError,
+  logSettingsError,
   onAutoUpdateChange,
   onCheckUpdates,
   onClipboardChange,
   onHideTooltip,
   onLanguageChange,
   onOpenLogDirectory,
+  onRecordMcpToolInputsChange,
   onProxyChange,
   onProxyCommit,
   onShowTooltip,
   openingLogDirectory,
   proxy,
   savingLanguage,
+  savingLogSettings,
   savingUpdateSettings,
   settings,
   status,
@@ -90,9 +96,15 @@ export function GeneralSettingsPanel({
             type="checkbox"
           />
         </div>
-        <div className="settings-row settings-log-row">
+      </section>
+
+      <section aria-labelledby="log-settings-title" className="settings-panel">
+        <header className="settings-panel-header">
+          <h3 id="log-settings-title">{t("settings.logs")}</h3>
+        </header>
+        <div className="settings-row">
           <div className="settings-row-copy">
-            <span className="settings-row-label">{t("settings.logs")}</span>
+            <span className="settings-row-label">{t("settings.logDirectory")}</span>
             <small>{t("settings.logsHint")}</small>
           </div>
           <SettingsIconAction
@@ -110,6 +122,29 @@ export function GeneralSettingsPanel({
         {logDirectoryError ? (
           <div className="form-error settings-error" role="alert">
             {logDirectoryError}
+          </div>
+        ) : null}
+        <div className="settings-row settings-log-row">
+          <div className="settings-row-copy">
+            <label className="settings-row-label" htmlFor="record-mcp-tool-inputs">
+              {t("settings.recordMcpToolInputs")}
+            </label>
+            <small>{t("settings.recordMcpToolInputsHint")}</small>
+          </div>
+          <input
+            aria-label={t("settings.recordMcpToolInputs")}
+            checked={settings.recordMcpToolInputs}
+            className="settings-auto-update-toggle"
+            disabled={savingLogSettings}
+            id="record-mcp-tool-inputs"
+            onChange={(event) => onRecordMcpToolInputsChange(event.target.checked)}
+            role="switch"
+            type="checkbox"
+          />
+        </div>
+        {logSettingsError ? (
+          <div className="form-error settings-error" role="alert">
+            {logSettingsError}
           </div>
         ) : null}
       </section>

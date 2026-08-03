@@ -166,6 +166,9 @@ export const api = {
       allowRemoteClipboardWrite,
     });
   },
+  updateLogSettings(recordMcpToolInputs: boolean) {
+    return invoke<AppSettings>("update_log_settings", { recordMcpToolInputs });
+  },
   updateMcpSettings(
     enabled: boolean,
     httpEnabled: boolean,

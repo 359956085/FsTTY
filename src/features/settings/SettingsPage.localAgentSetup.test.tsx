@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   inspectLocalAgentSetup: vi.fn(),
   listSessions: vi.fn(),
   updateMcpSettings: vi.fn(),
+  updateLogSettings: vi.fn(),
   writeText: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock("../../shared/api/client", () => ({
     inspectLocalAgentSetup: mocks.inspectLocalAgentSetup,
     listSessions: mocks.listSessions,
     updateMcpSettings: mocks.updateMcpSettings,
+    updateLogSettings: mocks.updateLogSettings,
   },
 }));
 
@@ -52,6 +54,7 @@ const settings: AppSettings = {
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,
   mcpHttpPort: 37_653,
+  recordMcpToolInputs: false,
   updateProxy: "",
 };
 
@@ -73,6 +76,73 @@ const updater: AppUpdaterController = {
 };
 
 describe("SettingsPage 本地 Agent 配置", () => {
+  it("日志分组保存 MCP 工具输入开关并阻止重复提交", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    let finishSave: ((value: AppSettings) => void) | undefined;
+    mocks.updateLogSettings.mockImplementation(
+      () =>
+        new Promise<AppSettings>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    const onChange = vi.fn();
+    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
+    expect(headings).toEqual([
+      "settings.generalSettings",
+      "settings.logs",
+      "settings.version",
+    ]);
+    const generalPanel = screen
+      .getByRole("heading", { name: "settings.generalSettings" })
+      .closest("section");
+    const logPanel = screen.getByRole("heading", { name: "settings.logs" }).closest("section");
+    expect(generalPanel).not.toBeNull();
+    expect(logPanel).not.toBeNull();
+    expect(within(generalPanel!).queryByText("settings.logDirectory")).toBeNull();
+    const logDirectoryLabel = within(logPanel!).getByText("settings.logDirectory");
+    const recordInputsLabel = within(logPanel!).getByText("settings.recordMcpToolInputs");
+    const logDirectoryRow = logDirectoryLabel.closest(".settings-row");
+    const recordInputsRow = recordInputsLabel.closest(".settings-row");
+    expect(logDirectoryRow?.className).toBe("settings-row");
+    expect(recordInputsRow?.className).toBe("settings-row settings-log-row");
+    expect(logDirectoryRow?.nextElementSibling).toBe(recordInputsRow);
+    expect(
+      within(logPanel!).getByRole("button", { name: "settings.openLogDirectory" }),
+    ).not.toBeNull();
+    const switchElement = screen.getByRole("switch", {
+      name: "settings.recordMcpToolInputs",
+    }) as HTMLInputElement;
+    expect(switchElement.checked).toBe(false);
+    fireEvent.click(switchElement);
+    await waitFor(() => expect(switchElement.disabled).toBe(true));
+    fireEvent.click(switchElement);
+    expect(mocks.updateLogSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.updateLogSettings).toHaveBeenCalledWith(true);
+
+    const enabledSettings = { ...settings, recordMcpToolInputs: true };
+    finishSave?.(enabledSettings);
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(enabledSettings));
+  });
+
+  it("日志设置保存失败后恢复开关并显示错误", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.updateLogSettings.mockRejectedValue(new Error("保存失败"));
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    const switchElement = screen.getByRole("switch", {
+      name: "settings.recordMcpToolInputs",
+    }) as HTMLInputElement;
+    fireEvent.click(switchElement);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("保存失败");
+    expect(switchElement.checked).toBe(false);
+    await waitFor(() => expect(switchElement.disabled).toBe(false));
+  });
+
   it("将提示词放入 stdio 和 HTTP，并为 stdio 单列一键设置", () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
@@ -224,7 +294,11 @@ describe("SettingsPage 本地 Agent 配置", () => {
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     fireEvent.click(screen.getByRole("button", { name: "settings.localAgentOpen" }));
     await screen.findByRole("checkbox", { name: /Trae CN/ });
-    fireEvent.click(screen.getByRole("button", { name: "settings.localAgentConfigure" }));
+    const configureButton = screen.getByRole("button", {
+      name: "settings.localAgentConfigure",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(configureButton.disabled).toBe(false));
+    fireEvent.click(configureButton);
 
     await screen.findByText("settings.localAgentTraeCnPromptCopied");
     expect(mocks.configureLocalAgents).toHaveBeenCalledWith(["cursor", "trae", "traeCn"]);

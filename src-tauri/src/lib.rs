@@ -16,8 +16,8 @@ use commands::{
     list_remote_files, list_sessions, move_remote_entry, open_log_directory, rename_remote_entry,
     rename_session_group, reorder_session, reorder_session_group, resize_terminal,
     resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
-    set_language, set_session_credential, trust_host_key, update_app_settings, update_mcp_settings,
-    update_session, upload_file, write_terminal,
+    set_language, set_session_credential, trust_host_key, update_app_settings, update_log_settings,
+    update_mcp_settings, update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -174,6 +174,7 @@ pub fn run() {
             set_ignored_update_version,
             set_language,
             update_app_settings,
+            update_log_settings,
             update_mcp_settings,
             get_mcp_agent_prompt,
             get_mcp_permission_catalog,
