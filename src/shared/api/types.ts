@@ -49,6 +49,35 @@ export type McpClientTarget =
   | "vsCode"
   | "geminiCli";
 
+export type LocalAgentTarget = Exclude<McpClientTarget, "genericJson">;
+
+export type LocalAgentSetupState =
+  | "notDetected"
+  | "missing"
+  | "current"
+  | "outdated"
+  | "invalid";
+
+export interface LocalAgentCapability {
+  target: LocalAgentTarget;
+  installed: boolean;
+  state: LocalAgentSetupState;
+  detail: string | null;
+}
+
+export type LocalAgentStepStatus =
+  | "configured"
+  | "current"
+  | "manualRequired"
+  | "failed";
+
+export interface LocalAgentConfigureResult {
+  target: LocalAgentTarget;
+  mcpStatus: LocalAgentStepStatus;
+  promptStatus: LocalAgentStepStatus;
+  message: string | null;
+}
+
 export interface SessionGroup {
   name: string;
   sessions: Session[];

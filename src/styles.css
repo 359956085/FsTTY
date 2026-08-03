@@ -2039,6 +2039,121 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.settings-local-agent-backdrop {
+  z-index: 185;
+}
+
+.dialog.settings-local-agent-dialog {
+  width: min(620px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  border-color: rgba(190, 196, 202, 0.25);
+  background: rgba(28, 30, 32, 0.99);
+}
+
+.settings-local-agent-dialog .dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-local-agent-dialog .dialog-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-local-agent-dialog .dialog-header small,
+.settings-local-agent-loading {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-local-agent-body {
+  max-height: calc(100vh - 210px);
+  padding: 16px;
+  overflow: auto;
+}
+
+.settings-local-agent-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  gap: 8px;
+}
+
+.settings-local-agent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-local-agent-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-local-agent-item.disabled {
+  opacity: 0.5;
+}
+
+.settings-local-agent-item > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.settings-local-agent-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-local-agent-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-local-agent-copy small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.settings-local-agent-message {
+  color: #d7ad78 !important;
+}
+
+.settings-local-agent-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-local-agent-result.succeeded {
+  color: #8fd3a5;
+}
+
+.settings-local-agent-result.failed {
+  color: #ffaaaa;
+}
+
+.settings-local-agent-error {
+  margin: 12px 0 0;
+}
+
+.settings-local-agent-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .dialog-backdrop.update-dialog-backdrop {
   z-index: 140;
 }

@@ -7,6 +7,9 @@ import type {
   DeviceStatus,
   FileEntry,
   Language,
+  LocalAgentCapability,
+  LocalAgentConfigureResult,
+  LocalAgentTarget,
   LoginSaveDecision,
   McpClientTarget,
   McpGroupPermission,
@@ -184,6 +187,12 @@ export const api = {
   },
   getMcpAgentPrompt() {
     return invoke<string>("get_mcp_agent_prompt");
+  },
+  inspectLocalAgentSetup() {
+    return invoke<LocalAgentCapability[]>("inspect_local_agent_setup");
+  },
+  configureLocalAgents(targets: LocalAgentTarget[]) {
+    return invoke<LocalAgentConfigureResult[]>("configure_local_agents", { targets });
   },
   getMcpPermissionCatalog() {
     return invoke<McpPermissionCatalogEntry[]>("get_mcp_permission_catalog");

@@ -12,6 +12,9 @@ import { resolveApiError } from "../../shared/api/errors";
 import type {
   AppSettings,
   Language,
+  LocalAgentCapability,
+  LocalAgentConfigureResult,
+  LocalAgentTarget,
   McpClientTarget,
   McpGroupPermission,
   McpPermissionCatalogEntry,
@@ -20,6 +23,7 @@ import type {
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { LocalAgentSetupDialog } from "./LocalAgentSetupDialog";
 import {
   McpConfigDialog,
   type McpConfigDialogState,
@@ -45,6 +49,7 @@ interface SettingsPageProps {
 
 type SettingsSection = "general" | "mcp";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
+type McpPromptState<T> = Record<McpTransport, T>;
 
 export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -74,11 +79,31 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     useState<McpPermissionTooltipState | null>(null);
   const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
   const mcpConfigRequestRef = useRef(0);
-  const [copyingMcpPrompt, setCopyingMcpPrompt] = useState(false);
-  const [mcpPromptCopied, setMcpPromptCopied] = useState(false);
-  const [mcpPromptError, setMcpPromptError] = useState<string | null>(null);
-  const mcpPromptCopyInFlightRef = useRef(false);
-  const mcpPromptCopiedTimerRef = useRef<number | null>(null);
+  const [localAgentDialogOpen, setLocalAgentDialogOpen] = useState(false);
+  const [localAgentCapabilities, setLocalAgentCapabilities] = useState<
+    LocalAgentCapability[]
+  >([]);
+  const [localAgentResults, setLocalAgentResults] = useState<LocalAgentConfigureResult[]>([]);
+  const [loadingLocalAgents, setLoadingLocalAgents] = useState(false);
+  const [configuringLocalAgents, setConfiguringLocalAgents] = useState(false);
+  const [localAgentError, setLocalAgentError] = useState<string | null>(null);
+  const [copyingMcpPrompt, setCopyingMcpPrompt] = useState<McpPromptState<boolean>>({
+    http: false,
+    stdio: false,
+  });
+  const [mcpPromptCopied, setMcpPromptCopied] = useState<McpPromptState<boolean>>({
+    http: false,
+    stdio: false,
+  });
+  const [mcpPromptError, setMcpPromptError] = useState<McpPromptState<string | null>>({
+    http: null,
+    stdio: null,
+  });
+  const mcpPromptCopyInFlightRef = useRef<McpPromptState<boolean>>({
+    http: false,
+    stdio: false,
+  });
+  const mcpPromptCopiedTimerRef = useRef<Partial<McpPromptState<number>>>({});
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
   useEffect(() => {
@@ -127,8 +152,8 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   useEffect(() => setMcpPermissionTooltip(null), [settings.language]);
   useEffect(
     () => () => {
-      if (mcpPromptCopiedTimerRef.current !== null) {
-        window.clearTimeout(mcpPromptCopiedTimerRef.current);
+      for (const timer of Object.values(mcpPromptCopiedTimerRef.current)) {
+        window.clearTimeout(timer);
       }
     },
     [],
@@ -263,6 +288,84 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     setMcpConfigDialog(null);
   }, []);
 
+  const closeLocalAgentDialog = useCallback(() => {
+    setLocalAgentDialogOpen(false);
+  }, []);
+
+  async function openLocalAgentDialog() {
+    setLocalAgentDialogOpen(true);
+    setLoadingLocalAgents(true);
+    setLocalAgentResults([]);
+    setLocalAgentError(null);
+    try {
+      setLocalAgentCapabilities(await api.inspectLocalAgentSetup());
+    } catch (nextError) {
+      setLocalAgentCapabilities([]);
+      setLocalAgentError(
+        resolveApiError(nextError, t("settings.localAgentDetectFailed")),
+      );
+    } finally {
+      setLoadingLocalAgents(false);
+    }
+  }
+
+  async function configureSelectedLocalAgents(targets: LocalAgentTarget[]) {
+    if (configuringLocalAgents || targets.length === 0) {
+      return;
+    }
+    setConfiguringLocalAgents(true);
+    setLocalAgentError(null);
+    setLocalAgentResults([]);
+    try {
+      if (!settings.mcpEnabled) {
+        const nextSettings = await api.updateMcpSettings(
+          true,
+          settings.mcpHttpEnabled,
+          settings.mcpHttpPort,
+          savedMcpPermissionsRef.current,
+        );
+        onChange(nextSettings);
+      }
+      let results = await api.configureLocalAgents(targets);
+      const cursor = results.find(
+        (result) =>
+          result.target === "cursor" &&
+          result.mcpStatus !== "failed" &&
+          result.promptStatus === "manualRequired",
+      );
+      if (cursor) {
+        try {
+          await writeText(await api.getMcpAgentPrompt());
+          results = results.map((result) =>
+            result.target === "cursor"
+              ? { ...result, message: t("settings.localAgentCursorPromptCopied") }
+              : result,
+          );
+        } catch (nextError) {
+          results = results.map((result) =>
+            result.target === "cursor"
+              ? {
+                  ...result,
+                  message: resolveApiError(
+                    nextError,
+                    t("settings.localAgentCursorPromptCopyFailed"),
+                  ),
+                  promptStatus: "failed" as const,
+                }
+              : result,
+          );
+        }
+      }
+      setLocalAgentResults(results);
+    } catch (nextError) {
+      setLocalAgentError(
+        resolveApiError(nextError, t("settings.localAgentConfigureFailed")),
+      );
+    } finally {
+      setConfiguringLocalAgents(false);
+    }
+  }
+
   async function copyMcpConfig() {
     if (!mcpConfigDialog?.config) {
       return;
@@ -282,41 +385,44 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     }
   }
 
-  async function copyMcpAgentPrompt(target: HTMLButtonElement) {
-    if (mcpPromptCopyInFlightRef.current) {
+  async function copyMcpAgentPrompt(transport: McpTransport, target: HTMLButtonElement) {
+    if (mcpPromptCopyInFlightRef.current[transport]) {
       return;
     }
-    mcpPromptCopyInFlightRef.current = true;
-    setCopyingMcpPrompt(true);
-    setMcpPromptCopied(false);
-    setMcpPromptError(null);
-    if (mcpPromptCopiedTimerRef.current !== null) {
-      window.clearTimeout(mcpPromptCopiedTimerRef.current);
-      mcpPromptCopiedTimerRef.current = null;
+    mcpPromptCopyInFlightRef.current[transport] = true;
+    setCopyingMcpPrompt((current) => ({ ...current, [transport]: true }));
+    setMcpPromptCopied((current) => ({ ...current, [transport]: false }));
+    setMcpPromptError((current) => ({ ...current, [transport]: null }));
+    const previousTimer = mcpPromptCopiedTimerRef.current[transport];
+    if (previousTimer !== undefined) {
+      window.clearTimeout(previousTimer);
+      delete mcpPromptCopiedTimerRef.current[transport];
     }
     try {
       const prompt = await api.getMcpAgentPrompt();
       await writeText(prompt);
-      setMcpPromptCopied(true);
+      setMcpPromptCopied((current) => ({ ...current, [transport]: true }));
+      const tooltipKey = `${transport}-agent-prompt-copy`;
       showMcpPermissionTooltip(
-        "agent-prompt-copy",
+        tooltipKey,
         t("settings.mcpPromptCopied"),
         target,
       );
-      mcpPromptCopiedTimerRef.current = window.setTimeout(() => {
-        setMcpPromptCopied(false);
+      mcpPromptCopiedTimerRef.current[transport] = window.setTimeout(() => {
+        setMcpPromptCopied((current) => ({ ...current, [transport]: false }));
         setMcpPermissionTooltip((current) =>
-          current?.key === "agent-prompt-copy" ? null : current,
+          current?.key === tooltipKey ? null : current,
         );
-        mcpPromptCopiedTimerRef.current = null;
+        delete mcpPromptCopiedTimerRef.current[transport];
       }, 2_000);
     } catch (nextError) {
-      setMcpPromptError(
-        resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
-      );
+      setMcpPromptError((current) => ({
+        ...current,
+        [transport]: resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
+      }));
     } finally {
-      mcpPromptCopyInFlightRef.current = false;
-      setCopyingMcpPrompt(false);
+      mcpPromptCopyInFlightRef.current[transport] = false;
+      setCopyingMcpPrompt((current) => ({ ...current, [transport]: false }));
     }
   }
 
@@ -540,7 +646,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 <input
                   checked={settings.mcpEnabled}
                   className="settings-auto-update-toggle"
-                  disabled={savingMcp}
+                  disabled={savingMcp || configuringLocalAgents}
                   id="mcp-enabled"
                   onChange={(event) =>
                     void saveMcpSettings(
@@ -553,7 +659,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   type="checkbox"
                 />
               </div>
-              <div className="settings-row settings-mcp-last-row">
+              <div className="settings-row">
                 <div className="settings-row-copy">
                   <span className="settings-row-label">{t("settings.mcpConfiguration")}</span>
                   <small>{t("settings.mcpStdioConfigHint")}</small>
@@ -567,6 +673,47 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   tooltipKey="stdio-copy"
                 >
                   <Copy aria-hidden="true" size={16} />
+                </SettingsIconAction>
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.mcpAgentPrompt")}</span>
+                  <small
+                    className={mcpPromptError.stdio ? "settings-mcp-inline-error" : undefined}
+                  >
+                    {mcpPromptError.stdio ?? t("settings.mcpAgentPromptHint")}
+                  </small>
+                </div>
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  disabled={copyingMcpPrompt.stdio}
+                  label={t(
+                    mcpPromptCopied.stdio
+                      ? "settings.mcpPromptCopied"
+                      : "settings.mcpCopyPrompt",
+                  )}
+                  onActivate={(target) => void copyMcpAgentPrompt("stdio", target)}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="stdio-agent-prompt-copy"
+                >
+                  <Copy aria-hidden="true" size={16} />
+                </SettingsIconAction>
+              </div>
+              <div className="settings-row settings-mcp-last-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.localAgentSetup")}</span>
+                  <small>{t("settings.localAgentSetupHint")}</small>
+                </div>
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  label={t("settings.localAgentOpen")}
+                  onActivate={() => void openLocalAgentDialog()}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="local-agent-setup"
+                >
+                  <Settings2 aria-hidden="true" size={16} />
                 </SettingsIconAction>
               </div>
               {mcpStdioError ? (
@@ -648,7 +795,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <RotateCcw aria-hidden="true" size={16} />
                 </SettingsIconAction>
               </div>
-              <div className="settings-row settings-mcp-last-row">
+              <div className="settings-row">
                 <div className="settings-row-copy">
                   <span className="settings-row-label">{t("settings.mcpConfiguration")}</span>
                   <small className="settings-mcp-risk-hint">
@@ -666,43 +813,36 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <Copy aria-hidden="true" size={16} />
                 </SettingsIconAction>
               </div>
+              <div className="settings-row settings-mcp-last-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.mcpAgentPrompt")}</span>
+                  <small
+                    className={mcpPromptError.http ? "settings-mcp-inline-error" : undefined}
+                  >
+                    {mcpPromptError.http ?? t("settings.mcpAgentPromptHint")}
+                  </small>
+                </div>
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  disabled={copyingMcpPrompt.http}
+                  label={t(
+                    mcpPromptCopied.http
+                      ? "settings.mcpPromptCopied"
+                      : "settings.mcpCopyPrompt",
+                  )}
+                  onActivate={(target) => void copyMcpAgentPrompt("http", target)}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="http-agent-prompt-copy"
+                >
+                  <Copy aria-hidden="true" size={16} />
+                </SettingsIconAction>
+              </div>
               {mcpHttpError ? (
                 <div className="form-error settings-mcp-feedback" role="alert">
                   {mcpHttpError}
                 </div>
               ) : null}
-            </section>
-
-            <section
-              aria-labelledby="mcp-prompt-title"
-              className="settings-panel settings-mcp-panel"
-            >
-              <header className="settings-panel-header">
-                <h3 id="mcp-prompt-title">{t("settings.mcpPrompt")}</h3>
-              </header>
-              <div className="settings-row settings-mcp-last-row">
-                <div className="settings-row-copy">
-                  <span className="settings-row-label">{t("settings.mcpAgentPrompt")}</span>
-                  <small className={mcpPromptError ? "settings-mcp-inline-error" : undefined}>
-                    {mcpPromptError ?? t("settings.mcpAgentPromptHint")}
-                  </small>
-                </div>
-                <SettingsIconAction
-                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
-                  disabled={copyingMcpPrompt}
-                  label={t(
-                    mcpPromptCopied
-                      ? "settings.mcpPromptCopied"
-                      : "settings.mcpCopyPrompt",
-                  )}
-                  onActivate={(target) => void copyMcpAgentPrompt(target)}
-                  onHideTooltip={() => setMcpPermissionTooltip(null)}
-                  onShowTooltip={showMcpPermissionTooltip}
-                  tooltipKey="agent-prompt-copy"
-                >
-                  <Copy aria-hidden="true" size={16} />
-                </SettingsIconAction>
-              </div>
             </section>
 
             <McpPermissionsPanel
@@ -734,6 +874,16 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
         onCopy={() => void copyMcpConfig()}
         onTargetChange={(transport, target) => void loadMcpConfig(transport, target)}
         options={mcpClientOptions}
+      />
+      <LocalAgentSetupDialog
+        capabilities={localAgentCapabilities}
+        configuring={configuringLocalAgents}
+        error={localAgentError}
+        loading={loadingLocalAgents}
+        onClose={closeLocalAgentDialog}
+        onConfigure={(targets) => void configureSelectedLocalAgents(targets)}
+        open={localAgentDialogOpen}
+        results={localAgentResults}
       />
     </section>
   );

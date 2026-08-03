@@ -33,6 +33,7 @@ time = { version = "0.3", features = ["formatting", "local-offset", "macros", "p
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
+toml_edit = "0.25"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 zeroize = { version = "1", features = ["serde"] }

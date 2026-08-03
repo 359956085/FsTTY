@@ -1,5 +1,6 @@
 mod app_paths;
 mod commands;
+mod local_agent_setup;
 mod logging;
 mod mcp;
 mod mcp_transfer;
@@ -7,16 +8,16 @@ mod models;
 mod services;
 
 use commands::{
-    cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
-    delete_session, delete_session_group, disconnect_session, download_file, forget_host_key,
-    get_app_settings, get_device_status, get_mcp_agent_prompt, get_mcp_http_client_config,
-    get_mcp_http_status, get_mcp_permission_catalog, get_mcp_stdio_client_config,
-    get_system_clipboard_content_kind, list_remote_files, list_sessions, move_remote_entry,
-    open_log_directory, rename_remote_entry, rename_session_group, reorder_session,
-    reorder_session_group, resize_terminal, resolve_session_login_save_prompt,
-    rotate_mcp_http_token, set_ignored_update_version, set_language, set_session_credential,
-    trust_host_key, update_app_settings, update_mcp_settings, update_session, upload_file,
-    write_terminal,
+    cancel_transfer, configure_local_agents, connect_session, create_remote_directory,
+    create_session, delete_remote_entry, delete_session, delete_session_group, disconnect_session,
+    download_file, forget_host_key, get_app_settings, get_device_status, get_mcp_agent_prompt,
+    get_mcp_http_client_config, get_mcp_http_status, get_mcp_permission_catalog,
+    get_mcp_stdio_client_config, get_system_clipboard_content_kind, inspect_local_agent_setup,
+    list_remote_files, list_sessions, move_remote_entry, open_log_directory, rename_remote_entry,
+    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
+    resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
+    set_language, set_session_credential, trust_host_key, update_app_settings, update_mcp_settings,
+    update_session, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -178,6 +179,8 @@ pub fn run() {
             get_mcp_permission_catalog,
             get_mcp_http_client_config,
             get_mcp_stdio_client_config,
+            inspect_local_agent_setup,
+            configure_local_agents,
             get_mcp_http_status,
             rotate_mcp_http_token,
             open_log_directory

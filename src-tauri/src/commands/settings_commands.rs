@@ -238,6 +238,25 @@ pub fn get_mcp_agent_prompt() -> String {
 }
 
 #[tauri::command]
+pub fn inspect_local_agent_setup(
+) -> Result<Vec<crate::local_agent_setup::LocalAgentCapability>, AppError> {
+    crate::local_agent_setup::inspect_local_agent_setup().map_err(AppError::Internal)
+}
+
+#[tauri::command]
+pub async fn configure_local_agents(
+    targets: Vec<crate::local_agent_setup::LocalAgentTarget>,
+) -> Result<Vec<crate::local_agent_setup::LocalAgentConfigureResult>, AppError> {
+    let prompt = crate::mcp::mcp_agent_prompt();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::local_agent_setup::configure_local_agents(targets, &prompt)
+    })
+    .await
+    .map_err(|_| AppError::Internal("本地 Agent 配置任务异常终止".to_owned()))?
+    .map_err(AppError::Internal)
+}
+
+#[tauri::command]
 pub fn get_mcp_permission_catalog() -> Vec<crate::mcp::McpPermissionCatalogEntry> {
     crate::mcp::permission_catalog()
 }
