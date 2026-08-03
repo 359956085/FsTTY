@@ -9,14 +9,48 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
-- 更新说明支持基础安全 Markdown，并按新设计调整版本更新弹窗。
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+<!-- release-notes:en-US:end -->
+
+## [1.1.0] - 2026-08-03
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### MCP 与 Agent
+
+- 新增本地 Agent 一键设置，支持 Codex、Claude、Cursor、VS Code / GitHub Copilot、Gemini CLI、OpenCode、Trae / Trae CN。
+
+#### 历史命令
+
+- 新增所有会话共享的历史命令，支持搜索、向上加载、去重、JSON 导入导出和清空。
+- 历史窗口支持拖动调整宽高。
+
+#### 其他
+
+- 一些样式和交互优化
 
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
 
-- Release notes now support basic safe Markdown, and the update dialog matches the new design.
+#### MCP and Agents
+
+- Added one-click local setup for Codex, Claude, Cursor, VS Code / GitHub Copilot, Gemini CLI, OpenCode, Trae / Trae CN.
+
+#### Command History
+
+- Added command history shared by every session, with search, upward loading, deduplication, JSON import/export, and clear.
+- The history window supports drag resizing.
+
+#### Other Changes
+
+- Some style and interaction optimizations
 
 <!-- release-notes:en-US:end -->
 

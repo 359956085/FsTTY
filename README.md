@@ -2,153 +2,145 @@
 
 # FsTTY
 
-为 Windows 打造的轻量 SSH 终端与远程文件管理工具。
+面向 AI Agent 的 Windows SSH 与 MCP 安全操作台。
 
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
+![Version](https://img.shields.io/badge/version-1.1.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+![FsTTY MCP 设置](./doc/assets/fstty-setting-mcp.png)
+
+## 为什么使用 FsTTY MCP
+
+FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor 等 Agent。Agent 不接触密码和私钥，只能在用户授权的会话分组中调用明确的工具。
+
+- **最小权限**：按会话分组分别控制访问、状态读取、文件读取、命令、编辑和删除。
+- **复用 SSH 能力**：终端、SFTP、主机密钥校验和系统凭据库由 FsTTY 统一处理。
+- **本地与远程接入**：支持本机 stdio，以及可信局域网或 VPN 内的 Streamable HTTP。
+- **一键配置 Agent**：自动检测本机 Agent，合并 MCP 配置和全局提示词，不覆盖无关设置。
+- **适合生产排障**：支持远程日志搜索、分段读取、命令执行、原子写入和受控文件传输。
+- **可审计**：独立记录工具、会话、结果和耗时；可选记录脱敏后的工具输入。
+
+## MCP 工具
+
+FsTTY 目前提供 16 个 MCP 工具：
+
+| 权限 | 工具 | 能力 |
+| --- | --- | --- |
+| 无需会话权限 | `get_permission_guide` | 返回目标工具所需权限和当前界面的设置步骤 |
+| 状态读取 | `list_sessions`、`get_device_status` | 发现已授权会话；读取 CPU、内存、磁盘、网络、系统和运行时间 |
+| 文件读取 | `list_remote_files`、`read_remote_file`、`search_remote_file` | 浏览目录、分段读取文件、按关键词扫描远程日志 |
+| 命令 | `execute_command` | 在已授权会话中执行远程 Shell 命令 |
+| 编辑 | `write_remote_file`、`create_remote_directory`、`rename_remote_entry`、`move_remote_entry` | 原子写入文件；创建、重命名和移动远程条目 |
+| 删除 | `delete_remote_entry` | 递归删除远程文件或目录 |
+| stdio 传输 | `upload_local_file`、`download_remote_file` | 在 MCP 客户端声明的 Roots 与远程服务器之间传输文件 |
+| HTTP 传输 | `create_remote_file_upload_link`、`create_remote_file_download_link` | 签发 5 分钟有效的上传或下载链接 |
+
+`search_remote_file` 单次最多扫描 `16 MiB`，响应限制为 `8 MiB`，可携带前后各 `0–50` 行上下文，并通过 `nextOffset` 继续扫描。适合搜索大日志，无需先读取完整文件。
+
+## 权限与安全边界
+
+新会话分组默认未向 MCP 开放。启用分组访问后，状态读取和文件读取默认开启，命令、编辑和删除默认关闭。
+
+- 权限保存后对下一次 stdio 或 HTTP 请求立即生效，无需重连。
+- 命令权限可能绕过编辑和删除限制，只应授予可信 Agent。
+- Agent 无法读取密码、私钥正文、私钥口令或 HTTP Bearer Token。
+- 首次出现或发生变化的主机密钥必须先在 FsTTY 界面核对并确认。
+- 文件写入采用临时文件和原子替换；上传、重命名和移动不会覆盖已有目标。
+- 删除没有回收站，FsTTY 会在工具描述中将其标记为破坏性操作。
+- 权限配置无法读取或校验失败时，请求默认拒绝。
+
+## stdio 与 HTTP
+
+| | stdio | Streamable HTTP |
+| --- | --- | --- |
+| 场景 | 本机 Agent | 可信局域网或 VPN 内的 Agent |
+| 地址 | `fstty.exe --mcp-stdio` | `http://<FSTTY_HOST_IP>:37653/mcp`（默认端口） |
+| 认证 | 本地进程通信 | Windows 凭据库中的 Bearer Token |
+| 本地文件传输 | 使用 MCP 客户端 Roots | 使用 5 分钟传输链接 |
+| 网络暴露 | 无监听端口 | 监听所有 IPv4 接口，明文传输 |
+
+HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Origin` 的请求，不支持浏览器 MCP 客户端或 CORS。
+
+传输链接本身即凭据，不再要求 Bearer Token。下载支持单区间断点续传；上传首次成功后立即失效，并且绝不覆盖已有远程文件。
+
+## 快速开始
+
+1. 从 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
+2. 创建 SSH 会话并完成首次主机密钥确认。
+3. 打开“设置 → MCP”，启用 `stdio`。
+4. 在“权限”中开启需要暴露的会话分组，并按需授权工具类别。
+5. 点击“一键设置”，选择本机 Agent 并完成配置。
+6. 让 Agent 先调用 `list_sessions`，再按返回的会话 ID 使用其他工具。
+
+也可以分别复制 stdio 或 HTTP 配置，以及 Agent 使用提示词，手工粘贴到其他 MCP 客户端。
+
+## 一键配置本地 Agent
+
+| Agent | MCP 配置 | 全局提示词 |
+| --- | --- | --- |
+| Codex | 自动合并 | 自动合并 `AGENTS.md` |
+| Claude | 使用官方 CLI 配置用户级 MCP | 自动合并 `CLAUDE.md` |
+| Cursor | 自动合并 | 复制后手工粘贴到 User Rules |
+| VS Code / GitHub Copilot | 自动合并默认用户 Profile | 写入独立 instructions 文件 |
+| Gemini CLI | 自动合并 | 自动合并 `GEMINI.md` |
+| OpenCode | 保留 JSONC 注释并自动合并 | 自动合并 `AGENTS.md` |
+| Trae | 自动合并 | 复制后手工粘贴到 User Rules |
+| Trae CN | 自动合并 | 复制后手工粘贴到 User Rules |
+
+自动配置只修改 FsTTY 自有节点或 `fstty:begin/end` 标记区块。配置损坏、OpenCode 双配置冲突或单个 Agent 配置失败时，该 Agent 保持原文件不变，其他 Agent 继续处理。重复运行会更新配置，不会重复追加内容。
+
+## MCP 审计日志
+
+审计日志独立保存在 `%APPDATA%\FsTTY\logs\mcp-audit-YYYY-MM-DD.log`，最多保留 15 天。
+
+- 基础记录包含传输方式、工具、会话、结果和耗时。
+- “设置 → 常规 → 日志 → 记录 MCP 工具输入”默认关闭，可实时开启。
+- 开启后记录命令、路径等工具参数，但不记录工具输出、请求头、Token 或传输正文。
+- `write_remote_file.content` 仅记录 UTF-8 字节数和 SHA-256；正文不会写入日志。
+- 每条记录使用单行常规日志格式，字符串和控制字符会安全转义。
+
+## Windows SSH 工作区
+
+MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
+
 ![FsTTY 会话工作区](./doc/assets/fstty-overview.png)
-
-## 产品简介
-
-FsTTY 将 SSH 终端、会话管理、SFTP 文件操作和设备状态集中在一个桌面工作区中。它适合需要频繁连接 Linux 服务器、维护多组主机或在终端与远程文件之间快速切换的 Windows 用户。
-
-## 主要功能
 
 | 功能 | 说明 |
 | --- | --- |
-| 会话管理 | 会话分组、拖动排序、跨组移动、搜索、收藏和多标签页工作区 |
-| SSH 认证 | 支持密码、私钥文件和粘贴私钥正文 |
-| 安全校验 | 首次连接确认主机密钥指纹，密钥变化时阻止连接 |
-| 远程终端 | 基于 xterm.js 的交互式终端，支持复制、粘贴、清屏、重连和 tmux OSC 52 剪贴板 |
-| 文件管理 | SFTP 浏览、上传、下载、远程拖放移动、新建文件夹、重命名和递归删除 |
-| 设备状态 | 展示 CPU、内存近 10 分钟趋势、磁盘、网络上下行、操作系统和运行时间 |
-| 应用设置 | 中文/English、远程剪贴板控制、手动检查更新、启动时检查更新和更新代理 |
+| 会话管理 | 分组、拖动排序、跨组移动、搜索、收藏和多标签页 |
+| SSH 认证 | 密码、私钥文件和粘贴私钥正文；敏感凭据保存到系统凭据库 |
+| 远程终端 | xterm.js 6、复制粘贴、清屏、重连、tmux 鼠标和 OSC 52 剪贴板 |
+| 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
+| 文件管理 | SFTP 浏览、上传、下载、拖放移动、新建目录、重命名、复制路径和递归删除 |
+| 设备状态 | CPU、内存趋势、磁盘、网络上下行、操作系统和运行时间 |
+| 自动更新 | 手动或启动时检查、版本忽略、Markdown 更新说明和更新代理 |
+
+历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载最新 Windows x64 安装包：
+前往 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
-- 普通用户推荐下载 `*-setup.exe`（NSIS）。
-- 企业部署或需要 MSI 的场景可下载 `*.msi`。
+- 普通用户推荐 `*-setup.exe`（NSIS）。
+- 企业部署或 MSI 场景使用 `*.msi`。
 
-NSIS 安装包支持简体中文和英文，并自动跟随 Windows 显示语言；其他系统语言默认使用简体中文。为保持现有企业部署和升级兼容，MSI 安装包继续使用英文界面。
-
-运行安装包并按提示完成安装。当前发布包未配置 Windows Authenticode 代码签名，Windows SmartScreen 可能显示安全提示；请确认安装包来自本仓库的 Releases 页面。
-
-## 使用说明
-
-### 1. 创建会话
-
-1. 打开“会话”页，点击左侧会话列表顶部的 `+`。
-2. 输入服务器主机、端口和账号。名称留空时会自动使用主机地址，分组可选。
-3. 选择认证方式：
-   - **密码**：输入 SSH 密码。
-   - **私钥文件**：选择本机私钥文件，并在需要时输入口令。
-   - **粘贴私钥**：粘贴 PEM 或 OpenSSH 私钥正文。
-4. 保持“保存密码/私钥口令”勾选可将凭据保存到系统凭据库；取消勾选后，连接时会询问凭据并仅用于本次连接。
-5. 保存会话。
-
-私钥认证必须填写账号。文件私钥继续引用原文件路径，移动或删除文件后需要重新选择。
-
-### 2. 建立连接
-
-1. 打开会话标签，点击“连接”。
-2. 首次连接会显示服务器主机密钥算法和 SHA-256 指纹。请通过可信渠道核对后再选择“信任并连接”。
-3. 如果服务器主机密钥发生变化，FsTTY 会阻止连接。确认服务器确实更换密钥后，可在编辑会话中忘记旧记录并重新核对。
-4. 凭据未保存时，根据弹窗输入密码或私钥口令；可选择保存或仅本次使用。
-
-### 3. 使用终端
-
-- 在中央终端区域输入命令。
-- 右键菜单支持复制、粘贴、全选、清屏和重连；有选区时按 `Ctrl+C` 或 `Ctrl+Shift+C` 可复制到 Windows 剪贴板，按 `Ctrl+V` 可粘贴。无选区时 `Ctrl+C` 仍用于中断远程命令。
-- 可同时打开多个会话标签，并拖动左右分隔线调整工作区宽度。
-
-#### tmux 剪贴板
-
-- tmux 开启鼠标模式后，普通拖动和右键由 tmux 处理；按住右键移动到菜单项并松开即可执行。按住 `Shift` 拖动可在 FsTTY 中直接选中文本，按住 `Shift` 右键可打开 FsTTY 菜单。
-- tmux 复制模式通过 OSC 52 写入 Windows 剪贴板。运行 `tmux show -s set-clipboard`，结果应为 `external` 或 `on`。
-- 运行 `tmux info | grep Ms` 检查剪贴板能力；如果显示 `[missing]`，请按 [tmux 官方说明](https://github.com/tmux/tmux/wiki/Clipboard) 配置 `terminal-features` 并重启 tmux 服务。
-
-### 4. 管理远程文件
-
-连接成功且服务器支持 SFTP 后，右侧“文件管理”面板会显示远程目录。
-
-- 点击上传按钮选择单个本地文件。
-- 将多个普通文件拖入文件列表，可依次上传到当前目录；暂不递归上传文件夹。
-- 将远程文件或文件夹拖到目录行或路径面包屑，可移动到对应目录；同名目标不会被覆盖。
-- 右键文件可下载、重命名、删除或复制路径。
-- 右键文件夹可打开、重命名、递归删除或复制路径。
-- 在列表空白区域右键，可新建文件夹、上传或刷新。
-
-递归删除没有回收站和撤销功能，请确认目标路径后再操作。
-
-### 5. 查看设备状态
-
-右侧“设备状态”区域会在远端命令可用时展示操作系统、架构、运行时间、磁盘使用情况、网络上下行速度，以及 CPU、内存近 10 分钟趋势。受限账号或精简系统可能无法提供完整信息。
-
-### 6. 设置与更新
-
-在“设置”页可以：
-
-- 切换中文或 English，设置会立即生效并保存。
-- 手动检查更新。
-- 开启启动时自动检查更新；发现新版本后仍需确认，不会静默安装。
-- 配置空值、`http://`、`https://` 或 `socks5://` 更新代理。
-- 开启或关闭远程程序通过 OSC 52 写入 Windows 剪贴板。
-- 打开 `%APPDATA%\FsTTY\logs` 查看运行日志和 MCP 审计日志；日志最多保留 15 天。
-
-## MCP 自动化
-
-FsTTY 可作为 MCP 服务，供 Agent 执行日常部署和生产排障。功能默认关闭，需在“设置 → MCP”中启用服务并授权会话分组。
-
-- stdio 仅供本机使用：`fstty.exe --mcp-stdio`
-- Streamable HTTP 用于局域网或 VPN：`http://<FSTTY_HOST_IP>:37653/mcp`
-- 开启 HTTP 后监听所有 IPv4 网络接口（`0.0.0.0`），并使用保存在 Windows 凭据库中的 Bearer Token。
-- HTTP 使用明文传输，仅应在可信局域网或 VPN 中使用，禁止暴露公网。
-- `/mcp` 面向 Codex、IDE 等原生 MCP 客户端，并拒绝带 `Origin` 的请求；不支持浏览器 MCP 客户端或 CORS。
-- 分组内状态读取和文件读取默认开启；命令、编辑、删除默认关闭。
-- Agent 可调用 `get_permission_guide`，按 FsTTY 当前界面语言获取目标工具所需权限和“设置 → MCP”操作步骤；该工具不会枚举未授权分组或修改权限。
-- 可在“设置 → MCP → 提示词”复制后端按实时工具权限映射生成的英文 Agent 使用指南，帮助 Agent 遵守最小权限、传输和生产操作安全规则；内容不包含 Token、会话或凭据信息。
-- stdio 与 HTTP 的分组权限保存后对下一次请求立即生效，无需重连；已开始的命令或传输继续完成。权限设置无法读取或校验失败时，后续请求会被拒绝。
-- 命令权限可绕过文件编辑和删除限制，仅应授权给可信 Agent。
-- 未知或变化的主机密钥必须先在 FsTTY 界面确认。
-- stdio 的 `upload_local_file`、`download_remote_file` 仅访问 MCP 客户端声明的 Roots，适合同机传输。
-- HTTP 使用 `create_remote_file_download_link`、`create_remote_file_upload_link` 签发 5 分钟有效的传输链接，不依赖客户端 Roots。
-- `search_remote_file` 可在不完整读取大文件的情况下按关键词扫描远程日志；前后上下文各支持 `0–50` 行，单次最多扫描 `16 MiB`，响应严格限制为 `8 MiB`，截断后可从 `nextOffset` 继续。
-- 链接工具同时返回标准 MCP `resource_link`、文本 URL 和结构化数据；是否自动保存由 MCP 客户端决定。
-- 下载链接支持单区间断点续传；上传链接可直接打开同源文件选择页，也可向文件名路径发送原始 `PUT`。
-- 传输链接本身即凭据，不再要求 Bearer Token。下载可在有效期内顺序重试；上传首次成功后立即失效，且绝不覆盖已有远程文件。
-- MCP 审计只记录工具、会话、结果和耗时等元数据，不记录命令、文件内容或秘密。
-
-## 安全说明
-
-- 选择保存后，密码、粘贴私钥正文和私钥口令存入 Windows 系统凭据库，不写入普通会话配置。
-- 会话配置只保存连接信息和文件私钥路径，不返回或显示已保存的私钥正文。
-- 第一次连接必须确认主机密钥；已信任密钥发生变化时，连接会被阻止。
-- “仅本次连接”凭据只在当前连接流程中使用。
-- OSC 52 开启后，远程程序可以替换 Windows 剪贴板内容；不需要 tmux 剪贴板同步时可在设置页关闭。
+NSIS 支持简体中文和英文，并跟随 Windows 显示语言。发布包暂未配置 Windows Authenticode 签名；若 SmartScreen 显示提示，请确认安装包来自本仓库 Releases 页面。
 
 ## 当前限制
 
 - 当前仅发布 Windows x64 安装包。
+- HTTP MCP 使用明文传输，只能用于可信局域网或 VPN。
 - 不支持 SSH Agent、Pageant、硬件安全密钥或 SSH 证书认证。
-- 不提供密钥生成、自动上传公钥或远程多选文件操作。
-- 拖放上传支持多个普通文件，不递归上传本地文件夹。
+- 本地文件夹暂不支持递归拖放上传。
+- Trae、Trae CN 和 Cursor 的 User Rules 需要手工粘贴。
 
 ## 本地开发
 
-### 环境要求
-
-- Windows
-- Node.js 20+
-- Rust stable
-- [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
-
-### 常用命令
+环境要求：Windows、Node.js 20+、Rust stable 和 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
 npm ci
@@ -156,10 +148,10 @@ npm run tauri dev
 ```
 
 ```bash
-npm run typecheck
-npm run build
+npm run verify
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
 ## 社区鸣谢

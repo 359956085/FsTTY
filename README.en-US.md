@@ -2,153 +2,145 @@
 
 # FsTTY
 
-A lightweight SSH terminal and remote file manager built for Windows.
+A Windows SSH workspace and secure MCP control plane for AI agents.
 
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
+![Version](https://img.shields.io/badge/version-1.1.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+![FsTTY MCP settings](./doc/assets/fstty-setting-mcp.png)
+
+## Why FsTTY MCP
+
+FsTTY securely exposes your saved SSH sessions to agents such as Codex, Claude, and Cursor. Agents never receive passwords or private keys and can call only explicitly authorized tools within selected session groups.
+
+- **Least privilege**: control access, status reads, file reads, commands, edits, and deletion per session group.
+- **Reuse proven SSH capabilities**: FsTTY owns terminals, SFTP, host-key verification, and credential storage.
+- **Local and remote access**: use local stdio or Streamable HTTP on a trusted LAN or VPN.
+- **One-click agent setup**: detect local agents and merge MCP configuration and global instructions without overwriting unrelated settings.
+- **Production diagnostics**: search remote logs, read file windows, execute commands, write atomically, and transfer files under explicit permissions.
+- **Auditable operations**: record tool, session, result, and duration, with optional redacted tool inputs.
+
+## MCP Tools
+
+FsTTY currently exposes 16 MCP tools:
+
+| Permission | Tools | Capability |
+| --- | --- | --- |
+| No session permission | `get_permission_guide` | Returns the permission required by a target tool and the matching UI setup steps |
+| Status read | `list_sessions`, `get_device_status` | Discovers authorized sessions and reads CPU, memory, disk, network, OS, and uptime |
+| File read | `list_remote_files`, `read_remote_file`, `search_remote_file` | Browses directories, reads file windows, and searches remote logs by keyword |
+| Command | `execute_command` | Executes a remote shell command in an authorized session |
+| Edit | `write_remote_file`, `create_remote_directory`, `rename_remote_entry`, `move_remote_entry` | Writes files atomically and creates, renames, or moves remote entries |
+| Delete | `delete_remote_entry` | Recursively deletes a remote file or directory |
+| stdio transfer | `upload_local_file`, `download_remote_file` | Transfers files between MCP client Roots and a remote server |
+| HTTP transfer | `create_remote_file_upload_link`, `create_remote_file_download_link` | Issues upload or download links valid for five minutes |
+
+`search_remote_file` scans up to `16 MiB` per call, limits responses to `8 MiB`, supports `0–50` context lines on either side, and continues through `nextOffset`. It is designed for large log files that should not be downloaded or read in full.
+
+## Permissions and Security Boundaries
+
+New session groups are not exposed to MCP. After group access is enabled, status and file reads default to on, while commands, edits, and deletion default to off.
+
+- Saved permissions apply to the next stdio or HTTP request without reconnecting.
+- Command execution may bypass edit and deletion restrictions. Grant it only to trusted agents.
+- Agents cannot read passwords, private-key content, private-key passphrases, or the HTTP Bearer Token.
+- New or changed host keys must be reviewed and accepted in the FsTTY UI.
+- File writes use a temporary file and atomic replacement. Upload, rename, and move operations never overwrite an existing target.
+- Deletion has no recycle bin and is marked as destructive in the tool metadata.
+- Requests fail closed when permission configuration cannot be read or validated.
+
+## stdio and HTTP
+
+| | stdio | Streamable HTTP |
+| --- | --- | --- |
+| Intended use | Local agents | Agents on a trusted LAN or VPN |
+| Address | `fstty.exe --mcp-stdio` | `http://<FSTTY_HOST_IP>:37653/mcp` (default port) |
+| Authentication | Local process transport | Bearer Token stored in Windows Credential Manager |
+| Local file transfer | MCP client Roots | Five-minute transfer links |
+| Network exposure | No listening port | All IPv4 interfaces, plaintext transport |
+
+Never expose the HTTP service to the public internet. `/mcp` targets native MCP clients, rejects requests containing `Origin`, and does not support browser MCP clients or CORS.
+
+A transfer link is its own credential and does not require the Bearer Token. Downloads support a single byte range for resuming. An upload link expires after its first successful upload and never overwrites an existing remote file.
+
+## Quick Start
+
+1. Install FsTTY from [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
+2. Create an SSH session and complete the initial host-key verification.
+3. Open **Settings → MCP** and enable `stdio`.
+4. Enable the required session groups under **Permissions**, then grant only the needed tool categories.
+5. Select **One-click setup**, choose the installed local agents, and apply the configuration.
+6. Ask the agent to call `list_sessions` first and use the returned session ID for other tools.
+
+You can also copy an stdio or HTTP configuration and the agent instructions separately for any other MCP client.
+
+## One-click Local Agent Setup
+
+| Agent | MCP configuration | Global instructions |
+| --- | --- | --- |
+| Codex | Merged automatically | Merged into `AGENTS.md` |
+| Claude | Configured through the official CLI at user scope | Merged into `CLAUDE.md` |
+| Cursor | Merged automatically | Copied for manual paste into User Rules |
+| VS Code / GitHub Copilot | Merged into the default user profile | Written to a dedicated instructions file |
+| Gemini CLI | Merged automatically | Merged into `GEMINI.md` |
+| OpenCode | Merged while preserving JSONC comments | Merged into `AGENTS.md` |
+| Trae | Merged automatically | Copied for manual paste into User Rules |
+| Trae CN | Merged automatically | Copied for manual paste into User Rules |
+
+Automatic setup changes only the FsTTY-owned node or the `fstty:begin/end` marked block. A damaged configuration, an OpenCode dual-file conflict, or one failed agent leaves that agent unchanged while other selected agents continue. Repeated runs update existing FsTTY configuration without duplicate blocks.
+
+## MCP Audit Logs
+
+Audit logs are stored separately under `%APPDATA%\FsTTY\logs\mcp-audit-YYYY-MM-DD.log` and retained for up to 15 days.
+
+- Base records include transport, tool, session, result, and duration.
+- **Settings → General → Logs → Log MCP tool inputs** is off by default and applies immediately.
+- When enabled, command and path parameters are recorded, but tool output, headers, tokens, and transfer bodies are excluded.
+- `write_remote_file.content` is replaced with its UTF-8 byte length and SHA-256. The body is never written to the log.
+- Every record uses a conventional single-line text format with safe escaping for strings and control characters.
+
+## Windows SSH Workspace
+
+Beyond MCP, FsTTY is a complete Windows SSH client.
+
 ![FsTTY session workspace](./doc/assets/fstty-overview.png)
-
-## Overview
-
-FsTTY brings SSH terminals, session management, SFTP file operations, and device status into one desktop workspace. It is designed for Windows users who frequently connect to Linux servers, maintain groups of hosts, or switch between terminals and remote files.
-
-## Features
 
 | Feature | Description |
 | --- | --- |
-| Session management | Session groups, drag ordering, cross-group moves, search, favorites, and a multi-tab workspace |
-| SSH authentication | Passwords, private key files, and pasted private key content |
-| Host verification | Confirms host key fingerprints on first connection and blocks changed keys |
-| Remote terminal | Interactive xterm.js terminal with copy, paste, clear, reconnect, and tmux OSC 52 clipboard support |
-| File management | SFTP browsing, uploads, downloads, remote drag-to-move, directory creation, rename, and recursive delete |
-| Device status | Shows 10-minute CPU and memory trends, disk, network traffic, OS, and uptime |
-| App settings | Chinese/English, remote clipboard control, manual and startup update checks, and an update proxy |
+| Session management | Groups, drag ordering, cross-group moves, search, favorites, and multiple tabs |
+| SSH authentication | Passwords, private-key files, and pasted private keys, with secrets stored in the system credential vault |
+| Remote terminal | xterm.js 6, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
+| Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
+| File management | SFTP browse, upload, download, drag-to-move, create, rename, copy path, and recursive delete |
+| Device status | CPU and memory trends, disk, network traffic, OS, and uptime |
+| Updates | Manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
+
+Selecting a history entry with Enter or the mouse inserts it into the terminal without executing it. The history window supports search, keyboard selection, and persisted drag resizing.
 
 ## Download and Install
 
-Open [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) and download the latest Windows x64 installer:
+Open [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) and download a Windows x64 installer:
 
-- The `*-setup.exe` NSIS installer is recommended for most users.
-- Use the `*.msi` package for enterprise deployment or MSI-based installation.
+- `*-setup.exe` (NSIS) is recommended for most users.
+- Use `*.msi` for enterprise or MSI-based deployment.
 
-The NSIS installer supports Simplified Chinese and English and follows the Windows display language automatically. Other system languages fall back to Simplified Chinese. The MSI installer remains in English to preserve compatibility with existing enterprise deployments and upgrades.
-
-Run the installer and follow the prompts. Current release packages do not use Windows Authenticode code signing, so Windows SmartScreen may display a warning. Verify that the installer came from this repository's Releases page before continuing.
-
-## Usage
-
-### 1. Create a Session
-
-1. Open the Sessions page and select `+` at the top of the session list.
-2. Enter the server host, port, and username. If the name is empty, the host address is used automatically. Group is optional.
-3. Select an authentication method:
-   - **Password**: enter the SSH password.
-   - **Private key file**: select a local private key and enter its passphrase when required.
-   - **Pasted private key**: paste PEM or OpenSSH private key content.
-4. Keep “Save password/private key passphrase” selected to store credentials in the system credential vault. Clear it to be prompted at connection time and use the credential only once.
-5. Save the session.
-
-Private key authentication requires a username. File-based keys continue to reference the original local path; select the key again after moving or deleting that file.
-
-### 2. Connect
-
-1. Open a session tab and select “Connect.”
-2. On first connection, FsTTY displays the server host key algorithm and SHA-256 fingerprint. Verify it through a trusted channel before selecting “Trust and Connect.”
-3. If the server host key changes, FsTTY blocks the connection. After confirming that the server legitimately changed its key, forget the previous record from the session editor and verify the new key.
-4. When credentials are not stored, enter the password or private key passphrase in the prompt. You can save it or use it only for the current connection.
-
-### 3. Use the Terminal
-
-- Enter commands in the central terminal area.
-- The context menu provides copy, paste, select all, clear, and reconnect actions. With an active selection, press `Ctrl+C` or `Ctrl+Shift+C` to copy it to the Windows clipboard; press `Ctrl+V` to paste. Without a selection, `Ctrl+C` still interrupts the remote command.
-- Open multiple session tabs and drag the left or right divider to resize the workspace.
-
-#### tmux Clipboard
-
-- With tmux mouse mode enabled, regular dragging and right-clicks are handled by tmux. Hold the right button, move to a menu item, and release it to run the command. Hold `Shift` while dragging to select text directly in FsTTY, or use `Shift`+right-click to open the FsTTY menu.
-- tmux copy mode writes to the Windows clipboard through OSC 52. Run `tmux show -s set-clipboard`; the value should be `external` or `on`.
-- Run `tmux info | grep Ms` to verify clipboard support. If it reports `[missing]`, configure `terminal-features` using the [official tmux instructions](https://github.com/tmux/tmux/wiki/Clipboard) and restart the tmux server.
-
-### 4. Manage Remote Files
-
-After connecting to a server with SFTP support, the File Manager panel on the right displays the remote directory.
-
-- Select the upload button to choose one local file.
-- Drag multiple regular files into the file list to upload them sequentially to the current directory. Local directories are not uploaded recursively.
-- Drag a remote file or directory onto a directory row or path breadcrumb to move it. Existing same-name targets are never overwritten.
-- Right-click a file to download, rename, delete, or copy its path.
-- Right-click a directory to open, rename, recursively delete, or copy its path.
-- Right-click an empty area to create a directory, upload a file, or refresh.
-
-Recursive deletion has no recycle bin or undo. Verify the target path before confirming.
-
-### 5. View Device Status
-
-The Device Status panel displays the operating system, architecture, uptime, disk usage, network upload and download speeds, and the latest 10 minutes of CPU and memory trends when the required remote commands are available. Restricted accounts and minimal systems may provide incomplete information.
-
-### 6. Settings and Updates
-
-The Settings page lets you:
-
-- Switch between Chinese and English. The change applies immediately and is saved.
-- Check for updates manually.
-- Check for updates at startup. FsTTY still asks for confirmation when an update is available and never installs it silently.
-- Configure an empty, `http://`, `https://`, or `socks5://` update proxy.
-- Enable or disable remote clipboard writes through OSC 52.
-- Open `%APPDATA%\FsTTY\logs` to inspect runtime and MCP audit logs. Logs are retained for up to 15 days.
-
-## MCP Automation
-
-FsTTY can run as an MCP server for agent-driven deployments and production diagnostics. It is disabled by default. Enable the service and authorize session groups under **Settings → MCP**.
-
-- stdio is local-only: `fstty.exe --mcp-stdio`
-- Streamable HTTP is for a LAN or VPN: `http://<FSTTY_HOST_IP>:37653/mcp`
-- Enabling HTTP binds to all IPv4 interfaces (`0.0.0.0`) and requires a Bearer Token stored in Windows Credential Manager.
-- HTTP uses plaintext transport. Use it only on a trusted LAN or VPN, and never expose it to the public internet.
-- `/mcp` targets native MCP clients such as Codex and IDEs and rejects requests containing `Origin`; browser-based MCP clients and CORS are unsupported.
-- Status and remote file reads default to enabled inside an authorized group; commands, edits, and deletion default to disabled.
-- Agents can call `get_permission_guide` for the permissions required by a target tool and the **Settings → MCP** steps in the current FsTTY UI language. The tool neither lists unauthorized groups nor changes permissions.
-- **Settings → MCP → Prompt** copies an English Agent usage guide generated from the backend's live tool-to-permission mapping. It helps Agents follow least-privilege, transfer, and production-safety rules without including tokens, sessions, or credentials.
-- Saved group permissions apply to the next stdio and HTTP request without reconnecting. Commands or transfers already in progress continue, while unreadable or invalid permission settings cause subsequent requests to be denied.
-- Command execution can bypass file edit and deletion restrictions. Grant it only to trusted agents.
-- Unknown or changed host keys must first be confirmed in the FsTTY UI.
-- stdio `upload_local_file` and `download_remote_file` are restricted to Roots declared by the MCP client and are intended for same-host transfers.
-- HTTP uses `create_remote_file_download_link` and `create_remote_file_upload_link` to issue five-minute transfer links without relying on client Roots.
-- `search_remote_file` scans large remote logs by keyword without reading the entire file. It supports `0–50` context lines on each side, scans up to `16 MiB` per call, strictly limits responses to `8 MiB`, and can continue from `nextOffset` after truncation.
-- Link tools return a standard MCP `resource_link`, a text URL, and structured data. Automatic saving remains client-defined.
-- Download links support a single byte range for resuming. Upload links provide a same-origin file picker and also accept a raw `PUT` at the encoded file-name path.
-- A transfer link is its own credential and does not require the Bearer Token. Downloads may be retried sequentially while valid. An upload link expires after its first successful upload and never overwrites an existing remote file.
-- MCP audit logs contain only metadata such as tool, session, result, and duration; commands, file contents, and secrets are never logged.
-
-## Security
-
-- When saving is enabled, passwords, pasted private key content, and private key passphrases are stored in the Windows credential vault, not in the regular session configuration.
-- Session configuration contains connection details and file-based private key paths, but never returns or displays stored private key content.
-- First-time connections require host key confirmation. A changed trusted key blocks the connection.
-- Credentials marked for one-time use are limited to the current connection flow.
-- When OSC 52 is enabled, remote programs can replace Windows clipboard content. Disable remote clipboard writes in Settings when synchronization is not needed.
+The NSIS installer supports Simplified Chinese and English and follows the Windows display language. Release packages are not currently signed with Windows Authenticode. If SmartScreen displays a warning, verify that the installer came from this repository's Releases page.
 
 ## Current Limitations
 
 - Release packages currently target Windows x64 only.
-- SSH Agent, Pageant, hardware security keys, and SSH certificate authentication are not supported.
-- FsTTY does not generate keys, upload public keys automatically, or provide remote multi-selection.
-- Drag-and-drop upload accepts multiple regular files but does not recursively upload local directories.
+- HTTP MCP uses plaintext transport and is limited to a trusted LAN or VPN.
+- SSH Agent, Pageant, hardware security keys, and SSH certificate authentication are unsupported.
+- Local directories cannot yet be uploaded recursively through drag and drop.
+- Cursor, Trae, and Trae CN User Rules require a manual paste.
 
 ## Local Development
 
-### Requirements
-
-- Windows
-- Node.js 20+
-- Rust stable
-- [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/)
-
-### Commands
+Requirements: Windows, Node.js 20+, Rust stable, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
 npm ci
@@ -156,10 +148,10 @@ npm run tauri dev
 ```
 
 ```bash
-npm run typecheck
-npm run build
+npm run verify
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
 ## Acknowledgements
