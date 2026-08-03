@@ -1026,6 +1026,12 @@ export function FilesPane({
                     onSelect: onUpload,
                   },
                   {
+                    id: "copyCurrentFolderPath",
+                    label: t("sessions.contextCopyCurrentFolderPath"),
+                    icon: <Clipboard size={15} />,
+                    onSelect: () => void copyPath(currentPath),
+                  },
+                  {
                     id: "refresh",
                     label: t("sessions.refresh"),
                     icon: <RefreshCw size={15} />,
