@@ -50,6 +50,13 @@ import {
   type TerminalActivityController,
 } from "./terminalActivity";
 import { createTerminalConnectionAttemptGuard } from "./terminalConnectionAttempt";
+import { CommandHistoryPopover } from "./CommandHistoryPopover";
+import {
+  createCommandHistoryInsertion,
+  createShellIntegrationCommand,
+  parseCommandHistoryOsc,
+  type ShellIntegrationDescriptor,
+} from "./terminalCommandHistory";
 
 const SHELL_OSC_IDENTIFIER = 777;
 const CLIPBOARD_MESSAGE_KEYS = {
@@ -59,10 +66,8 @@ const CLIPBOARD_MESSAGE_KEYS = {
 } as const;
 type ClipboardMessageKind = keyof typeof CLIPBOARD_MESSAGE_KEYS;
 
-interface ShellIntegration {
-  functionName: string;
+interface ShellIntegration extends ShellIntegrationDescriptor {
   stage: "detecting" | "installing" | "active" | "unsupported";
-  token: string;
 }
 
 interface ConnectTerminalOptions {
@@ -130,6 +135,7 @@ export const TerminalPane = memo(function TerminalPane({
   const remoteMouseActivityRef = useRef<TerminalActivityController | null>(null);
   const resizeObserverActivityRef = useRef<TerminalActivityController | null>(null);
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
+  const historyWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const terminalLoginInputRef = useRef(createTerminalLoginInputController());
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
@@ -327,6 +333,7 @@ export const TerminalPane = memo(function TerminalPane({
     const token = crypto.randomUUID().replace(/-/g, "");
     shellIntegrationRef.current = {
       functionName: `__fstty_cwd_${token.slice(0, 12)}`,
+      historyFunctionName: `__fstty_history_${token.slice(0, 12)}`,
       stage: "detecting",
       token,
     };
@@ -340,6 +347,18 @@ export const TerminalPane = memo(function TerminalPane({
   function handleShellOsc(data: string) {
     const integration = shellIntegrationRef.current;
     if (!integration) {
+      return true;
+    }
+    const history = parseCommandHistoryOsc(data, integration);
+    if (history.matched) {
+      if (history.command) {
+        historyWriteChainRef.current = historyWriteChainRef.current
+          .then(() => api.addCommandHistory(history.command!))
+          .catch((error) => {
+            // 历史库故障不能阻塞远程终端；链继续可用，便于后续命令自动恢复写入。
+            console.error("历史命令保存失败", error);
+          });
+      }
       return true;
     }
     const shellPrefix = `fstty-shell:${integration.token}:`;
@@ -1450,6 +1469,15 @@ export const TerminalPane = memo(function TerminalPane({
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
+      <div className="terminal-toolbar">
+        <CommandHistoryPopover
+          disabled={connectionState !== "connected"}
+          onSelect={(command) => {
+            sendImmediateInput(createCommandHistoryInsertion(command));
+            window.requestAnimationFrame(focusTerminal);
+          }}
+        />
+      </div>
       {clipboardError ? (
         <div aria-live="polite" className="terminal-clipboard-error error-banner">
           {t(CLIPBOARD_MESSAGE_KEYS[clipboardError])}
@@ -1674,21 +1702,6 @@ function decodeBase64(value: string) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
-}
-
-function createShellIntegrationCommand(
-  shellName: string | undefined,
-  integration: ShellIntegration,
-) {
-  // 只修改当前 Shell 进程的提示符钩子，不写入用户远程配置文件。
-  const reportDirectory = `printf '\\033]${SHELL_OSC_IDENTIFIER};fstty-cwd:${integration.token}:%s\\007' "$PWD"`;
-  if (shellName === "bash") {
-    return ` ${integration.functionName}(){ ${reportDirectory}; }; case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "declare -a"*) PROMPT_COMMAND+=(${integration.functionName});; *) PROMPT_COMMAND="${integration.functionName}\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac\r`;
-  }
-  if (shellName === "zsh") {
-    return ` ${integration.functionName}(){ ${reportDirectory}; }; precmd_functions+=(${integration.functionName})\r`;
-  }
-  return null;
 }
 
 function isValidRemotePath(path: string) {

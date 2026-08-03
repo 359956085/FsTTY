@@ -2,6 +2,9 @@ import { invoke, type Channel } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   ClipboardContentKind,
+  CommandHistoryImportResult,
+  CommandHistoryPage,
+  CommandHistorySettings,
   ConnectResult,
   CreateSessionPayload,
   DeviceStatus,
@@ -145,6 +148,30 @@ export const api = {
   },
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
+  },
+  getCommandHistorySettings() {
+    return invoke<CommandHistorySettings>("get_command_history_settings");
+  },
+  updateCommandHistoryDeduplication(enabled: boolean) {
+    return invoke<CommandHistorySettings>("update_command_history_deduplication", { enabled });
+  },
+  listCommandHistory(query = "", beforeCursor?: string) {
+    return invoke<CommandHistoryPage>("list_command_history", {
+      query,
+      beforeCursor: beforeCursor ?? null,
+    });
+  },
+  addCommandHistory(command: string) {
+    return invoke<void>("add_command_history", { command });
+  },
+  importCommandHistory(path: string) {
+    return invoke<CommandHistoryImportResult>("import_command_history", { path });
+  },
+  exportCommandHistory(path: string) {
+    return invoke<void>("export_command_history", { path });
+  },
+  clearCommandHistory() {
+    return invoke<CommandHistorySettings>("clear_command_history");
   },
   openLogDirectory() {
     return invoke<void>("open_log_directory");

@@ -8,25 +8,48 @@ import { SettingsPage } from "./SettingsPage";
 
 const mocks = vi.hoisted(() => ({
   configureLocalAgents: vi.fn(),
+  clearCommandHistory: vi.fn(),
+  confirm: vi.fn(),
+  exportCommandHistory: vi.fn(),
+  getCommandHistorySettings: vi.fn().mockResolvedValue({
+    deduplicate: false,
+    duplicateCount: 0,
+    entryCount: 0,
+  }),
   getMcpAgentPrompt: vi.fn(),
   getMcpPermissionCatalog: vi.fn(),
   inspectLocalAgentSetup: vi.fn(),
+  importCommandHistory: vi.fn(),
   listSessions: vi.fn(),
   updateMcpSettings: vi.fn(),
   updateLogSettings: vi.fn(),
+  updateCommandHistoryDeduplication: vi.fn(),
+  open: vi.fn(),
+  save: vi.fn(),
   writeText: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
   api: {
     configureLocalAgents: mocks.configureLocalAgents,
+    clearCommandHistory: mocks.clearCommandHistory,
+    exportCommandHistory: mocks.exportCommandHistory,
+    getCommandHistorySettings: mocks.getCommandHistorySettings,
     getMcpAgentPrompt: mocks.getMcpAgentPrompt,
     getMcpPermissionCatalog: mocks.getMcpPermissionCatalog,
     inspectLocalAgentSetup: mocks.inspectLocalAgentSetup,
+    importCommandHistory: mocks.importCommandHistory,
     listSessions: mocks.listSessions,
     updateMcpSettings: mocks.updateMcpSettings,
+    updateCommandHistoryDeduplication: mocks.updateCommandHistoryDeduplication,
     updateLogSettings: mocks.updateLogSettings,
   },
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  confirm: mocks.confirm,
+  open: mocks.open,
+  save: mocks.save,
 }));
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
@@ -92,6 +115,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const headings = screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
     expect(headings).toEqual([
       "settings.generalSettings",
+      "settings.commandHistory",
       "settings.logs",
       "settings.version",
     ]);
@@ -354,5 +378,107 @@ describe("SettingsPage 本地 Agent 配置", () => {
     expect(screen.getAllByText("clipboard denied")).toHaveLength(2);
     expect(mocks.getMcpAgentPrompt).toHaveBeenCalledTimes(1);
     expect(mocks.writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it("历史命令分组确认后开启去重并保留导入导出清空顺序", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.getCommandHistorySettings.mockResolvedValue({
+      deduplicate: false,
+      duplicateCount: 2,
+      entryCount: 5,
+    });
+    mocks.confirm.mockResolvedValue(true);
+    mocks.updateCommandHistoryDeduplication.mockResolvedValue({
+      deduplicate: true,
+      duplicateCount: 0,
+      entryCount: 3,
+    });
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    const panel = screen
+      .getByRole("heading", { name: "settings.commandHistory" })
+      .closest("section");
+    expect(panel).not.toBeNull();
+    const historySwitch = await within(panel!).findByRole("switch", {
+      name: "settings.commandHistoryDedupe",
+    });
+    const buttons = within(panel!)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(buttons).toEqual([
+      "settings.commandHistoryImport",
+      "settings.commandHistoryExport",
+      "settings.commandHistoryClear",
+    ]);
+    fireEvent.click(historySwitch);
+
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.updateCommandHistoryDeduplication).toHaveBeenCalledWith(true),
+    );
+    await waitFor(() => expect((historySwitch as HTMLInputElement).checked).toBe(true));
+  });
+
+  it("历史命令去重保存失败时开关保持原值", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.getCommandHistorySettings.mockResolvedValue({
+      deduplicate: false,
+      duplicateCount: 1,
+      entryCount: 2,
+    });
+    mocks.confirm.mockResolvedValue(true);
+    mocks.updateCommandHistoryDeduplication.mockRejectedValue(new Error("去重保存失败"));
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    const historySwitch = await screen.findByRole("switch", {
+      name: "settings.commandHistoryDedupe",
+    });
+    fireEvent.click(historySwitch);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("去重保存失败");
+    expect((historySwitch as HTMLInputElement).checked).toBe(false);
+    await waitFor(() => expect((historySwitch as HTMLInputElement).disabled).toBe(false));
+  });
+
+  it("历史命令支持导入、导出和确认清空", async () => {
+    const historySettings = { deduplicate: false, duplicateCount: 0, entryCount: 2 };
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.getCommandHistorySettings.mockResolvedValue(historySettings);
+    mocks.open.mockResolvedValue("C:\\history.json");
+    mocks.importCommandHistory.mockResolvedValue({ importedCount: 2, mergedCount: 0, totalCount: 4 });
+    mocks.save.mockResolvedValue("C:\\export.json");
+    mocks.exportCommandHistory.mockResolvedValue(undefined);
+    mocks.confirm.mockResolvedValue(true);
+    mocks.clearCommandHistory.mockResolvedValue({
+      deduplicate: false,
+      duplicateCount: 0,
+      entryCount: 0,
+    });
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    const panel = screen
+      .getByRole("heading", { name: "settings.commandHistory" })
+      .closest("section");
+    expect(panel).not.toBeNull();
+    await within(panel!).findByRole("switch", { name: "settings.commandHistoryDedupe" });
+
+    fireEvent.click(
+      within(panel!).getByRole("button", { name: "settings.commandHistoryImport" }),
+    );
+    await waitFor(() => expect(mocks.importCommandHistory).toHaveBeenCalledWith("C:\\history.json"));
+
+    fireEvent.click(
+      within(panel!).getByRole("button", { name: "settings.commandHistoryExport" }),
+    );
+    await waitFor(() => expect(mocks.exportCommandHistory).toHaveBeenCalledWith("C:\\export.json"));
+
+    fireEvent.click(
+      within(panel!).getByRole("button", { name: "settings.commandHistoryClear" }),
+    );
+    await waitFor(() => expect(mocks.clearCommandHistory).toHaveBeenCalledTimes(1));
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
   });
 });

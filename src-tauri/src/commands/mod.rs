@@ -1,8 +1,14 @@
 mod clipboard_commands;
+mod command_history_commands;
 mod session_commands;
 mod settings_commands;
 
 pub use clipboard_commands::get_system_clipboard_content_kind;
+pub use command_history_commands::{
+    add_command_history, clear_command_history, export_command_history,
+    get_command_history_settings, import_command_history, list_command_history,
+    update_command_history_deduplication,
+};
 pub use session_commands::{
     cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
     delete_session, delete_session_group, disconnect_session, download_file, forget_host_key,

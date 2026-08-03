@@ -875,7 +875,185 @@ textarea:focus-visible,
 
 .terminal-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 10px 12px;
+}
+
+.terminal-body {
+  flex: 1;
+  height: auto;
+}
+
+.terminal-toolbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+}
+
+.command-history-control {
+  position: relative;
+  width: 100%;
+}
+
+.command-history-trigger {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.command-history-trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.command-history-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.command-history-trigger .lucide-chevron-up {
+  transition: transform 140ms ease;
+}
+
+.command-history-trigger .lucide-chevron-up.open {
+  transform: rotate(180deg);
+}
+
+.command-history-popover {
+  position: absolute;
+  z-index: 8;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: min(400px, 100%);
+  max-height: min(430px, calc(100vh - 180px));
+  grid-template-rows: auto minmax(80px, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.44);
+}
+
+.command-history-caret {
+  position: absolute;
+  z-index: 9;
+  bottom: calc(100% + 3px);
+  left: 87px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--panel-2);
+  pointer-events: none;
+  transform: rotate(45deg);
+}
+
+.command-history-search {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  margin: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--muted);
+}
+
+.command-history-search:focus-within {
+  border-color: var(--accent);
+}
+
+.command-history-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.command-history-list {
+  display: flex;
+  min-height: 80px;
+  flex-direction: column;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.command-history-item {
+  display: grid;
+  width: 100%;
+  min-height: 34px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-history-item:first-of-type {
+  margin-top: auto;
+}
+
+.command-history-item.active {
+  background: rgba(255, 255, 255, 0.085);
+}
+
+.command-history-command {
+  overflow: hidden;
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-history-item time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.command-history-state,
+.command-history-retry {
+  display: grid;
+  width: 100%;
+  min-height: 80px;
+  place-items: center;
+  padding: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+}
+
+.command-history-retry {
+  cursor: pointer;
+}
+
+.command-history-hints {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 18px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .terminal-connect-overlay {
@@ -1611,6 +1789,7 @@ textarea:focus-visible,
 .settings-content {
   display: grid;
   align-content: start;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   overflow: auto;
   padding: 56px max(32px, calc((100% - 820px) / 2)) 40px;
@@ -1703,6 +1882,29 @@ textarea:focus-visible,
 .settings-log-row,
 .settings-proxy-row {
   border-bottom: 0;
+}
+
+.settings-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-history-actions .button,
+.settings-history-row-last .button {
+  min-height: 32px;
+}
+
+.settings-history-row-last {
+  border-bottom: 0;
+}
+
+.settings-history-status {
+  margin: 0 0 12px;
+  color: var(--success);
+  font-size: 12px;
 }
 
 .settings-row-label {

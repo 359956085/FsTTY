@@ -24,6 +24,30 @@ export interface McpGroupPermission {
   fileDelete: boolean;
 }
 
+export interface CommandHistoryEntry {
+  id: string;
+  command: string;
+  executedAt: string;
+}
+
+export interface CommandHistoryPage {
+  entries: CommandHistoryEntry[];
+  olderCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface CommandHistorySettings {
+  deduplicate: boolean;
+  entryCount: number;
+  duplicateCount: number;
+}
+
+export interface CommandHistoryImportResult {
+  importedCount: number;
+  mergedCount: number;
+  totalCount: number;
+}
+
 export type McpPermissionKey =
   | "enabled"
   | "sessionRead"

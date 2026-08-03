@@ -1,5 +1,6 @@
 mod app_error;
 mod clipboard;
+mod command_history;
 mod connection;
 mod device;
 mod file;
@@ -8,6 +9,9 @@ mod settings;
 
 pub use app_error::AppError;
 pub use clipboard::ClipboardContentKind;
+pub use command_history::{
+    CommandHistoryEntry, CommandHistoryImportResult, CommandHistoryPage, CommandHistorySettings,
+};
 pub use connection::{
     ConnectResult, CredentialKind, HostKeyChallenge, HostKeyChange, SshConnection, TerminalEvent,
     TransferEvent,

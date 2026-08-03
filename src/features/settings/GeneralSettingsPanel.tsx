@@ -5,6 +5,7 @@ import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
 import { SettingsIconAction } from "./SettingsIconAction";
+import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 interface GeneralSettingsPanelProps {
@@ -97,6 +98,8 @@ export function GeneralSettingsPanel({
           />
         </div>
       </section>
+
+      <CommandHistorySettingsSection />
 
       <section aria-labelledby="log-settings-title" className="settings-panel">
         <header className="settings-panel-header">
