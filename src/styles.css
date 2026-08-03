@@ -944,6 +944,87 @@ textarea:focus-visible,
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.44);
 }
 
+.command-history-resizer {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.command-history-resizer::after {
+  position: absolute;
+  background: transparent;
+  content: "";
+  transition: background 120ms ease;
+}
+
+.command-history-resizer:hover::after,
+.command-history-resizer:focus-visible::after {
+  background: rgba(210, 216, 222, 0.62);
+}
+
+.command-history-resizer-top {
+  top: -4px;
+  right: 8px;
+  left: 0;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.command-history-resizer-top::after {
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 1px;
+}
+
+.command-history-resizer-right {
+  top: 8px;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.command-history-resizer-right::after {
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  width: 1px;
+}
+
+.command-history-resizer-corner {
+  top: -5px;
+  right: -5px;
+  z-index: 3;
+  width: 13px;
+  height: 13px;
+  cursor: nesw-resize;
+}
+
+.command-history-resizer-corner::after {
+  top: 5px;
+  right: 5px;
+  width: 10px;
+  height: 10px;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    rgba(210, 216, 222, 0.62) 2px 3px,
+    transparent 3px 5px
+  );
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.command-history-resizer-corner:hover::after,
+.command-history-resizer-corner:active::after {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    rgba(225, 231, 237, 0.82) 2px 3px,
+    transparent 3px 5px
+  );
+}
+
 .command-history-caret {
   position: absolute;
   z-index: 9;
@@ -984,20 +1065,29 @@ textarea:focus-visible,
   color: var(--text);
 }
 
-.command-history-list {
-  display: flex;
+.command-history-list-frame {
   min-height: 80px;
-  flex-direction: column;
-  overflow-y: auto;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: 4px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+
+.command-history-list {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .command-history-item {
   display: grid;
   width: 100%;
   min-height: 34px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 84px;
   align-items: center;
   gap: 12px;
   padding: 0 10px;
@@ -1027,6 +1117,9 @@ textarea:focus-visible,
 .command-history-item time {
   color: var(--muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .command-history-state,
@@ -1054,6 +1147,11 @@ textarea:focus-visible,
   padding: 0 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.command-history-hints span {
+  flex: none;
+  white-space: nowrap;
 }
 
 .terminal-connect-overlay {

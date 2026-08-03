@@ -1,21 +1,45 @@
 import { ChevronUp, Clock3, Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
 import type { CommandHistoryEntry } from "../../shared/api/types";
+import {
+  COMMAND_HISTORY_POPOVER_LIMITS,
+  readWorkspacePreferences,
+  updateWorkspacePreferences,
+  type CommandHistoryPopoverPreferences,
+} from "./workspacePreferences";
 
 interface CommandHistoryPopoverProps {
   disabled: boolean;
   onSelect: (command: string) => void;
 }
 
+type ResizeAxis = "height" | "width" | "both";
+
+interface AvailableSize {
+  width: number;
+  height: number;
+}
+
 export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopoverProps) {
   const { i18n, t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const hintsRef = useRef<HTMLElement | null>(null);
   const requestRef = useRef(0);
   const loadingOlderRef = useRef(false);
+  const removeResizeListenersRef = useRef<(() => void) | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [entries, setEntries] = useState<CommandHistoryEntry[]>([]);
@@ -25,6 +49,25 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [popoverSize, setPopoverSize] = useState<CommandHistoryPopoverPreferences | null>(
+    () => readWorkspacePreferences().commandHistoryPopover,
+  );
+  const [availableSize, setAvailableSize] = useState<AvailableSize | null>(null);
+  const [minimumWidth, setMinimumWidth] = useState<number>(
+    COMMAND_HISTORY_POPOVER_LIMITS.width.min,
+  );
+
+  const readAvailableSize = useCallback((): AvailableSize | null => {
+    const root = rootRef.current;
+    if (!root) return null;
+    const rootRect = root.getBoundingClientRect();
+    const terminalRect = root.closest<HTMLElement>(".terminal-wrap")?.getBoundingClientRect();
+    const available = {
+      width: Math.max(0, rootRect.width),
+      height: Math.max(0, rootRect.top - 8 - (terminalRect?.top ?? 0)),
+    };
+    return available.width > 0 && available.height > 0 ? available : null;
+  }, []);
 
   const close = useCallback(() => {
     requestRef.current += 1;
@@ -112,6 +155,33 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
   }, [close, disabled]);
 
   useEffect(() => {
+    if (!open) return;
+    const updateLayoutBounds = () => {
+      setAvailableSize(readAvailableSize());
+      setMinimumWidth(measureHistoryHintsWidth(hintsRef.current));
+    };
+    updateLayoutBounds();
+    window.addEventListener("resize", updateLayoutBounds);
+    const terminal = rootRef.current?.closest<HTMLElement>(".terminal-wrap");
+    const observer =
+      terminal && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(updateLayoutBounds)
+        : null;
+    if (terminal) observer?.observe(terminal);
+    return () => {
+      window.removeEventListener("resize", updateLayoutBounds);
+      observer?.disconnect();
+    };
+  }, [i18n.resolvedLanguage, open, readAvailableSize]);
+
+  useEffect(
+    () => () => {
+      removeResizeListenersRef.current?.();
+    },
+    [],
+  );
+
+  useEffect(() => {
     const selected = listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     selected?.scrollIntoView?.({ block: "nearest" });
   }, [activeIndex]);
@@ -120,6 +190,107 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
     if (!entry) return;
     close();
     onSelect(entry.command);
+  }
+
+  function clampSize(
+    size: CommandHistoryPopoverPreferences,
+    available: AvailableSize,
+  ): CommandHistoryPopoverPreferences {
+    const minWidth = Math.min(minimumWidth, available.width);
+    const minHeight = Math.min(COMMAND_HISTORY_POPOVER_LIMITS.height.min, available.height);
+    return {
+      width: Math.min(Math.max(size.width, minWidth), available.width),
+      height: Math.min(Math.max(size.height, minHeight), available.height),
+    };
+  }
+
+  function savePopoverSize(size: CommandHistoryPopoverPreferences) {
+    setPopoverSize(size);
+    updateWorkspacePreferences({ commandHistoryPopover: size });
+  }
+
+  function beginResize(axis: ResizeAxis, event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const popover = popoverRef.current;
+    const available = readAvailableSize();
+    if (!popover || !available || available.width <= 0 || available.height <= 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    removeResizeListenersRef.current?.();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const bounds = popover.getBoundingClientRect();
+    let currentSize = { width: bounds.width, height: bounds.height };
+    let changed = false;
+
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // WebView 不支持捕获时，窗口级监听仍可完成拖动。
+    }
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("blur", finishResize);
+      removeResizeListenersRef.current = null;
+      if (changed) savePopoverSize(currentSize);
+    };
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
+      const next = clampSize(
+        {
+          width:
+            axis === "height" ? bounds.width : bounds.width + moveEvent.clientX - startX,
+          height:
+            axis === "width" ? bounds.height : bounds.height + startY - moveEvent.clientY,
+        },
+        readAvailableSize() ?? available,
+      );
+      currentSize = next;
+      changed = true;
+      setPopoverSize(next);
+    };
+    const finishResize = (finishEvent: PointerEvent | Event) => {
+      if ("pointerId" in finishEvent && finishEvent.pointerId !== pointerId) return;
+      cleanup();
+    };
+
+    removeResizeListenersRef.current = cleanup;
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+    window.addEventListener("blur", finishResize);
+  }
+
+  function resizeWithKeyboard(axis: Exclude<ResizeAxis, "both">, event: KeyboardEvent) {
+    const popover = popoverRef.current;
+    const available = readAvailableSize();
+    if (!popover || !available) return;
+    const bounds = popover.getBoundingClientRect();
+    let delta = 0;
+    if (axis === "width" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      delta = event.key === "ArrowRight" ? 16 : -16;
+    }
+    if (axis === "height" && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      delta = event.key === "ArrowUp" ? 16 : -16;
+    }
+    if (delta === 0) return;
+    event.preventDefault();
+    savePopoverSize(
+      clampSize(
+        {
+          width: axis === "width" ? bounds.width + delta : bounds.width,
+          height: axis === "height" ? bounds.height + delta : bounds.height,
+        },
+        available,
+      ),
+    );
   }
 
   async function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -155,6 +326,24 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
         <section
           aria-label={t("sessions.commandHistory")}
           className="command-history-popover"
+          ref={popoverRef}
+          style={
+            {
+              ...(popoverSize && availableSize
+                ? {
+                    width: Math.min(popoverSize.width, availableSize.width),
+                    minWidth: Math.min(minimumWidth, availableSize.width),
+                    height: Math.min(popoverSize.height, availableSize.height),
+                  }
+                : {}),
+              maxWidth: availableSize?.width,
+              maxHeight: availableSize
+                ? popoverSize
+                  ? availableSize.height
+                  : Math.min(430, availableSize.height)
+                : undefined,
+            } satisfies CSSProperties
+          }
         >
           <label className="command-history-search">
             <Search aria-hidden="true" size={15} />
@@ -171,54 +360,79 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
               value={query}
             />
           </label>
-          <div
-            aria-busy={loading || loadingOlder}
-            className="command-history-list"
-            onScroll={(event) => {
-              if (event.currentTarget.scrollTop <= 4) void loadOlderEntries();
-            }}
-            ref={listRef}
-            role="listbox"
-          >
-            {loadingOlder ? (
-              <div className="command-history-state">{t("sessions.loading")}</div>
-            ) : null}
-            {loading ? (
-              <div className="command-history-state">{t("sessions.loading")}</div>
-            ) : error ? (
-              <button
-                className="command-history-retry"
-                onClick={() => void loadInitial(query)}
-                type="button"
-              >
-                {error} · {t("sessions.refresh")}
-              </button>
-            ) : entries.length === 0 ? (
-              <div className="command-history-state">{t("sessions.commandHistoryEmpty")}</div>
-            ) : (
-              entries.map((entry, index) => (
+          <div className="command-history-list-frame">
+            <div
+              aria-busy={loading || loadingOlder}
+              className="command-history-list"
+              onScroll={(event) => {
+                if (event.currentTarget.scrollTop <= 4) void loadOlderEntries();
+              }}
+              ref={listRef}
+              role="listbox"
+            >
+              {loadingOlder ? (
+                <div className="command-history-state">{t("sessions.loading")}</div>
+              ) : null}
+              {loading ? (
+                <div className="command-history-state">{t("sessions.loading")}</div>
+              ) : error ? (
                 <button
-                  aria-selected={index === activeIndex}
-                  className={`command-history-item${index === activeIndex ? " active" : ""}`}
-                  key={entry.id}
-                  onClick={() => select(entry)}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  role="option"
+                  className="command-history-retry"
+                  onClick={() => void loadInitial(query)}
                   type="button"
                 >
-                  <span className="command-history-command">{entry.command}</span>
-                  <time dateTime={entry.executedAt}>
-                    {formatHistoryTime(entry.executedAt, i18n.resolvedLanguage)}
-                  </time>
+                  {error} · {t("sessions.refresh")}
                 </button>
-              ))
-            )}
+              ) : entries.length === 0 ? (
+                <div className="command-history-state">{t("sessions.commandHistoryEmpty")}</div>
+              ) : (
+                entries.map((entry, index) => (
+                  <button
+                    aria-selected={index === activeIndex}
+                    className={`command-history-item${index === activeIndex ? " active" : ""}`}
+                    key={entry.id}
+                    onClick={() => select(entry)}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    role="option"
+                    type="button"
+                  >
+                    <span className="command-history-command">{entry.command}</span>
+                    <time dateTime={entry.executedAt}>
+                      {formatHistoryTime(entry.executedAt, i18n.resolvedLanguage)}
+                    </time>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
-          <footer className="command-history-hints">
+          <footer className="command-history-hints" ref={hintsRef}>
             <span>↑↓ {t("sessions.select")}</span>
             <span>Enter {t("sessions.select")}</span>
             <span>Esc {t("sessions.close")}</span>
           </footer>
+          <div
+            aria-label={t("sessions.resizeCommandHistoryHeight")}
+            aria-orientation="horizontal"
+            className="command-history-resizer command-history-resizer-top"
+            onKeyDown={(event) => resizeWithKeyboard("height", event)}
+            onPointerDown={(event) => beginResize("height", event)}
+            role="separator"
+            tabIndex={0}
+          />
+          <div
+            aria-label={t("sessions.resizeCommandHistoryWidth")}
+            aria-orientation="vertical"
+            className="command-history-resizer command-history-resizer-right"
+            onKeyDown={(event) => resizeWithKeyboard("width", event)}
+            onPointerDown={(event) => beginResize("width", event)}
+            role="separator"
+            tabIndex={0}
+          />
+          <span
+            aria-hidden="true"
+            className="command-history-resizer command-history-resizer-corner"
+            onPointerDown={(event) => beginResize("both", event)}
+          />
         </section>
       ) : null}
       {open ? <span aria-hidden="true" className="command-history-caret" /> : null}
@@ -228,7 +442,10 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
         disabled={disabled}
         onClick={() => {
           if (open) close();
-          else setOpen(true);
+          else {
+            setPopoverSize(readWorkspacePreferences().commandHistoryPopover);
+            setOpen(true);
+          }
         }}
         type="button"
       >
@@ -250,4 +467,22 @@ function formatHistoryTime(value: string, language: string | undefined) {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function measureHistoryHintsWidth(element: HTMLElement | null) {
+  if (!element) return COMMAND_HISTORY_POPOVER_LIMITS.width.min;
+  const style = window.getComputedStyle(element);
+  const childrenWidth = Array.from(element.children).reduce(
+    (total, child) => total + child.getBoundingClientRect().width,
+    0,
+  );
+  const columnGap = Number.parseFloat(style.columnGap);
+  const gap = Number.isFinite(columnGap) ? columnGap : Number.parseFloat(style.gap) || 0;
+  const padding =
+    (Number.parseFloat(style.paddingLeft) || 0) +
+    (Number.parseFloat(style.paddingRight) || 0);
+  const measured = Math.ceil(
+    childrenWidth + gap * Math.max(0, element.children.length - 1) + padding + 2,
+  );
+  return Math.max(COMMAND_HISTORY_POPOVER_LIMITS.width.min, measured);
 }

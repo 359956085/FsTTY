@@ -17,6 +17,8 @@ const translate = (key: string) =>
     "sessions.commandHistorySearch": "搜索历史命令...",
     "sessions.loading": "加载中...",
     "sessions.refresh": "刷新",
+    "sessions.resizeCommandHistoryHeight": "调整历史命令列表高度",
+    "sessions.resizeCommandHistoryWidth": "调整历史命令列表宽度",
     "sessions.select": "选择",
   })[key] ?? key;
 
@@ -34,6 +36,7 @@ vi.mock("react-i18next", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 const latestPage = {
@@ -59,6 +62,7 @@ describe("CommandHistoryPopover", () => {
     const list = screen.getByRole("listbox");
 
     expect(option.parentElement).toBe(list);
+    expect(list.parentElement?.classList.contains("command-history-list-frame")).toBe(true);
     expect(option.getAttribute("aria-selected")).toBe("true");
     expect(option.textContent).toContain("cd /home/");
   });
@@ -137,6 +141,94 @@ describe("CommandHistoryPopover", () => {
     expect(container.querySelector(".command-history-caret")).toBeNull();
   });
 
+  it("顶部、右侧和右上角分别调整尺寸并永久保存", async () => {
+    mocks.listCommandHistory.mockResolvedValue({ ...latestPage, hasMore: false });
+    const { container } = render(
+      <CommandHistoryPopover disabled={false} onSelect={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /历史/ }));
+    await screen.findAllByRole("option");
+
+    const root = container.querySelector<HTMLElement>(".command-history-control")!;
+    const popover = container.querySelector<HTMLElement>(".command-history-popover")!;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue(createRect(0, 500, 600, 34));
+    vi.spyOn(popover, "getBoundingClientRect").mockImplementation(() =>
+      createRect(
+        0,
+        192,
+        Number.parseFloat(popover.style.width) || 400,
+        Number.parseFloat(popover.style.height) || 300,
+      ),
+    );
+    fireEvent.resize(window);
+    await waitFor(() => expect(popover.style.maxWidth).toBe("600px"));
+
+    const top = screen.getByRole("separator", { name: "调整历史命令列表高度" });
+    fireEvent.pointerDown(top, { button: 0, clientX: 200, clientY: 192, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 152, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(popover.style.width).toBe("400px");
+    expect(popover.style.height).toBe("340px");
+
+    const right = screen.getByRole("separator", { name: "调整历史命令列表宽度" });
+    fireEvent.pointerDown(right, { button: 0, clientX: 400, clientY: 300, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 450, clientY: 300, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    expect(popover.style.width).toBe("450px");
+    expect(popover.style.height).toBe("340px");
+
+    const corner = container.querySelector<HTMLElement>(".command-history-resizer-corner")!;
+    expect(corner.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.pointerDown(corner, { button: 0, clientX: 450, clientY: 152, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 480, clientY: 132, pointerId: 3 });
+    fireEvent.pointerUp(window, { pointerId: 3 });
+    expect(popover.style.width).toBe("480px");
+    expect(popover.style.height).toBe("360px");
+
+    expect(JSON.parse(window.localStorage.getItem("fstty.workspace.v1") ?? "{}")).toMatchObject({
+      commandHistoryPopover: { width: 480, height: 360 },
+    });
+  });
+
+  it("键盘缩放遵守最小尺寸", async () => {
+    window.localStorage.setItem(
+      "fstty.workspace.v1",
+      JSON.stringify({ commandHistoryPopover: { width: 220, height: 180 } }),
+    );
+    mocks.listCommandHistory.mockResolvedValue({ ...latestPage, hasMore: false });
+    const { container } = render(
+      <CommandHistoryPopover disabled={false} onSelect={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /历史/ }));
+    await screen.findAllByRole("option");
+    const root = container.querySelector<HTMLElement>(".command-history-control")!;
+    const popover = container.querySelector<HTMLElement>(".command-history-popover")!;
+    const hints = container.querySelector<HTMLElement>(".command-history-hints")!;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue(createRect(0, 500, 600, 34));
+    vi.spyOn(popover, "getBoundingClientRect").mockReturnValue(createRect(0, 312, 220, 180));
+    hints.style.gap = "18px";
+    hints.style.padding = "0 10px";
+    [64, 72, 52].forEach((width, index) => {
+      vi.spyOn(hints.children[index], "getBoundingClientRect").mockReturnValue(
+        createRect(0, 0, width, 12),
+      );
+    });
+    fireEvent.resize(window);
+    await waitFor(() => expect(popover.style.maxWidth).toBe("600px"));
+    await waitFor(() => expect(popover.style.minWidth).toBe("246px"));
+
+    fireEvent.keyDown(
+      screen.getByRole("separator", { name: "调整历史命令列表宽度" }),
+      { key: "ArrowLeft" },
+    );
+    fireEvent.keyDown(
+      screen.getByRole("separator", { name: "调整历史命令列表高度" }),
+      { key: "ArrowDown" },
+    );
+    expect(popover.style.width).toBe("246px");
+    expect(popover.style.height).toBe("180px");
+  });
+
   it("搜索变化立即丢弃旧请求并在防抖后显示新结果", async () => {
     let resolveInitial: ((page: typeof latestPage) => void) | undefined;
     mocks.listCommandHistory
@@ -168,3 +260,17 @@ describe("CommandHistoryPopover", () => {
     expect(screen.queryByText("ls -la")).toBeNull();
   });
 });
+
+function createRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    bottom: top + height,
+    height,
+    left,
+    right: left + width,
+    top,
+    width,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  };
+}

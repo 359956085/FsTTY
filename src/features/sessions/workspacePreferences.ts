@@ -15,6 +15,11 @@ export const FILE_COLUMN_LIMITS = {
   permissions: { defaultValue: 96, min: 80, max: 180 },
 } as const;
 
+export const COMMAND_HISTORY_POPOVER_LIMITS = {
+  width: { min: 220, max: 4096 },
+  height: { min: 180, max: 4096 },
+} as const;
+
 export interface WorkspaceLayoutPreferences {
   leftWidth: number;
   rightWidth: number;
@@ -35,12 +40,18 @@ export interface FileColumnPreferences {
   permissions: number;
 }
 
+export interface CommandHistoryPopoverPreferences {
+  width: number;
+  height: number;
+}
+
 export interface WorkspacePreferences {
   layout: WorkspaceLayoutPreferences;
   tabs: WorkspaceTabsPreferences;
   favoriteSessionIds: string[];
   collapsedGroupNames: string[];
   fileColumns: FileColumnPreferences;
+  commandHistoryPopover: CommandHistoryPopoverPreferences | null;
 }
 
 export interface WorkspacePreferencesPatch {
@@ -49,6 +60,7 @@ export interface WorkspacePreferencesPatch {
   favoriteSessionIds?: string[];
   collapsedGroupNames?: string[];
   fileColumns?: Partial<FileColumnPreferences>;
+  commandHistoryPopover?: CommandHistoryPopoverPreferences | null;
 }
 
 const MAX_STORED_SESSION_IDS = 100;
@@ -77,6 +89,7 @@ function createDefaultPreferences(): WorkspacePreferences {
       modified: FILE_COLUMN_LIMITS.modified.defaultValue,
       permissions: FILE_COLUMN_LIMITS.permissions.defaultValue,
     },
+    commandHistoryPopover: null,
   };
 }
 
@@ -101,6 +114,34 @@ function readBoundedNumber(
 
 function readBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function readCommandHistoryPopover(
+  value: unknown,
+): CommandHistoryPopoverPreferences | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    typeof value.width !== "number" ||
+    !Number.isFinite(value.width) ||
+    typeof value.height !== "number" ||
+    !Number.isFinite(value.height)
+  ) {
+    return null;
+  }
+  return {
+    width: clamp(
+      value.width,
+      COMMAND_HISTORY_POPOVER_LIMITS.width.min,
+      COMMAND_HISTORY_POPOVER_LIMITS.width.max,
+    ),
+    height: clamp(
+      value.height,
+      COMMAND_HISTORY_POPOVER_LIMITS.height.min,
+      COMMAND_HISTORY_POPOVER_LIMITS.height.max,
+    ),
+  };
 }
 
 function readSessionIds(value: unknown, fallback: string[]) {
@@ -253,6 +294,7 @@ function normalizePreferences(value: unknown): WorkspacePreferences {
         FILE_COLUMN_LIMITS.permissions.max,
       ),
     },
+    commandHistoryPopover: readCommandHistoryPopover(root.commandHistoryPopover),
   };
 }
 
@@ -295,6 +337,10 @@ export function updateWorkspacePreferences(
     collapsedGroupNames:
       patch.collapsedGroupNames ?? current.collapsedGroupNames,
     fileColumns: { ...current.fileColumns, ...patch.fileColumns },
+    commandHistoryPopover:
+      patch.commandHistoryPopover === undefined
+        ? current.commandHistoryPopover
+        : patch.commandHistoryPopover,
   });
 
   if (typeof window !== "undefined") {
