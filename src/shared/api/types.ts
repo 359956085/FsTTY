@@ -49,7 +49,11 @@ export type McpClientTarget =
   | "vsCode"
   | "geminiCli";
 
-export type LocalAgentTarget = Exclude<McpClientTarget, "genericJson">;
+export type LocalAgentTarget =
+  | Exclude<McpClientTarget, "genericJson">
+  | "openCode"
+  | "trae"
+  | "traeCn";
 
 export type LocalAgentSetupState =
   | "notDetected"

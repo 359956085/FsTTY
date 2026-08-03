@@ -28,6 +28,9 @@ const targetLabels: Record<LocalAgentTarget, string> = {
   cursor: "Cursor",
   vsCode: "VS Code / GitHub Copilot",
   geminiCli: "Gemini CLI",
+  openCode: "OpenCode",
+  trae: "Trae",
+  traeCn: "Trae CN",
 };
 
 const stateKeys: Record<LocalAgentSetupState, string> = {

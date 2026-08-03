@@ -23,6 +23,14 @@ const capabilities: LocalAgentCapability[] = [
     state: "notDetected",
     target: "cursor",
   },
+  { detail: null, installed: true, state: "missing", target: "openCode" },
+  { detail: null, installed: true, state: "missing", target: "trae" },
+  {
+    detail: "未检测到本地安装",
+    installed: false,
+    state: "notDetected",
+    target: "traeCn",
+  },
 ];
 
 function renderDialog(
@@ -57,9 +65,18 @@ describe("LocalAgentSetupDialog", () => {
     expect((screen.getByRole("checkbox", { name: /Cursor/ }) as HTMLInputElement).disabled).toBe(
       true,
     );
+    expect((screen.getByRole("checkbox", { name: /OpenCode/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole("checkbox", { name: /^Traesettings/ }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /Trae CN/ }) as HTMLInputElement).disabled).toBe(
+      true,
+    );
     fireEvent.click(screen.getByRole("button", { name: "settings.localAgentConfigure" }));
 
-    expect(onConfigure).toHaveBeenCalledWith(["codex", "geminiCli"]);
+    expect(onConfigure).toHaveBeenCalledWith(["codex", "geminiCli", "openCode", "trae"]);
   });
 
   it("允许取消选择并展示部分失败结果", () => {
@@ -68,7 +85,7 @@ describe("LocalAgentSetupDialog", () => {
         mcpStatus: "configured",
         promptStatus: "configured",
         message: null,
-        target: "codex",
+        target: "openCode",
       },
       {
         mcpStatus: "failed",
@@ -80,7 +97,7 @@ describe("LocalAgentSetupDialog", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Gemini CLI/ }));
     fireEvent.click(screen.getByRole("button", { name: "settings.localAgentConfigure" }));
 
-    expect(onConfigure).toHaveBeenCalledWith(["codex"]);
+    expect(onConfigure).toHaveBeenCalledWith(["codex", "openCode", "trae"]);
     expect(screen.getByText("settings.localAgentConfigured")).not.toBeNull();
     expect(screen.getByText("settings.localAgentFailed")).not.toBeNull();
     expect(screen.getByText("配置损坏")).not.toBeNull();

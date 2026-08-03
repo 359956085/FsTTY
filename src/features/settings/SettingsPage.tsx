@@ -51,6 +51,18 @@ type SettingsSection = "general" | "mcp";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
 type McpPromptState<T> = Record<McpTransport, T>;
 
+const manualPromptCopiedKeys: Partial<Record<LocalAgentTarget, string>> = {
+  cursor: "settings.localAgentCursorPromptCopied",
+  trae: "settings.localAgentTraePromptCopied",
+  traeCn: "settings.localAgentTraeCnPromptCopied",
+};
+
+const manualPromptCopyFailedKeys: Partial<Record<LocalAgentTarget, string>> = {
+  cursor: "settings.localAgentCursorPromptCopyFailed",
+  trae: "settings.localAgentTraePromptCopyFailed",
+  traeCn: "settings.localAgentTraeCnPromptCopyFailed",
+};
+
 export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
@@ -327,33 +339,36 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
         onChange(nextSettings);
       }
       let results = await api.configureLocalAgents(targets);
-      const cursor = results.find(
-        (result) =>
-          result.target === "cursor" &&
-          result.mcpStatus !== "failed" &&
-          result.promptStatus === "manualRequired",
+      const manualTargets = new Set(
+        results
+          .filter(
+            (result) =>
+              result.mcpStatus !== "failed" &&
+              result.promptStatus === "manualRequired" &&
+              manualPromptCopiedKeys[result.target],
+          )
+          .map((result) => result.target),
       );
-      if (cursor) {
+      if (manualTargets.size > 0) {
         try {
           await writeText(await api.getMcpAgentPrompt());
-          results = results.map((result) =>
-            result.target === "cursor"
-              ? { ...result, message: t("settings.localAgentCursorPromptCopied") }
-              : result,
-          );
+          results = results.map((result) => {
+            const messageKey = manualPromptCopiedKeys[result.target];
+            return manualTargets.has(result.target) && messageKey
+              ? { ...result, message: t(messageKey) }
+              : result;
+          });
         } catch (nextError) {
-          results = results.map((result) =>
-            result.target === "cursor"
+          results = results.map((result) => {
+            const messageKey = manualPromptCopyFailedKeys[result.target];
+            return manualTargets.has(result.target) && messageKey
               ? {
                   ...result,
-                  message: resolveApiError(
-                    nextError,
-                    t("settings.localAgentCursorPromptCopyFailed"),
-                  ),
+                  message: resolveApiError(nextError, t(messageKey)),
                   promptStatus: "failed" as const,
                 }
-              : result,
-          );
+              : result;
+          });
         }
       }
       setLocalAgentResults(results);

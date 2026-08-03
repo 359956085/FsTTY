@@ -17,6 +17,7 @@ base64 = "0.22"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 fs2 = "0.4"
 log = "0.4"
+jsonc-parser = { version = "0.33", features = ["cst", "serde"] }
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.3"
 rmcp = { version = "=3.0.0-beta.3", features = ["transport-io", "transport-streamable-http-server"] }

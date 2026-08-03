@@ -282,6 +282,11 @@ void i18n.use(initReactI18next).init({
           localAgentFailed: "配置失败",
           localAgentCursorPromptCopied: "提示词已复制，请粘贴到 Cursor Settings > Rules",
           localAgentCursorPromptCopyFailed: "Cursor MCP 已配置，但无法复制提示词",
+          localAgentTraePromptCopied: "提示词已复制，请粘贴到 Trae Settings > Rules > User Rules",
+          localAgentTraePromptCopyFailed: "Trae MCP 已配置，但无法复制提示词",
+          localAgentTraeCnPromptCopied:
+            "提示词已复制，请粘贴到 Trae CN 设置 > Rules > User Rules",
+          localAgentTraeCnPromptCopyFailed: "Trae CN MCP 已配置，但无法复制提示词",
           mcpResetToken: "重置令牌",
           mcpResetTokenHint:
             "访问需要 Bearer Token，复制配置获取 token；重置后旧令牌立即失效；签发的上传、下载链接本身即凭据，5 分钟有效，请勿转发",
@@ -614,6 +619,14 @@ void i18n.use(initReactI18next).init({
             "Prompt copied. Paste it into Cursor Settings > Rules.",
           localAgentCursorPromptCopyFailed:
             "Cursor MCP was configured, but the prompt could not be copied.",
+          localAgentTraePromptCopied:
+            "Prompt copied. Paste it into Trae Settings > Rules > User Rules.",
+          localAgentTraePromptCopyFailed:
+            "Trae MCP was configured, but the prompt could not be copied.",
+          localAgentTraeCnPromptCopied:
+            "Prompt copied. Paste it into Trae CN Settings > Rules > User Rules.",
+          localAgentTraeCnPromptCopyFailed:
+            "Trae CN MCP was configured, but the prompt could not be copied.",
           mcpResetToken: "Reset token",
           mcpResetTokenHint:
             "Access requires a Bearer Token. Copy the configuration to obtain the token; resetting immediately invalidates the previous token. Issued upload and download links are credentials, expire after five minutes, and must not be shared.",

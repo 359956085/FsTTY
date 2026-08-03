@@ -183,11 +183,13 @@ describe("SettingsPage 本地 Agent 配置", () => {
     expect(screen.getByText("settings.localAgentCursorPromptCopied")).not.toBeNull();
   });
 
-  it("Cursor 剪贴板失败不回滚已完成的 MCP 配置", async () => {
+  it("多个手工提示词 Agent 只复制一次并分别展示提示", async () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.inspectLocalAgentSetup.mockResolvedValue([
       { detail: null, installed: true, state: "missing", target: "cursor" },
+      { detail: null, installed: true, state: "missing", target: "trae" },
+      { detail: null, installed: true, state: "missing", target: "traeCn" },
     ]);
     mocks.configureLocalAgents.mockResolvedValue([
       {
@@ -195,6 +197,62 @@ describe("SettingsPage 本地 Agent 配置", () => {
         promptStatus: "manualRequired",
         message: null,
         target: "cursor",
+      },
+      {
+        mcpStatus: "configured",
+        promptStatus: "manualRequired",
+        message: null,
+        target: "trae",
+      },
+      {
+        mcpStatus: "configured",
+        promptStatus: "manualRequired",
+        message: null,
+        target: "traeCn",
+      },
+    ]);
+    mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
+    mocks.writeText.mockResolvedValue(undefined);
+    render(
+      <SettingsPage
+        onChange={vi.fn()}
+        settings={{ ...settings, mcpEnabled: true }}
+        updater={updater}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    fireEvent.click(screen.getByRole("button", { name: "settings.localAgentOpen" }));
+    await screen.findByRole("checkbox", { name: /Trae CN/ });
+    fireEvent.click(screen.getByRole("button", { name: "settings.localAgentConfigure" }));
+
+    await screen.findByText("settings.localAgentTraeCnPromptCopied");
+    expect(mocks.configureLocalAgents).toHaveBeenCalledWith(["cursor", "trae", "traeCn"]);
+    expect(mocks.getMcpAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.writeText).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("settings.localAgentCursorPromptCopied")).not.toBeNull();
+    expect(screen.getByText("settings.localAgentTraePromptCopied")).not.toBeNull();
+  });
+
+  it("多个手工提示词 Agent 剪贴板失败不回滚已完成的 MCP 配置", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.inspectLocalAgentSetup.mockResolvedValue([
+      { detail: null, installed: true, state: "missing", target: "cursor" },
+      { detail: null, installed: true, state: "missing", target: "trae" },
+    ]);
+    mocks.configureLocalAgents.mockResolvedValue([
+      {
+        mcpStatus: "configured",
+        promptStatus: "manualRequired",
+        message: null,
+        target: "cursor",
+      },
+      {
+        mcpStatus: "configured",
+        promptStatus: "manualRequired",
+        message: null,
+        target: "trae",
       },
     ]);
     mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
@@ -216,9 +274,11 @@ describe("SettingsPage 本地 Agent 配置", () => {
     await waitFor(() => expect(configureButton.disabled).toBe(false));
     fireEvent.click(configureButton);
 
-    await screen.findByText("settings.localAgentFailed");
-    expect(mocks.configureLocalAgents).toHaveBeenCalledWith(["cursor"]);
+    await waitFor(() => expect(screen.getAllByText("settings.localAgentFailed")).toHaveLength(2));
+    expect(mocks.configureLocalAgents).toHaveBeenCalledWith(["cursor", "trae"]);
     expect(mocks.updateMcpSettings).not.toHaveBeenCalled();
-    expect(screen.getByText("clipboard denied")).not.toBeNull();
+    expect(screen.getAllByText("clipboard denied")).toHaveLength(2);
+    expect(mocks.getMcpAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.writeText).toHaveBeenCalledTimes(1);
   });
 });
