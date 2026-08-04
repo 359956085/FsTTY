@@ -403,6 +403,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const historySwitch = await within(panel!).findByRole("switch", {
       name: "settings.commandHistoryDedupe",
     });
+    await waitFor(() => expect((historySwitch as HTMLInputElement).disabled).toBe(false));
     const buttons = within(panel!)
       .getAllByRole("button")
       .map((button) => button.textContent);
@@ -435,6 +436,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const historySwitch = await screen.findByRole("switch", {
       name: "settings.commandHistoryDedupe",
     });
+    await waitFor(() => expect((historySwitch as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(historySwitch);
 
     expect((await screen.findByRole("alert")).textContent).toContain("去重保存失败");
@@ -463,7 +465,10 @@ describe("SettingsPage 本地 Agent 配置", () => {
       .getByRole("heading", { name: "settings.commandHistory" })
       .closest("section");
     expect(panel).not.toBeNull();
-    await within(panel!).findByRole("switch", { name: "settings.commandHistoryDedupe" });
+    const historySwitch = await within(panel!).findByRole("switch", {
+      name: "settings.commandHistoryDedupe",
+    });
+    await waitFor(() => expect((historySwitch as HTMLInputElement).disabled).toBe(false));
 
     fireEvent.click(
       within(panel!).getByRole("button", { name: "settings.commandHistoryImport" }),
