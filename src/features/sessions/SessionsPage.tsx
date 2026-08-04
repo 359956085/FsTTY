@@ -12,13 +12,15 @@ import {
 import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
+import type { ShortcutSettings } from "../../shared/api/types";
 
 interface SessionsPageProps {
   allowRemoteClipboardWrite: boolean;
+  shortcuts: ShortcutSettings;
   visible: boolean;
 }
 
-export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPageProps) {
+export function SessionsPage({ allowRemoteClipboardWrite, shortcuts, visible }: SessionsPageProps) {
   const { t } = useTranslation();
   const sessionsState = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
@@ -193,6 +195,7 @@ export function SessionsPage({ allowRemoteClipboardWrite, visible }: SessionsPag
             valueNow={layout.rightWidth}
           />
         }
+        shortcuts={shortcuts}
         runtimes={connections.runtimes}
         verticalResizeHandle={
           <ResizeHandle

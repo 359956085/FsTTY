@@ -21,6 +21,7 @@ import type {
   HostKeyChange,
   Session,
   SshConnection,
+  ShortcutSettings,
   TerminalEvent,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
@@ -51,6 +52,8 @@ import {
 } from "./terminalActivity";
 import { createTerminalConnectionAttemptGuard } from "./terminalConnectionAttempt";
 import { CommandHistoryPopover } from "./CommandHistoryPopover";
+import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
+import { matchesShortcut } from "../../shared/shortcuts";
 import {
   createCommandHistoryInsertion,
   createShellIntegrationCommand,
@@ -98,6 +101,7 @@ interface TerminalPaneProps {
   visible: boolean;
   runtimeId: string;
   session: Session;
+  shortcuts: ShortcutSettings;
   connectionState: ConnectionState;
   directoryRequest: TerminalDirectoryRequest | null;
   onConnected: (sessionId: string, connection: SshConnection) => void;
@@ -122,6 +126,7 @@ export const TerminalPane = memo(function TerminalPane({
   onStateChange,
   runtimeId,
   session,
+  shortcuts,
   visible,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -170,6 +175,9 @@ export const TerminalPane = memo(function TerminalPane({
   const reportClipboardErrorRef = useRef<() => void>(() => undefined);
   const copyTerminalSelectionRef = useRef<() => Promise<void>>(async () => undefined);
   const pasteTerminalClipboardRef = useRef<() => Promise<void>>(async () => undefined);
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
+  const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
   const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
@@ -984,7 +992,27 @@ export const TerminalPane = memo(function TerminalPane({
         };
       }
       terminal.attachCustomKeyEventHandler((event) => {
-        const action = resolveTerminalClipboardShortcut(event, terminal.hasSelection());
+        if (event.type !== "keydown" || !activeRef.current || !visibleRef.current) {
+          return true;
+        }
+        const currentShortcuts = shortcutsRef.current;
+        if (matchesShortcut(event, currentShortcuts.commandHistory)) {
+          event.preventDefault();
+          event.stopPropagation();
+          commandHistoryRef.current?.toggle();
+          return false;
+        }
+        if (matchesShortcut(event, currentShortcuts.commandHistorySearch)) {
+          event.preventDefault();
+          event.stopPropagation();
+          commandHistoryRef.current?.focusSearch();
+          return false;
+        }
+        const action = resolveTerminalClipboardShortcut(
+          event,
+          terminal.hasSelection(),
+          currentShortcuts,
+        );
         if (action === "copy") {
           event.preventDefault();
           event.stopPropagation();
@@ -1478,6 +1506,8 @@ export const TerminalPane = memo(function TerminalPane({
       <div className="terminal-toolbar">
         <CommandHistoryPopover
           disabled={connectionState !== "connected"}
+          ref={commandHistoryRef}
+          shortcuts={shortcuts}
           onSelect={(command) => {
             sendImmediateInput(createCommandHistoryInsertion(command));
             window.requestAnimationFrame(focusTerminal);

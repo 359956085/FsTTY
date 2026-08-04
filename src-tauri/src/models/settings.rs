@@ -20,6 +20,8 @@ pub struct AppSettings {
     pub mcp_http_port: u16,
     #[serde(default)]
     pub mcp_group_permissions: Vec<McpGroupPermission>,
+    #[serde(default)]
+    pub shortcuts: ShortcutSettings,
 }
 
 fn default_allow_remote_clipboard_write() -> bool {
@@ -50,6 +52,46 @@ pub struct McpGroupPermission {
 
 fn default_enabled() -> bool {
     true
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutBinding {
+    pub code: String,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+impl ShortcutBinding {
+    fn new(code: &str, ctrl: bool, alt: bool, shift: bool) -> Self {
+        Self {
+            code: code.to_owned(),
+            ctrl,
+            alt,
+            shift,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutSettings {
+    pub terminal_copy: ShortcutBinding,
+    pub terminal_paste: ShortcutBinding,
+    pub command_history: ShortcutBinding,
+    pub command_history_search: ShortcutBinding,
+}
+
+impl Default for ShortcutSettings {
+    fn default() -> Self {
+        Self {
+            terminal_copy: ShortcutBinding::new("KeyC", true, false, false),
+            terminal_paste: ShortcutBinding::new("KeyV", true, false, false),
+            command_history: ShortcutBinding::new("KeyH", true, false, true),
+            command_history_search: ShortcutBinding::new("KeyF", true, false, false),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

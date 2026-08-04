@@ -22,5 +22,5 @@ pub use settings_commands::{
     get_mcp_http_status, get_mcp_permission_catalog, get_mcp_stdio_client_config,
     inspect_local_agent_setup, open_log_directory, rotate_mcp_http_token,
     set_ignored_update_version, set_language, update_app_settings, update_log_settings,
-    update_mcp_settings,
+    update_mcp_settings, update_shortcut_settings,
 };

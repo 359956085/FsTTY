@@ -20,6 +20,7 @@ import type {
   McpPermissionCatalogEntry,
   Session,
   SessionGroup,
+  ShortcutSettings,
   TerminalEvent,
   TransferEvent,
   UpdateSessionPayload,
@@ -195,6 +196,9 @@ export const api = {
   },
   updateLogSettings(recordMcpToolInputs: boolean) {
     return invoke<AppSettings>("update_log_settings", { recordMcpToolInputs });
+  },
+  updateShortcutSettings(shortcuts: ShortcutSettings) {
+    return invoke<AppSettings>("update_shortcut_settings", { shortcuts });
   },
   updateMcpSettings(
     enabled: boolean,

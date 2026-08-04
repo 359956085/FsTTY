@@ -9,6 +9,7 @@ import { useAppUpdater } from "./features/settings/useAppUpdater";
 import { api } from "./shared/api/client";
 import { resolveApiError } from "./shared/api/errors";
 import type { AppSettings } from "./shared/api/types";
+import { DEFAULT_SHORTCUTS } from "./shared/shortcuts";
 
 import appIcon from "./assets/brand-icon.png";
 
@@ -28,6 +29,7 @@ export function App() {
     mcpHttpPort: 37653,
     mcpGroupPermissions: [],
     recordMcpToolInputs: false,
+    shortcuts: DEFAULT_SHORTCUTS,
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -163,6 +165,7 @@ export function App() {
         >
           <SessionsPage
             allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
+            shortcuts={settings.shortcuts}
             visible={view === "sessions"}
           />
         </div>

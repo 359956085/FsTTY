@@ -1,4 +1,4 @@
-use crate::models::{AppError, AppSettings, Language, McpGroupPermission};
+use crate::models::{AppError, AppSettings, Language, McpGroupPermission, ShortcutSettings};
 use crate::services::AppState;
 use serde::Serialize;
 use std::path::Path;
@@ -75,6 +75,18 @@ pub fn update_log_settings(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
     service.update_log_settings(record_mcp_tool_inputs)
+}
+
+#[tauri::command]
+pub fn update_shortcut_settings(
+    state: State<'_, AppState>,
+    shortcuts: ShortcutSettings,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    service.update_shortcut_settings(shortcuts)
 }
 
 #[tauri::command]

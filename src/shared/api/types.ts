@@ -12,6 +12,21 @@ export interface AppSettings {
   mcpHttpEnabled: boolean;
   mcpHttpPort: number;
   mcpGroupPermissions: McpGroupPermission[];
+  shortcuts: ShortcutSettings;
+}
+
+export interface ShortcutBinding {
+  code: string;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+}
+
+export interface ShortcutSettings {
+  terminalCopy: ShortcutBinding;
+  terminalPaste: ShortcutBinding;
+  commandHistory: ShortcutBinding;
+  commandHistorySearch: ShortcutBinding;
 }
 
 export interface McpGroupPermission {

@@ -596,6 +596,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             onProxyChange={setProxy}
             onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
             onShowTooltip={showMcpPermissionTooltip}
+            onSettingsChange={onChange}
             openingLogDirectory={openingLogDirectory}
             proxy={proxy}
             savingLanguage={savingLanguage}

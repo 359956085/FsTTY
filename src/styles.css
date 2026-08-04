@@ -2005,6 +2005,60 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
+.settings-shortcut-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-shortcut-header .button {
+  min-height: 30px;
+}
+
+.settings-shortcut-row-last {
+  border-bottom: 0;
+}
+
+.settings-shortcut-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-shortcut-key,
+.settings-shortcut-reset {
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+}
+
+.settings-shortcut-key {
+  min-width: 142px;
+  padding: 0 12px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.settings-shortcut-key.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(52, 145, 255, 0.2);
+}
+
+.settings-shortcut-reset {
+  display: grid;
+  width: 32px;
+  padding: 0;
+  place-items: center;
+}
+
+.settings-shortcut-key:disabled,
+.settings-shortcut-reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .settings-row-label {
   color: var(--text);
   font-size: 14px;

@@ -20,7 +20,7 @@ use commands::{
     resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
     set_language, set_session_credential, trust_host_key, update_app_settings,
     update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
-    upload_file, write_terminal,
+    update_shortcut_settings, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -185,6 +185,7 @@ pub fn run() {
             set_language,
             update_app_settings,
             update_log_settings,
+            update_shortcut_settings,
             update_mcp_settings,
             get_mcp_agent_prompt,
             get_mcp_permission_catalog,

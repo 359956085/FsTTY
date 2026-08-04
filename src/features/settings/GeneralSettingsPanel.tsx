@@ -6,6 +6,7 @@ import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
 import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
+import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 interface GeneralSettingsPanelProps {
@@ -23,6 +24,7 @@ interface GeneralSettingsPanelProps {
   onProxyChange: (value: string) => void;
   onProxyCommit: () => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
+  onSettingsChange: (settings: AppSettings) => void;
   openingLogDirectory: boolean;
   proxy: string;
   savingLanguage: boolean;
@@ -48,6 +50,7 @@ export function GeneralSettingsPanel({
   onProxyChange,
   onProxyCommit,
   onShowTooltip,
+  onSettingsChange,
   openingLogDirectory,
   proxy,
   savingLanguage,
@@ -98,6 +101,8 @@ export function GeneralSettingsPanel({
           />
         </div>
       </section>
+
+      <ShortcutSettingsSection onChange={onSettingsChange} settings={settings.shortcuts} />
 
       <CommandHistorySettingsSection />
 

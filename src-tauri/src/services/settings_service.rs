@@ -1,4 +1,6 @@
-use crate::models::{AppError, AppSettings, Language, McpGroupPermission};
+use crate::models::{
+    AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
+};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -126,6 +128,16 @@ impl SettingsService {
         self.replace(next)
     }
 
+    pub fn update_shortcut_settings(
+        &mut self,
+        shortcuts: ShortcutSettings,
+    ) -> Result<AppSettings, AppError> {
+        validate_shortcut_settings(&shortcuts)?;
+        let mut next = self.settings.clone();
+        next.shortcuts = shortcuts;
+        self.replace(next)
+    }
+
     pub fn rename_mcp_group(&mut self, old_name: &str, new_name: &str) -> Result<(), AppError> {
         let mut next = self.settings.clone();
         if let Some(permission) = next
@@ -223,6 +235,77 @@ fn default_settings() -> AppSettings {
         mcp_http_enabled: false,
         mcp_http_port: 37_653,
         mcp_group_permissions: Vec::new(),
+        shortcuts: ShortcutSettings::default(),
+    }
+}
+
+fn validate_shortcut_settings(shortcuts: &ShortcutSettings) -> Result<(), AppError> {
+    let bindings = [
+        &shortcuts.terminal_copy,
+        &shortcuts.terminal_paste,
+        &shortcuts.command_history,
+        &shortcuts.command_history_search,
+    ];
+    for (index, binding) in bindings.iter().enumerate() {
+        validate_shortcut_binding(binding)?;
+        if bindings[..index].contains(binding) {
+            return Err(AppError::Validation("快捷键不能重复".to_owned()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_shortcut_binding(binding: &ShortcutBinding) -> Result<(), AppError> {
+    if (!binding.ctrl && !binding.alt)
+        || !is_supported_shortcut_code(&binding.code)
+        || is_reserved_shortcut(binding)
+    {
+        return Err(AppError::Validation("快捷键无效或被系统保留".to_owned()));
+    }
+    Ok(())
+}
+
+fn is_supported_shortcut_code(code: &str) -> bool {
+    let key = code
+        .strip_prefix("Key")
+        .is_some_and(|value| value.len() == 1 && value.as_bytes()[0].is_ascii_uppercase());
+    let digit = code
+        .strip_prefix("Digit")
+        .is_some_and(|value| value.len() == 1 && value.as_bytes()[0].is_ascii_digit());
+    let function = code
+        .strip_prefix('F')
+        .and_then(|value| value.parse::<u8>().ok())
+        .is_some_and(|value| (1..=12).contains(&value));
+    key || digit
+        || function
+        || matches!(
+            code,
+            "Minus"
+                | "Equal"
+                | "BracketLeft"
+                | "BracketRight"
+                | "Backslash"
+                | "Semicolon"
+                | "Quote"
+                | "Comma"
+                | "Period"
+                | "Slash"
+                | "Backquote"
+                | "Space"
+                | "Home"
+                | "End"
+                | "PageUp"
+                | "PageDown"
+                | "Insert"
+                | "Delete"
+        )
+}
+
+fn is_reserved_shortcut(binding: &ShortcutBinding) -> bool {
+    match binding.code.as_str() {
+        "F4" => binding.alt && !binding.ctrl,
+        "Delete" => binding.ctrl && binding.alt,
+        _ => false,
     }
 }
 
@@ -299,6 +382,7 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
         return Err(AppError::Persistence("设置存储版本无效".to_owned()));
     }
     validate_update_proxy(&store.settings.update_proxy)?;
+    validate_shortcut_settings(&store.settings.shortcuts)?;
     Ok(Some(store))
 }
 
@@ -377,6 +461,68 @@ mod tests {
                 .get()
                 .record_mcp_tool_inputs
         );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 快捷键默认值兼容旧设置并独立持久化() {
+        let directory = test_directory("settings-shortcuts");
+        fs::write(
+            directory.join(STORE_FILE),
+            br#"{
+  "version": 1,
+  "language": "zh-CN",
+  "autoUpdate": true,
+  "updateProxy": ""
+}"#,
+        )
+        .expect("无法写入旧设置文件");
+        let mut service = SettingsService::load(&directory);
+        assert_eq!(service.get().shortcuts, ShortcutSettings::default());
+
+        let shortcuts = ShortcutSettings {
+            command_history: ShortcutBinding {
+                code: "KeyJ".to_owned(),
+                ctrl: true,
+                alt: false,
+                shift: true,
+            },
+            ..ShortcutSettings::default()
+        };
+        service
+            .update_shortcut_settings(shortcuts.clone())
+            .expect("无法保存快捷键");
+        let restored = SettingsService::load(&directory).get();
+        assert_eq!(restored.shortcuts, shortcuts);
+        assert!(restored.auto_update);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 拒绝重复和系统保留快捷键且不修改内存() {
+        let directory = test_directory("settings-shortcuts-invalid");
+        let mut service = SettingsService::load(&directory);
+        let defaults = service.get();
+
+        let defaults_shortcuts = ShortcutSettings::default();
+        let duplicate = ShortcutSettings {
+            command_history: defaults_shortcuts.terminal_copy.clone(),
+            ..defaults_shortcuts
+        };
+        assert!(service.update_shortcut_settings(duplicate).is_err());
+        assert_eq!(service.get(), defaults);
+
+        let reserved = ShortcutSettings {
+            command_history: ShortcutBinding {
+                code: "F4".to_owned(),
+                ctrl: false,
+                alt: true,
+                shift: false,
+            },
+            ..ShortcutSettings::default()
+        };
+        assert!(service.update_shortcut_settings(reserved).is_err());
+        assert_eq!(service.get(), defaults);
         let _ = fs::remove_dir_all(directory);
     }
 

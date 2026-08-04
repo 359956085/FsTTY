@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { SettingsPage } from "./SettingsPage";
+import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
 
 const mocks = vi.hoisted(() => ({
   configureLocalAgents: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   updateMcpSettings: vi.fn(),
   updateLogSettings: vi.fn(),
+  updateShortcutSettings: vi.fn(),
   updateCommandHistoryDeduplication: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock("../../shared/api/client", () => ({
     updateMcpSettings: mocks.updateMcpSettings,
     updateCommandHistoryDeduplication: mocks.updateCommandHistoryDeduplication,
     updateLogSettings: mocks.updateLogSettings,
+    updateShortcutSettings: mocks.updateShortcutSettings,
   },
 }));
 
@@ -79,6 +82,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
   updateProxy: "",
+  shortcuts: DEFAULT_SHORTCUTS,
 };
 
 const updater: AppUpdaterController = {
@@ -115,6 +119,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const headings = screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
     expect(headings).toEqual([
       "settings.generalSettings",
+      "settings.shortcuts",
       "settings.commandHistory",
       "settings.logs",
       "settings.version",

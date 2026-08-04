@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CommandHistoryPopover } from "./CommandHistoryPopover";
+import {
+  CommandHistoryPopover,
+  type CommandHistoryPopoverHandle,
+} from "./CommandHistoryPopover";
 
 const mocks = vi.hoisted(() => ({
   listCommandHistory: vi.fn(),
@@ -49,6 +53,26 @@ const latestPage = {
 };
 
 describe("CommandHistoryPopover", () => {
+  it("历史搜索快捷键打开并聚焦，历史列表快捷键关闭", async () => {
+    mocks.listCommandHistory.mockResolvedValue({ ...latestPage, hasMore: false });
+    const ref = createRef<CommandHistoryPopoverHandle>();
+    render(<CommandHistoryPopover disabled={false} onSelect={vi.fn()} ref={ref} />);
+    expect(screen.getByRole("button", { name: /历史/ }).title).toContain("Ctrl+Shift+H");
+
+    act(() => ref.current?.focusSearch());
+    const search = await screen.findByRole("textbox", { name: "搜索历史命令..." });
+    expect(document.activeElement).toBe(search);
+    expect(search.getAttribute("placeholder")).toContain("Ctrl+F");
+
+    fireEvent.keyDown(search, {
+      code: "KeyH",
+      ctrlKey: true,
+      key: "H",
+      shiftKey: true,
+    });
+    expect(screen.queryByRole("textbox", { name: "搜索历史命令..." })).toBeNull();
+  });
+
   it("单条历史保持列表直接子项结构并选中最新项", async () => {
     mocks.listCommandHistory.mockResolvedValue({
       entries: [{ command: "cd /home/", executedAt: "2026-08-03T03:00:00Z", id: "4" }],

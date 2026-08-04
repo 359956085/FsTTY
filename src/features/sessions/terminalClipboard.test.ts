@@ -1,5 +1,6 @@
 import type { ClipboardSelectionType } from "@xterm/addon-clipboard";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
 import {
   MAX_REMOTE_CLIPBOARD_BYTES,
   StrictClipboardBase64,
@@ -14,6 +15,7 @@ const PRIMARY = "p" as ClipboardSelectionType;
 function shortcutEvent(
   overrides: Partial<{
     altKey: boolean;
+    code: string;
     ctrlKey: boolean;
     key: string;
     metaKey: boolean;
@@ -21,10 +23,12 @@ function shortcutEvent(
     type: string;
   }> = {},
 ) {
+  const key = overrides.key ?? "";
   return {
     altKey: false,
+    code: overrides.code ?? (key ? `Key${key.toUpperCase()}` : ""),
     ctrlKey: true,
-    key: "",
+    key,
     metaKey: false,
     shiftKey: false,
     type: "keydown",
@@ -33,15 +37,16 @@ function shortcutEvent(
 }
 
 describe("resolveTerminalClipboardShortcut", () => {
-  it("有选区时支持 Ctrl+C 和 Ctrl+Shift+C 复制", () => {
+  it("有选区时按配置识别复制快捷键", () => {
     expect(
       resolveTerminalClipboardShortcut(shortcutEvent({ key: "c" }), true),
     ).toBe("copy");
+    const custom = {
+      ...DEFAULT_SHORTCUTS,
+      terminalCopy: { ...DEFAULT_SHORTCUTS.terminalCopy, shift: true },
+    };
     expect(
-      resolveTerminalClipboardShortcut(
-        shortcutEvent({ key: "C", shiftKey: true }),
-        true,
-      ),
+      resolveTerminalClipboardShortcut(shortcutEvent({ key: "C", shiftKey: true }), true, custom),
     ).toBe("copy");
   });
 

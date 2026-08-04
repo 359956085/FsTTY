@@ -3,6 +3,8 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  forwardRef,
+  useImperativeHandle,
   useCallback,
   useEffect,
   useRef,
@@ -11,7 +13,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
-import type { CommandHistoryEntry } from "../../shared/api/types";
+import type { CommandHistoryEntry, ShortcutSettings } from "../../shared/api/types";
+import { DEFAULT_SHORTCUTS, formatShortcut, matchesShortcut } from "../../shared/shortcuts";
 import {
   COMMAND_HISTORY_POPOVER_LIMITS,
   readWorkspacePreferences,
@@ -22,6 +25,12 @@ import {
 interface CommandHistoryPopoverProps {
   disabled: boolean;
   onSelect: (command: string) => void;
+  shortcuts?: ShortcutSettings;
+}
+
+export interface CommandHistoryPopoverHandle {
+  focusSearch: () => void;
+  toggle: () => void;
 }
 
 type ResizeAxis = "height" | "width" | "both";
@@ -31,12 +40,19 @@ interface AvailableSize {
   height: number;
 }
 
-export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopoverProps) {
+export const CommandHistoryPopover = forwardRef<
+  CommandHistoryPopoverHandle,
+  CommandHistoryPopoverProps
+>(function CommandHistoryPopover(
+  { disabled, onSelect, shortcuts = DEFAULT_SHORTCUTS },
+  forwardedRef,
+) {
   const { i18n, t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const hintsRef = useRef<HTMLElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const requestRef = useRef(0);
   const loadingOlderRef = useRef(false);
   const removeResizeListenersRef = useRef<(() => void) | null>(null);
@@ -74,6 +90,30 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
     setOpen(false);
     setQuery("");
   }, []);
+
+  const openPopover = useCallback(() => {
+    if (disabled) return;
+    setPopoverSize(readWorkspacePreferences().commandHistoryPopover);
+    setOpen(true);
+  }, [disabled]);
+
+  const focusSearch = useCallback(() => {
+    if (disabled) return;
+    openPopover();
+    window.requestAnimationFrame(() => searchRef.current?.focus());
+  }, [disabled, openPopover]);
+
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      focusSearch,
+      toggle: () => {
+        if (open) close();
+        else openPopover();
+      },
+    }),
+    [close, focusSearch, open, openPopover],
+  );
 
   const loadInitial = useCallback(
     async (search: string) => {
@@ -294,6 +334,16 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
   }
 
   async function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (matchesShortcut(event.nativeEvent, shortcuts.commandHistory)) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (matchesShortcut(event.nativeEvent, shortcuts.commandHistorySearch)) {
+      event.preventDefault();
+      searchRef.current?.focus();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       close();
@@ -356,7 +406,8 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
                 setQuery(event.target.value);
               }}
               onKeyDown={(event) => void handleKeyDown(event)}
-              placeholder={t("sessions.commandHistorySearch")}
+              placeholder={`${t("sessions.commandHistorySearch")} (${formatShortcut(shortcuts.commandHistorySearch)})`}
+              ref={searchRef}
               value={query}
             />
           </label>
@@ -440,12 +491,10 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
         aria-expanded={open}
         className="command-history-trigger"
         disabled={disabled}
+        title={`${t("sessions.commandHistory")} (${formatShortcut(shortcuts.commandHistory)})`}
         onClick={() => {
           if (open) close();
-          else {
-            setPopoverSize(readWorkspacePreferences().commandHistoryPopover);
-            setOpen(true);
-          }
+          else openPopover();
         }}
         type="button"
       >
@@ -455,7 +504,7 @@ export function CommandHistoryPopover({ disabled, onSelect }: CommandHistoryPopo
       </button>
     </div>
   );
-}
+});
 
 function formatHistoryTime(value: string, language: string | undefined) {
   const date = new Date(value);

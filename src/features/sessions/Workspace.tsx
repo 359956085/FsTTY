@@ -6,6 +6,7 @@ import type {
   ConnectionState,
   FileEntry,
   SshConnection,
+  ShortcutSettings,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
@@ -24,6 +25,7 @@ interface WorkspaceProps {
   openTabs: OpenSessionTab[];
   rightCollapsed: boolean;
   rightResizeHandle: ReactNode;
+  shortcuts: ShortcutSettings;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   verticalResizeHandle: ReactNode;
   visible: boolean;
@@ -85,6 +87,7 @@ export function Workspace({
   openTabs,
   rightCollapsed,
   rightResizeHandle,
+  shortcuts,
   runtimes,
   verticalResizeHandle,
   visible,
@@ -217,6 +220,7 @@ export function Workspace({
                     onStateChange={onTerminalState}
                     runtimeId={tab.id}
                     session={tab.session}
+                    shortcuts={shortcuts}
                     visible={visible}
                   />
                 ) : null}

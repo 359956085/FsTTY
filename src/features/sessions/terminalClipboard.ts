@@ -7,6 +7,8 @@ import type {
   IBase64,
   IClipboardProvider,
 } from "@xterm/addon-clipboard";
+import type { ShortcutSettings } from "../../shared/api/types";
+import { DEFAULT_SHORTCUTS, matchesShortcut } from "../../shared/shortcuts";
 
 export const MAX_REMOTE_CLIPBOARD_BYTES = 1024 * 1024;
 
@@ -99,6 +101,7 @@ export function readSystemClipboard() {
 
 interface TerminalClipboardShortcutEvent {
   altKey: boolean;
+  code: string;
   ctrlKey: boolean;
   key: string;
   metaKey: boolean;
@@ -111,16 +114,17 @@ export type TerminalClipboardShortcutAction = "copy" | "paste" | null;
 export function resolveTerminalClipboardShortcut(
   event: TerminalClipboardShortcutEvent,
   hasSelection: boolean,
+  shortcuts: ShortcutSettings = DEFAULT_SHORTCUTS,
 ): TerminalClipboardShortcutAction {
-  if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) {
+  if (event.type !== "keydown") {
     return null;
   }
-
-  const key = event.key.toLowerCase();
-  if (key === "c" && hasSelection) {
+  if (
+    hasSelection && matchesShortcut(event, shortcuts.terminalCopy)
+  ) {
     return "copy";
   }
-  if (key === "v" && !event.shiftKey) {
+  if (matchesShortcut(event, shortcuts.terminalPaste)) {
     return "paste";
   }
   return null;
