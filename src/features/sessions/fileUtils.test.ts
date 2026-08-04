@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { FileEntry } from "../../shared/api/types";
 import {
   buildBreadcrumbs,
+  breadcrumbTargetClassName,
   canMoveRemoteEntry,
   createTransferSpeedTracker,
   createModifiedTimeFormatter,
   formatModifiedTime,
   formatSize,
   formatTransferSpeed,
+  fileRowClassName,
   isSlowRenameClick,
   isRemoteMoveCandidate,
   remoteParentPath,
@@ -50,6 +52,25 @@ describe("远程文件路径", () => {
     expect(canMoveRemoteEntry(folder, "/home/project")).toBe(false);
     expect(canMoveRemoteEntry(folder, "/home/project/build")).toBe(false);
     expect(canMoveRemoteEntry(folder, "/archive")).toBe(true);
+  });
+
+  it("集中生成移动和选中展示状态", () => {
+    const file = remoteEntry("folder", "/archive");
+    expect(
+      fileRowClassName(
+        file,
+        "/archive",
+        { source: file, targetDirectory: "/archive" },
+        null,
+        true,
+      ),
+    ).toContain("file-row-drop-target");
+    expect(
+      breadcrumbTargetClassName("/archive", null, {
+        kind: "success",
+        targetDirectory: "/archive",
+      }),
+    ).toBe("breadcrumb-move-success");
   });
 });
 

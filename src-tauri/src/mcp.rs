@@ -1,15 +1,10 @@
 use crate::mcp_transfer::{http_base_url, McpTransferRuntime};
 use crate::models::{AppError, AppSettings, Language, McpGroupPermission, StoredSession};
 use crate::services::AppState;
-use axum::{
-    http::{header, HeaderMap, StatusCode},
-    response::IntoResponse,
-};
+#[cfg(test)]
+use axum::http::{header, HeaderMap, StatusCode};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rmcp::schemars;
-use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
-};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters},
     model::*,
@@ -25,20 +20,32 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio::sync::RwLock;
+#[cfg(test)]
 use tokio_util::sync::CancellationToken;
+#[cfg(test)]
 use uuid::Uuid;
+#[cfg(test)]
 use zeroize::Zeroizing;
 
 const CONNECTION_IDLE: Duration = Duration::from_secs(300);
-const MCP_TOKEN_ACCOUNT: &str = "__mcp_http_token";
 mod catalog;
+mod http;
+mod result;
 mod search;
 
 use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
 pub(crate) use catalog::{mcp_agent_prompt, permission_catalog, McpPermissionCatalogEntry};
+pub use http::{get_or_create_http_token, rotate_http_token, McpHttpRuntime};
+#[cfg(test)]
+use http::{http_bind_address, http_server_config, validate_http_headers, RunningMcpHttp};
+use result::{
+    json_result, remote_file_name, structured_json_result, tool_error, transfer_link_result,
+};
 #[cfg(test)]
 use search::{
     default_search_scan_bytes, RemoteFileSearchMatch, RemoteFileSearchResult,
@@ -48,198 +55,6 @@ use search::{
     search_json_result, search_remote_text, validate_search_remote_file_args,
     RemoteFileSearchInput, SearchRemoteFileArgs,
 };
-
-#[derive(Clone, Default)]
-pub struct McpHttpRuntime {
-    state: Arc<Mutex<McpHttpRuntimeState>>,
-}
-
-#[derive(Default)]
-struct McpHttpRuntimeState {
-    running: Option<RunningMcpHttp>,
-}
-
-struct RunningMcpHttp {
-    port: u16,
-    cancellation: CancellationToken,
-    bearer_token: Arc<RwLock<Zeroizing<String>>>,
-    transfer_runtime: McpTransferRuntime,
-}
-
-impl McpHttpRuntime {
-    pub async fn stop(&self) {
-        if let Some(running) = self.state.lock().await.running.take() {
-            running.transfer_runtime.clear().await;
-            running.cancellation.cancel();
-        }
-    }
-
-    pub async fn is_running(&self) -> bool {
-        self.state.lock().await.running.is_some()
-    }
-
-    pub async fn running_port(&self) -> Option<u16> {
-        self.state
-            .lock()
-            .await
-            .running
-            .as_ref()
-            .map(|running| running.port)
-    }
-
-    pub async fn update_token(&self, bearer_token: String) -> bool {
-        let running = self.state.lock().await.running.as_ref().map(|running| {
-            (
-                running.bearer_token.clone(),
-                running.transfer_runtime.clone(),
-            )
-        });
-        let Some((token, transfer_runtime)) = running else {
-            return false;
-        };
-        let changed = token.read().await.as_str() != bearer_token;
-        if changed {
-            *token.write().await = Zeroizing::new(bearer_token);
-            transfer_runtime.clear().await;
-        }
-        true
-    }
-
-    pub async fn start(
-        &self,
-        state: AppState,
-        port: u16,
-        bearer_token: String,
-    ) -> Result<(), AppError> {
-        let mut runtime = self.state.lock().await;
-        if let Some(running) = runtime.running.as_ref() {
-            if running.port == port {
-                let changed = running.bearer_token.read().await.as_str() != bearer_token;
-                if changed {
-                    *running.bearer_token.write().await = Zeroizing::new(bearer_token);
-                    running.transfer_runtime.clear().await;
-                }
-                return Ok(());
-            }
-        }
-
-        // 先绑定新端口。绑定失败时保留旧监听，避免设置保存失败连带中断现有客户端。
-        let listener = tokio::net::TcpListener::bind(http_bind_address(port))
-            .await
-            .map_err(|_| AppError::Connection("MCP HTTP 端口被占用".to_owned()))?;
-        let cancellation = CancellationToken::new();
-        let transfer_runtime =
-            McpTransferRuntime::new(state.clone(), port, cancellation.child_token());
-        let service_state = state.clone();
-        let service_transfers = transfer_runtime.clone();
-        let service = StreamableHttpService::new(
-            move || {
-                Ok(McpService::new_http(
-                    service_state.clone(),
-                    service_transfers.clone(),
-                ))
-            },
-            LocalSessionManager::default().into(),
-            http_server_config(cancellation.child_token()),
-        );
-        let auth_token = Arc::new(RwLock::new(Zeroizing::new(bearer_token)));
-        let middleware_token = auth_token.clone();
-        let router = transfer_runtime.router().nest_service(
-            "/mcp",
-            axum::Router::new()
-                .fallback_service(service)
-                .layer(axum::middleware::from_fn(move |request, next| {
-                    let auth_token = middleware_token.clone();
-                    async move { authorize_http(request, next, auth_token).await }
-                })),
-        );
-        let previous = runtime.running.replace(RunningMcpHttp {
-            port,
-            cancellation: cancellation.clone(),
-            bearer_token: auth_token,
-            transfer_runtime,
-        });
-        drop(runtime);
-        if let Some(previous) = previous {
-            previous.transfer_runtime.clear().await;
-            previous.cancellation.cancel();
-        }
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, router)
-                .with_graceful_shutdown(cancellation.cancelled_owned())
-                .await;
-        });
-        Ok(())
-    }
-}
-
-async fn authorize_http(
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-    token: Arc<RwLock<Zeroizing<String>>>,
-) -> axum::response::Response {
-    let validation = {
-        let expected = token.read().await;
-        validate_http_headers(request.headers(), expected.as_str())
-    };
-    if let Err(status) = validation {
-        let message = if status == StatusCode::FORBIDDEN {
-            "不支持浏览器来源请求"
-        } else {
-            "未授权"
-        };
-        return (status, message).into_response();
-    }
-    next.run(request).await
-}
-
-fn http_bind_address(port: u16) -> std::net::SocketAddr {
-    std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port))
-}
-
-fn http_server_config(cancellation_token: CancellationToken) -> StreamableHttpServerConfig {
-    // rmcp 默认只接受回环 Host。远程模式的地址无法预先固定，故由令牌和 Origin 中间件承担访问保护。
-    StreamableHttpServerConfig::default()
-        .disable_allowed_hosts()
-        .with_cancellation_token(cancellation_token)
-}
-
-fn validate_http_headers(headers: &HeaderMap, expected_token: &str) -> Result<(), StatusCode> {
-    // HTTP 传输仅面向原生 MCP 客户端。拒绝所有浏览器来源，避免 DNS 重绑定攻击。
-    if headers.contains_key(header::ORIGIN) {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let authorized = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|value| value == expected_token);
-    if authorized {
-        Ok(())
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
-    }
-}
-
-pub async fn get_or_create_http_token(state: &AppState) -> Result<Zeroizing<String>, AppError> {
-    if let Some(token) = state.credential_service.get(MCP_TOKEN_ACCOUNT).await? {
-        return Ok(token);
-    }
-    rotate_http_token(state).await
-}
-
-pub async fn rotate_http_token(state: &AppState) -> Result<Zeroizing<String>, AppError> {
-    let token = Zeroizing::new(format!(
-        "{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    ));
-    state
-        .credential_service
-        .set(MCP_TOKEN_ACCOUNT, Zeroizing::new(token.to_string()))
-        .await?;
-    Ok(token)
-}
 
 pub async fn run_stdio(app_data_dir: std::path::PathBuf) -> Result<(), String> {
     use rmcp::{transport::stdio, ServiceExt};
@@ -1245,19 +1060,6 @@ fn permission<'a>(
         .find(|permission| permission.group_name == group && permission.enabled)
 }
 
-fn json_result(value: &impl Serialize) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(
-        serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_owned()),
-    )])
-}
-
-fn structured_json_result(value: &impl Serialize) -> CallToolResult {
-    let structured_content = serde_json::to_value(value).unwrap_or_else(|_| json!({}));
-    let mut result = json_result(value);
-    result.structured_content = Some(structured_content);
-    result
-}
-
 #[derive(Clone, Copy)]
 enum AccessIssue {
     ServiceDisabled,
@@ -1288,32 +1090,6 @@ fn localized_access_error(language: &Language, issue: AccessIssue) -> String {
     } else {
         format!("{message}{hint}")
     }
-}
-
-fn transfer_link_result(
-    resource: Resource,
-    message: String,
-    structured_content: serde_json::Value,
-) -> CallToolResult {
-    let mut result = CallToolResult::success(vec![
-        ContentBlock::resource_link(resource),
-        ContentBlock::text(message),
-    ]);
-    result.structured_content = Some(structured_content);
-    result
-}
-
-fn remote_file_name(remote_path: &str) -> Result<String, McpError> {
-    remote_path
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| McpError::invalid_params("远程文件路径无效", None))
-}
-
-fn tool_error(message: &str) -> CallToolResult {
-    CallToolResult::error(vec![ContentBlock::text(message.to_owned())])
 }
 
 fn mcp_error(error: AppError) -> McpError {

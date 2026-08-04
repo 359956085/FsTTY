@@ -40,6 +40,7 @@ import {
 } from "./mcpPermissions";
 import { McpPermissionsPanel } from "./McpPermissionsPanel";
 import { SettingsIconAction } from "./SettingsIconAction";
+import { useMcpPromptCopy } from "./useMcpPromptCopy";
 
 interface SettingsPageProps {
   onChange: (settings: AppSettings) => void;
@@ -49,8 +50,6 @@ interface SettingsPageProps {
 
 type SettingsSection = "general" | "mcp";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
-type McpPromptState<T> = Record<McpTransport, T>;
-
 const manualPromptCopiedKeys: Partial<Record<LocalAgentTarget, string>> = {
   cursor: "settings.localAgentCursorPromptCopied",
   trae: "settings.localAgentTraePromptCopied",
@@ -101,23 +100,12 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [loadingLocalAgents, setLoadingLocalAgents] = useState(false);
   const [configuringLocalAgents, setConfiguringLocalAgents] = useState(false);
   const [localAgentError, setLocalAgentError] = useState<string | null>(null);
-  const [copyingMcpPrompt, setCopyingMcpPrompt] = useState<McpPromptState<boolean>>({
-    http: false,
-    stdio: false,
-  });
-  const [mcpPromptCopied, setMcpPromptCopied] = useState<McpPromptState<boolean>>({
-    http: false,
-    stdio: false,
-  });
-  const [mcpPromptError, setMcpPromptError] = useState<McpPromptState<string | null>>({
-    http: null,
-    stdio: null,
-  });
-  const mcpPromptCopyInFlightRef = useRef<McpPromptState<boolean>>({
-    http: false,
-    stdio: false,
-  });
-  const mcpPromptCopiedTimerRef = useRef<Partial<McpPromptState<number>>>({});
+  const {
+    copied: mcpPromptCopied,
+    copying: copyingMcpPrompt,
+    copy: copyMcpAgentPrompt,
+    error: mcpPromptError,
+  } = useMcpPromptCopy(setMcpPermissionTooltip);
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
   useEffect(() => {
@@ -164,14 +152,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     };
   }, []);
   useEffect(() => setMcpPermissionTooltip(null), [settings.language]);
-  useEffect(
-    () => () => {
-      for (const timer of Object.values(mcpPromptCopiedTimerRef.current)) {
-        window.clearTimeout(timer);
-      }
-    },
-    [],
-  );
+
   function showMcpPermissionTooltip(
     key: string,
     text: string,
@@ -399,47 +380,6 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             }
           : null,
       );
-    }
-  }
-
-  async function copyMcpAgentPrompt(transport: McpTransport, target: HTMLButtonElement) {
-    if (mcpPromptCopyInFlightRef.current[transport]) {
-      return;
-    }
-    mcpPromptCopyInFlightRef.current[transport] = true;
-    setCopyingMcpPrompt((current) => ({ ...current, [transport]: true }));
-    setMcpPromptCopied((current) => ({ ...current, [transport]: false }));
-    setMcpPromptError((current) => ({ ...current, [transport]: null }));
-    const previousTimer = mcpPromptCopiedTimerRef.current[transport];
-    if (previousTimer !== undefined) {
-      window.clearTimeout(previousTimer);
-      delete mcpPromptCopiedTimerRef.current[transport];
-    }
-    try {
-      const prompt = await api.getMcpAgentPrompt();
-      await writeText(prompt);
-      setMcpPromptCopied((current) => ({ ...current, [transport]: true }));
-      const tooltipKey = `${transport}-agent-prompt-copy`;
-      showMcpPermissionTooltip(
-        tooltipKey,
-        t("settings.mcpPromptCopied"),
-        target,
-      );
-      mcpPromptCopiedTimerRef.current[transport] = window.setTimeout(() => {
-        setMcpPromptCopied((current) => ({ ...current, [transport]: false }));
-        setMcpPermissionTooltip((current) =>
-          current?.key === tooltipKey ? null : current,
-        );
-        delete mcpPromptCopiedTimerRef.current[transport];
-      }, 2_000);
-    } catch (nextError) {
-      setMcpPromptError((current) => ({
-        ...current,
-        [transport]: resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
-      }));
-    } finally {
-      mcpPromptCopyInFlightRef.current[transport] = false;
-      setCopyingMcpPrompt((current) => ({ ...current, [transport]: false }));
     }
   }
 

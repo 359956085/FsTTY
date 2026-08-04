@@ -148,10 +148,7 @@ npm run tauri dev
 ```
 
 ```bash
-npm run verify
-cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run verify:all
 ```
 
 ## 社区鸣谢

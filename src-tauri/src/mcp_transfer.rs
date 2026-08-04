@@ -25,6 +25,14 @@ use tokio_util::{
 };
 use uuid::Uuid;
 
+mod range;
+mod ticket;
+
+use range::parse_range_headers;
+#[cfg(test)]
+use range::{parse_range, ByteRange};
+use ticket::{IssuedTransferLink, TransferTicket, TransferTicketKind, TransferTicketState};
+
 const TICKET_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_TICKETS: usize = 256;
 const MAX_ACTIVE_TRANSFERS: usize = 4;
@@ -47,44 +55,6 @@ struct McpTransferRuntimeInner {
     tickets: Mutex<HashMap<String, TransferTicket>>,
     transfers: Arc<Semaphore>,
     shutdown: CancellationToken,
-}
-
-#[derive(Clone, Debug)]
-struct TransferTicket {
-    session_id: String,
-    kind: TransferTicketKind,
-    expires_at: Instant,
-    state: TransferTicketState,
-    cancellation: CancellationToken,
-}
-
-#[derive(Clone, Debug)]
-enum TransferTicketKind {
-    Download {
-        remote_path: String,
-        file_name: String,
-    },
-    Upload {
-        remote_directory: String,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TransferTicketState {
-    Ready,
-    Active,
-}
-
-pub(crate) struct IssuedTransferLink {
-    pub url: String,
-    pub expires_in_seconds: u64,
-    pub expires_at_unix_ms: u128,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ByteRange {
-    offset: u64,
-    length: u64,
 }
 
 impl McpTransferRuntime {
@@ -544,57 +514,6 @@ fn download_http_response(
     }
     apply_data_security_headers(headers);
     response
-}
-
-fn parse_range_headers(headers: &HeaderMap, size: u64) -> Result<Option<ByteRange>, ()> {
-    let mut values = headers.get_all(header::RANGE).iter();
-    let first = values.next();
-    if values.next().is_some() {
-        return Err(());
-    }
-    parse_range(first, size)
-}
-
-fn parse_range(value: Option<&HeaderValue>, size: u64) -> Result<Option<ByteRange>, ()> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    if size == 0 {
-        return Err(());
-    }
-    let value = value.to_str().map_err(|_| ())?;
-    let range = value.strip_prefix("bytes=").ok_or(())?;
-    if range.contains(',') {
-        return Err(());
-    }
-    let (start, end) = range.split_once('-').ok_or(())?;
-    if start.is_empty() {
-        let suffix = end.parse::<u64>().map_err(|_| ())?;
-        if suffix == 0 {
-            return Err(());
-        }
-        let length = suffix.min(size);
-        return Ok(Some(ByteRange {
-            offset: size - length,
-            length,
-        }));
-    }
-    let start = start.parse::<u64>().map_err(|_| ())?;
-    if start >= size {
-        return Err(());
-    }
-    let end = if end.is_empty() {
-        size - 1
-    } else {
-        end.parse::<u64>().map_err(|_| ())?.min(size - 1)
-    };
-    if end < start {
-        return Err(());
-    }
-    Ok(Some(ByteRange {
-        offset: start,
-        length: end - start + 1,
-    }))
 }
 
 fn content_disposition(file_name: &str) -> String {

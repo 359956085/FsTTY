@@ -351,7 +351,10 @@ fn configure_opencode_mcp(home: &Path, executable: &Path) -> Result<bool, String
         Some(property) => property
             .object_value()
             .ok_or_else(|| format!("{} 中的 mcp 不是对象", path.display()))?,
-        None => root_object.append("mcp", json!({})).object_value().unwrap(),
+        None => root_object
+            .append("mcp", json!({}))
+            .object_value()
+            .ok_or_else(|| format!("{} 无法创建 mcp 对象", path.display()))?,
     };
     let command = vec![
         executable.to_string_lossy().into_owned(),

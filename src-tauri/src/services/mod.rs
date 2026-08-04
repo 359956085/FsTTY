@@ -1,9 +1,11 @@
 mod command_history_service;
 mod connection_manager;
+mod connection_paths;
 mod credential_service;
 mod device_service;
 mod mcp_support_service;
 mod session_service;
+mod session_structure;
 mod settings_service;
 
 use std::path::PathBuf;

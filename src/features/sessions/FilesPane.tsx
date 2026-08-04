@@ -40,11 +40,13 @@ import { TextInput } from "../../shared/ui/TextInput";
 import { ResizeHandle } from "./ResizeHandle";
 import {
   buildBreadcrumbs,
+  breadcrumbTargetClassName,
   canMoveRemoteEntry,
   createModifiedTimeFormatter,
   formatModifiedTime,
   formatSize,
   formatTransferSpeed,
+  fileRowClassName,
   isSlowRenameClick,
   isRemoteMoveCandidate,
   remoteParentPath,
@@ -1265,48 +1267,4 @@ function findRemoteDropTarget(
   return targetDirectory && canMoveRemoteEntry(source, targetDirectory)
     ? targetDirectory
     : null;
-}
-
-function fileRowClassName(
-  file: FileEntry,
-  selectedPath: string | undefined,
-  remoteDrag: RemoteEntryDrag | null,
-  moveStatus: RemoteMoveStatus | null,
-  moveEnabled: boolean,
-) {
-  const movingTarget =
-    (remoteDrag?.targetDirectory === file.path ||
-      (moveStatus?.kind === "moving" && moveStatus.targetDirectory === file.path)) &&
-    "file-row-drop-target";
-  const successfulTarget =
-    moveStatus?.kind === "success" && moveStatus.targetDirectory === file.path
-      ? "file-row-move-success"
-      : "";
-  return [
-    "file-row",
-    moveEnabled && isRemoteMoveCandidate(file) ? "file-row-movable" : "",
-    selectedPath === file.path ? "file-row-active" : "",
-    remoteDrag?.source.path === file.path ? "file-row-dragging" : "",
-    movingTarget,
-    successfulTarget,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function breadcrumbTargetClassName(
-  path: string,
-  remoteDrag: RemoteEntryDrag | null,
-  moveStatus: RemoteMoveStatus | null,
-) {
-  if (moveStatus?.kind === "success" && moveStatus.targetDirectory === path) {
-    return "breadcrumb-move-success";
-  }
-  if (
-    remoteDrag?.targetDirectory === path ||
-    (moveStatus?.kind === "moving" && moveStatus.targetDirectory === path)
-  ) {
-    return "breadcrumb-drop-target";
-  }
-  return undefined;
 }

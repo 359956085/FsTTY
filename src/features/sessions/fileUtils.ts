@@ -5,6 +5,15 @@ export interface FileNameClick {
   timeMs: number;
 }
 
+interface RemoteDragView {
+  source: FileEntry;
+  targetDirectory: string | null;
+}
+
+type RemoteMoveView =
+  | { kind: "moving" | "success"; targetDirectory: string }
+  | { kind: "error" };
+
 export function isSlowRenameClick(
   previous: FileNameClick | null,
   current: FileNameClick,
@@ -36,6 +45,50 @@ export function canMoveRemoteEntry(source: FileEntry, targetDirectory: string) {
 export function remoteParentPath(path: string) {
   const separator = path.lastIndexOf("/");
   return separator <= 0 ? "/" : path.slice(0, separator);
+}
+
+export function fileRowClassName(
+  file: FileEntry,
+  selectedPath: string | undefined,
+  remoteDrag: RemoteDragView | null,
+  moveStatus: RemoteMoveView | null,
+  moveEnabled: boolean,
+) {
+  const movingTarget =
+    (remoteDrag?.targetDirectory === file.path ||
+      (moveStatus?.kind === "moving" && moveStatus.targetDirectory === file.path)) &&
+    "file-row-drop-target";
+  const successfulTarget =
+    moveStatus?.kind === "success" && moveStatus.targetDirectory === file.path
+      ? "file-row-move-success"
+      : "";
+  return [
+    "file-row",
+    moveEnabled && isRemoteMoveCandidate(file) ? "file-row-movable" : "",
+    selectedPath === file.path ? "file-row-active" : "",
+    remoteDrag?.source.path === file.path ? "file-row-dragging" : "",
+    movingTarget,
+    successfulTarget,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function breadcrumbTargetClassName(
+  path: string,
+  remoteDrag: RemoteDragView | null,
+  moveStatus: RemoteMoveView | null,
+) {
+  if (moveStatus?.kind === "success" && moveStatus.targetDirectory === path) {
+    return "breadcrumb-move-success";
+  }
+  if (
+    remoteDrag?.targetDirectory === path ||
+    (moveStatus?.kind === "moving" && moveStatus.targetDirectory === path)
+  ) {
+    return "breadcrumb-drop-target";
+  }
+  return undefined;
 }
 
 export function buildBreadcrumbs(path: string) {

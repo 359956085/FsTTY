@@ -1,3 +1,7 @@
+use super::session_structure::{
+    flatten_session_blocks, group_session_blocks, normalize_group, normalize_tags,
+    DEFAULT_SESSION_GROUP,
+};
 use crate::models::{
     AppError, CreateSessionPayload, CredentialAction, CredentialState, LoginSaveDecision,
     PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,
@@ -22,7 +26,6 @@ const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SESSIONS: usize = 500;
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
-const DEFAULT_SESSION_GROUP: &str = "未分组";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1355,44 +1358,6 @@ fn validate_id(value: &str) -> Result<(), AppError> {
     Uuid::parse_str(value)
         .map(|_| ())
         .map_err(|_| AppError::Validation("会话 ID 无效".to_owned()))
-}
-
-fn group_session_blocks(sessions: &[StoredSession]) -> Vec<(String, Vec<StoredSession>)> {
-    let mut groups = Vec::<(String, Vec<StoredSession>)>::new();
-    for session in sessions {
-        if let Some((_, group_sessions)) =
-            groups.iter_mut().find(|(name, _)| name == &session.group)
-        {
-            group_sessions.push(session.clone());
-        } else {
-            groups.push((session.group.clone(), vec![session.clone()]));
-        }
-    }
-    groups
-}
-
-fn flatten_session_blocks(groups: Vec<(String, Vec<StoredSession>)>) -> Vec<StoredSession> {
-    groups
-        .into_iter()
-        .flat_map(|(_, sessions)| sessions)
-        .collect()
-}
-
-fn normalize_group(group: &str) -> String {
-    let group = group.trim();
-    if group.is_empty() {
-        DEFAULT_SESSION_GROUP.to_owned()
-    } else {
-        group.to_owned()
-    }
-}
-
-fn normalize_tags(tags: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    tags.into_iter()
-        .map(|tag| tag.trim().to_owned())
-        .filter(|tag| !tag.is_empty() && seen.insert(tag.to_lowercase()))
-        .collect()
 }
 
 #[cfg(test)]

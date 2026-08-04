@@ -28,6 +28,11 @@ import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
 import { DEFAULT_SESSION_GROUP } from "./constants";
+import {
+  resolveSessionDropTarget,
+  type SessionDragSource,
+  type SessionDropTarget,
+} from "./sessionDragDrop";
 import type { SessionListMutationResult } from "./useSessionsPageState";
 
 export type SessionFilter = "all" | "favorites";
@@ -68,30 +73,11 @@ type SessionContextMenu =
   | { kind: "session"; x: number; y: number; sessionId: string }
   | { kind: "group"; x: number; y: number; groupName: string };
 
-type DragSource =
-  | { kind: "group"; groupName: string; groupIndex: number }
-  | {
-      kind: "session";
-      sessionId: string;
-      groupName: string;
-      sessionIndex: number;
-    };
-
-type DropTarget =
-  | { kind: "group"; groupIndex: number; edge: "before" | "after" }
-  | {
-      kind: "session";
-      groupName: string;
-      sessionIndex: number;
-      edge: "before" | "after";
-    }
-  | { kind: "groupBody"; groupName: string };
-
 interface DragGesture {
   pointerId: number;
   startX: number;
   startY: number;
-  source: DragSource;
+  source: SessionDragSource;
   captureTarget: HTMLElement;
   dragging: boolean;
 }
@@ -138,10 +124,10 @@ export function SessionList({
   const [filterOpen, setFilterOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [groupOperation, setGroupOperation] = useState<GroupOperation | null>(null);
-  const [dragSource, setDragSource] = useState<DragSource | null>(null);
-  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [dragSource, setDragSource] = useState<SessionDragSource | null>(null);
+  const [dropTarget, setDropTarget] = useState<SessionDropTarget | null>(null);
   const dragGestureRef = useRef<DragGesture | null>(null);
-  const dropTargetRef = useRef<DropTarget | null>(null);
+  const dropTargetRef = useRef<SessionDropTarget | null>(null);
   const suppressClickRef = useRef(false);
   const favoriteIds = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const collapsedGroups = useMemo(() => new Set(collapsedGroupNames), [collapsedGroupNames]);
@@ -255,7 +241,7 @@ export function SessionList({
 
   function beginDrag(
     event: ReactPointerEvent<HTMLElement>,
-    source: DragSource,
+    source: SessionDragSource,
   ) {
     if (
       !dragAllowed ||
@@ -291,7 +277,7 @@ export function SessionList({
       setDragSource(gesture.source);
     }
     event.preventDefault();
-    const nextTarget = resolveDropTarget(
+    const nextTarget = resolveSessionDropTarget(
       event.clientX,
       event.clientY,
       gesture.source,
@@ -786,51 +772,4 @@ export function SessionList({
       ) : null}
     </aside>
   );
-}
-
-function resolveDropTarget(
-  clientX: number,
-  clientY: number,
-  source: DragSource,
-): DropTarget | null {
-  const element = document.elementFromPoint(clientX, clientY);
-  if (!(element instanceof HTMLElement)) return null;
-
-  if (source.kind === "group") {
-    const groupTitle = element.closest<HTMLElement>(
-      "[data-session-drop-group]",
-    );
-    const groupElement = groupTitle?.closest<HTMLElement>(
-      "[data-session-group-index]",
-    );
-    if (!groupElement || !groupTitle) return null;
-    const groupIndex = Number(groupElement.dataset.sessionGroupIndex);
-    if (!Number.isInteger(groupIndex)) return null;
-    const rectangle = groupTitle.getBoundingClientRect();
-    return {
-      kind: "group",
-      groupIndex,
-      edge: clientY < rectangle.top + rectangle.height / 2 ? "before" : "after",
-    };
-  }
-
-  const sessionElement = element.closest<HTMLElement>("[data-session-index]");
-  if (sessionElement) {
-    const sessionIndex = Number(sessionElement.dataset.sessionIndex);
-    const groupName = sessionElement.dataset.sessionGroupName;
-    if (Number.isInteger(sessionIndex) && groupName) {
-      const rectangle = sessionElement.getBoundingClientRect();
-      return {
-        kind: "session",
-        groupName,
-        sessionIndex,
-        edge:
-          clientY < rectangle.top + rectangle.height / 2 ? "before" : "after",
-      };
-    }
-  }
-
-  const groupTitle = element.closest<HTMLElement>("[data-session-drop-group]");
-  const groupName = groupTitle?.dataset.sessionDropGroup;
-  return groupName ? { kind: "groupBody", groupName } : null;
 }
