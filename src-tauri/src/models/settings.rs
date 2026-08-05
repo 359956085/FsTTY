@@ -48,10 +48,45 @@ pub struct McpGroupPermission {
     pub file_write: bool,
     #[serde(default)]
     pub file_delete: bool,
+    #[serde(default)]
+    pub command_policy: McpCommandPolicy,
 }
 
 fn default_enabled() -> bool {
     true
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCommandPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: McpCommandPolicyMode,
+    #[serde(default)]
+    pub rules: Vec<McpCommandRule>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpCommandPolicyMode {
+    #[default]
+    Allow,
+    Exclude,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCommandRule {
+    pub match_type: McpCommandMatchType,
+    pub pattern: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpCommandMatchType {
+    Exact,
+    Glob,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -37,6 +37,21 @@ export interface McpGroupPermission {
   commandExecute: boolean;
   fileWrite: boolean;
   fileDelete: boolean;
+  commandPolicy: McpCommandPolicy;
+}
+
+export type McpCommandPolicyMode = "allow" | "exclude";
+export type McpCommandMatchType = "exact" | "glob";
+
+export interface McpCommandRule {
+  matchType: McpCommandMatchType;
+  pattern: string;
+}
+
+export interface McpCommandPolicy {
+  enabled: boolean;
+  mode: McpCommandPolicyMode;
+  rules: McpCommandRule[];
 }
 
 export interface CommandHistoryEntry {

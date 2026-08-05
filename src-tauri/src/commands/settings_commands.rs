@@ -1,7 +1,9 @@
-use crate::models::{AppError, AppSettings, Language, McpGroupPermission, ShortcutSettings};
+use crate::models::{
+    AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
+};
 use crate::services::AppState;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -87,6 +89,16 @@ pub fn update_shortcut_settings(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
     service.update_shortcut_settings(shortcuts)
+}
+
+#[tauri::command]
+pub fn import_mcp_command_policy(path: String) -> Result<McpCommandPolicy, AppError> {
+    crate::mcp_command_policy::import_policy(&PathBuf::from(path))
+}
+
+#[tauri::command]
+pub fn export_mcp_command_policy(path: String, policy: McpCommandPolicy) -> Result<(), AppError> {
+    crate::mcp_command_policy::export_policy(&PathBuf::from(path), policy)
 }
 
 #[tauri::command]

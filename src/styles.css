@@ -2284,8 +2284,46 @@ textarea:focus-visible,
   visibility: hidden;
 }
 
-.settings-mcp-grid input {
-  justify-self: center;
+.settings-mcp-checkbox-cell,
+.settings-mcp-command-permission-cell {
+  display: flex;
+  min-width: 58px;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-mcp-command-permission-cell {
+  gap: 5px;
+}
+
+.settings-mcp-grid input[type="checkbox"] {
+  margin: 0;
+}
+
+.settings-mcp-command-policy-open {
+  width: 28px;
+  height: 28px;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+}
+
+.settings-mcp-command-policy-open:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.settings-mcp-command-policy-open.active {
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+}
+
+.settings-mcp-command-policy-open.active:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent);
 }
 
 .settings-mcp-permissions-header {
@@ -2318,6 +2356,169 @@ textarea:focus-visible,
 
 .settings-mcp-config-backdrop {
   z-index: 180;
+}
+
+.settings-mcp-command-policy-backdrop {
+  z-index: 190;
+}
+
+.dialog.settings-mcp-command-policy-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(780px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  border-color: rgba(190, 196, 202, 0.25);
+  background: rgba(28, 30, 32, 0.99);
+}
+
+.settings-mcp-command-policy-dialog .dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-mcp-command-policy-dialog .dialog-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-mcp-command-policy-dialog .dialog-header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-mcp-command-policy-body {
+  min-height: 0;
+  padding: 0 20px 18px;
+  overflow: auto;
+}
+
+.settings-mcp-command-policy-switch-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-mcp-command-policy-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+}
+
+.settings-mcp-command-policy-mode {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-mcp-command-policy-mode-select {
+  width: 150px;
+}
+
+.settings-mcp-command-policy-mode-select .form-select-trigger,
+.settings-mcp-command-policy-match-select .form-select-trigger,
+.settings-mcp-command-policy-rule input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+}
+
+.settings-mcp-command-policy-mode-select .form-select-trigger,
+.settings-mcp-command-policy-match-select .form-select-trigger {
+  padding: 0 9px;
+}
+
+.settings-mcp-command-policy-mode-select .form-select-menu,
+.settings-mcp-command-policy-match-select .form-select-menu {
+  z-index: 60;
+  width: 100%;
+  min-width: max-content;
+  border-color: rgba(190, 196, 202, 0.24);
+  background: #242628;
+}
+
+.settings-mcp-command-policy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-mcp-command-policy-actions .button {
+  min-height: 32px;
+}
+
+.settings-mcp-command-policy-warning {
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, #d7ad78 45%, var(--border));
+  border-radius: 6px;
+  color: #d7ad78;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-mcp-command-policy-rules {
+  display: grid;
+  min-height: 150px;
+  align-content: start;
+  gap: 8px;
+}
+
+.settings-mcp-command-policy-rule {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-mcp-command-policy-rule input {
+  min-width: 0;
+  padding: 0 10px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.settings-mcp-command-policy-delete {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+}
+
+.settings-mcp-command-policy-delete:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.settings-mcp-command-policy-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.settings-mcp-command-policy-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 620px) {
+  .settings-mcp-command-policy-rule {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .settings-mcp-command-policy-match-select {
+    grid-column: 1 / -1;
+  }
 }
 
 .dialog.settings-mcp-config-dialog {

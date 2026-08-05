@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { Info, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   McpGroupPermission,
@@ -20,6 +20,7 @@ interface McpPermissionsPanelProps {
   error: string | null;
   groups: readonly SessionGroup[];
   onHideTooltip: () => void;
+  onManageCommandPolicy: (groupName: string) => void;
   onSave: () => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
   onUpdate: (groupName: string, patch: Partial<McpGroupPermission>) => void;
@@ -36,6 +37,7 @@ export function McpPermissionsPanel({
   error,
   groups,
   onHideTooltip,
+  onManageCommandPolicy,
   onSave,
   onShowTooltip,
   onUpdate,
@@ -102,18 +104,44 @@ export function McpPermissionsPanel({
           const permission = permissionFrom(permissions, group.name);
           return [
             <strong key={`${group.name}-name`}>{group.name}</strong>,
-            ...MCP_PERMISSION_FIELDS.map((field) => (
-              <input
-                aria-label={`${group.name} ${String(field)}`}
-                checked={Boolean(permission[field])}
-                disabled={saving}
-                key={`${group.name}-${String(field)}`}
-                onChange={(event) =>
-                  onUpdate(group.name, { [field]: event.target.checked })
-                }
-                type="checkbox"
-              />
-            )),
+            ...MCP_PERMISSION_FIELDS.map((field) => {
+              const checkbox = (
+                <input
+                  aria-label={`${group.name} ${String(field)}`}
+                  checked={Boolean(permission[field])}
+                  disabled={saving}
+                  onChange={(event) =>
+                    onUpdate(group.name, { [field]: event.target.checked })
+                  }
+                  type="checkbox"
+                />
+              );
+              return field === "commandExecute" ? (
+                <span
+                  className="settings-mcp-command-permission-cell"
+                  key={`${group.name}-${String(field)}`}
+                >
+                  {checkbox}
+                  <button
+                    aria-label={t("settings.mcpCommandPolicyManageGroup", {
+                      group: group.name,
+                    })}
+                    className={`icon-button settings-mcp-command-policy-open${
+                      permission.commandPolicy.enabled ? " active" : ""
+                    }`}
+                    disabled={saving}
+                    onClick={() => onManageCommandPolicy(group.name)}
+                    type="button"
+                  >
+                    <Settings aria-hidden="true" size={14} />
+                  </button>
+                </span>
+              ) : (
+                <span className="settings-mcp-checkbox-cell" key={`${group.name}-${String(field)}`}>
+                  {checkbox}
+                </span>
+              );
+            }),
           ];
         })}
       </div>

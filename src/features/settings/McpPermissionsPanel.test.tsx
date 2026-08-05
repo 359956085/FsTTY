@@ -22,6 +22,7 @@ describe("McpPermissionsPanel", () => {
       error: null,
       groups: [{ name: "prod", sessions: [] }],
       onHideTooltip: vi.fn(),
+      onManageCommandPolicy: vi.fn(),
       onSave,
       onShowTooltip: vi.fn(),
       onUpdate: vi.fn(),
@@ -53,6 +54,7 @@ describe("McpPermissionsPanel", () => {
         error={null}
         groups={[{ name: "prod", sessions: [] }]}
         onHideTooltip={vi.fn()}
+        onManageCommandPolicy={vi.fn()}
         onSave={vi.fn()}
         onShowTooltip={vi.fn()}
         onUpdate={onUpdate}
@@ -66,5 +68,56 @@ describe("McpPermissionsPanel", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "prod commandExecute" }));
 
     expect(onUpdate).toHaveBeenCalledWith("prod", { commandExecute: true });
+  });
+
+  it("命令未勾选时高级管理按钮仍可打开", () => {
+    const onManageCommandPolicy = vi.fn();
+    const permission = defaultMcpPermission("prod");
+    const common = {
+      catalog: [],
+      catalogFailed: false,
+      dirty: false,
+      error: null,
+      groups: [{ name: "prod", sessions: [] }],
+      onHideTooltip: vi.fn(),
+      onManageCommandPolicy,
+      onSave: vi.fn(),
+      onShowTooltip: vi.fn(),
+      onUpdate: vi.fn(),
+      saveSucceeded: false,
+      saving: false,
+      tooltipKey: null,
+    };
+    const rendered = render(
+      <McpPermissionsPanel {...common} permissions={[permission]} />,
+    );
+    const manageButton = screen.getByRole("button", {
+      name: "settings.mcpCommandPolicyManageGroup",
+    });
+    expect(manageButton.classList.contains("settings-mcp-command-policy-open")).toBe(true);
+    expect(manageButton.classList.contains("active")).toBe(false);
+    const icon = manageButton.querySelector("svg");
+    expect(icon?.classList.contains("lucide-settings")).toBe(true);
+    expect(icon?.classList.contains("lucide-settings-2")).toBe(false);
+    expect(icon?.getAttribute("stroke")).toBe("currentColor");
+    fireEvent.click(manageButton);
+    expect(onManageCommandPolicy).toHaveBeenCalledWith("prod");
+
+    rendered.rerender(
+      <McpPermissionsPanel
+        {...common}
+        permissions={[
+          {
+            ...permission,
+            commandPolicy: { ...permission.commandPolicy, enabled: true },
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "settings.mcpCommandPolicyManageGroup" })
+        .classList.contains("active"),
+    ).toBe(true);
   });
 });

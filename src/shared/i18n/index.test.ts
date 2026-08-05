@@ -42,4 +42,33 @@ describe("i18n 资源", () => {
     expect(chinese.get("sessions.ungrouped")).toBe("未分组");
     expect(english.get("sessions.ungrouped")).toBe("Ungrouped");
   });
+
+  it("高级命令管理使用白名单黑名单和完成文案", () => {
+    expect(chinese.get("settings.mcpCommandPolicyAllow")).toBe("白名单");
+    expect(chinese.get("settings.mcpCommandPolicyExclude")).toBe("黑名单");
+    expect(chinese.get("settings.mcpCommandPolicyEnable")).toBe("启用");
+    expect(chinese.get("settings.mcpCommandPolicyComplete")).toBe("完成");
+    expect(english.get("settings.mcpCommandPolicyAllow")).toBe("Allowlist");
+    expect(english.get("settings.mcpCommandPolicyExclude")).toBe("Blocklist");
+    expect(english.get("settings.mcpCommandPolicyComplete")).toBe("Done");
+  });
+
+  it("高级命令管理使用简短操作和动态占位文案", () => {
+    expect(chinese.get("settings.mcpCommandPolicyImport")).toBe("导入");
+    expect(chinese.get("settings.mcpCommandPolicyExport")).toBe("导出");
+    expect(chinese.get("settings.mcpCommandPolicyPatternPlaceholderExact")).toBe(
+      "输入完整命令",
+    );
+    expect(chinese.get("settings.mcpCommandPolicyPatternPlaceholderGlob")).toBe(
+      "输入 Glob 规则",
+    );
+    expect(english.get("settings.mcpCommandPolicyImport")).toBe("Import");
+    expect(english.get("settings.mcpCommandPolicyExport")).toBe("Export");
+    expect(english.get("settings.mcpCommandPolicyPatternPlaceholderExact")).toBe(
+      "Enter a complete command",
+    );
+    expect(english.get("settings.mcpCommandPolicyPatternPlaceholderGlob")).toBe(
+      "Enter a glob pattern",
+    );
+  });
 });

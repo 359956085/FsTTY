@@ -3,6 +3,7 @@ mod commands;
 mod local_agent_setup;
 mod logging;
 mod mcp;
+mod mcp_command_policy;
 mod mcp_transfer;
 mod models;
 mod services;
@@ -11,16 +12,16 @@ use commands::{
     add_command_history, cancel_transfer, clear_command_history, configure_local_agents,
     connect_session, create_remote_directory, create_session, delete_remote_entry, delete_session,
     delete_session_group, disconnect_session, download_file, export_command_history,
-    forget_host_key, get_app_settings, get_command_history_settings, get_device_status,
-    get_mcp_agent_prompt, get_mcp_http_client_config, get_mcp_http_status,
+    export_mcp_command_policy, forget_host_key, get_app_settings, get_command_history_settings,
+    get_device_status, get_mcp_agent_prompt, get_mcp_http_client_config, get_mcp_http_status,
     get_mcp_permission_catalog, get_mcp_stdio_client_config, get_system_clipboard_content_kind,
-    import_command_history, inspect_local_agent_setup, list_command_history, list_remote_files,
-    list_sessions, move_remote_entry, open_log_directory, rename_remote_entry,
-    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
-    resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
-    set_language, set_session_credential, trust_host_key, update_app_settings,
-    update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
-    update_shortcut_settings, upload_file, write_terminal,
+    import_command_history, import_mcp_command_policy, inspect_local_agent_setup,
+    list_command_history, list_remote_files, list_sessions, move_remote_entry, open_log_directory,
+    rename_remote_entry, rename_session_group, reorder_session, reorder_session_group,
+    resize_terminal, resolve_session_login_save_prompt, rotate_mcp_http_token,
+    set_ignored_update_version, set_language, set_session_credential, trust_host_key,
+    update_app_settings, update_command_history_deduplication, update_log_settings,
+    update_mcp_settings, update_session, update_shortcut_settings, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -187,6 +188,8 @@ pub fn run() {
             update_log_settings,
             update_shortcut_settings,
             update_mcp_settings,
+            import_mcp_command_policy,
+            export_mcp_command_policy,
             get_mcp_agent_prompt,
             get_mcp_permission_catalog,
             get_mcp_http_client_config,

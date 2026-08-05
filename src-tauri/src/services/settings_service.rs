@@ -1,3 +1,4 @@
+use crate::mcp_command_policy::{normalize_policy, MAX_TOTAL_PATTERN_BYTES, MAX_TOTAL_RULES};
 use crate::models::{
     AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
 };
@@ -10,7 +11,7 @@ const STORE_VERSION: u8 = 1;
 const STORE_FILE: &str = "settings.v1.json";
 const STORE_BACKUP_FILE: &str = "settings.v1.json.bak";
 const STORE_TEMP_FILE: &str = "settings.v1.json.tmp";
-const MAX_STORE_BYTES: u64 = 64 * 1024;
+const MAX_STORE_BYTES: u64 = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,6 +192,9 @@ impl SettingsService {
             settings: self.settings.clone(),
         })
         .map_err(|_| AppError::Persistence("无法序列化设置数据".to_owned()))?;
+        if content.len() as u64 > MAX_STORE_BYTES {
+            return Err(AppError::Validation("设置数据超过 256 KiB 上限".to_owned()));
+        }
         let mut temp = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -316,6 +320,8 @@ fn validate_mcp_permissions(
         return Err(AppError::Validation("MCP 分组权限数量过多".to_owned()));
     }
     let mut result = Vec::with_capacity(permissions.len());
+    let mut total_rules = 0usize;
+    let mut total_pattern_bytes = 0usize;
     for permission in permissions {
         let name = permission.group_name.trim();
         if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
@@ -327,8 +333,21 @@ fn validate_mcp_permissions(
         {
             return Err(AppError::Validation("MCP 分组权限重复".to_owned()));
         }
+        let command_policy = normalize_policy(permission.command_policy)?;
+        total_rules += command_policy.rules.len();
+        total_pattern_bytes += command_policy
+            .rules
+            .iter()
+            .map(|rule| rule.pattern.len())
+            .sum::<usize>();
+        if total_rules > MAX_TOTAL_RULES || total_pattern_bytes > MAX_TOTAL_PATTERN_BYTES {
+            return Err(AppError::Validation(
+                "高级命令规则总数或正文总大小超过限制".to_owned(),
+            ));
+        }
         result.push(McpGroupPermission {
             group_name: name.to_owned(),
+            command_policy,
             ..permission
         });
     }
@@ -383,6 +402,9 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
     }
     validate_update_proxy(&store.settings.update_proxy)?;
     validate_shortcut_settings(&store.settings.shortcuts)?;
+    let mut store = store;
+    store.settings.mcp_group_permissions =
+        validate_mcp_permissions(store.settings.mcp_group_permissions)?;
     Ok(Some(store))
 }
 
@@ -406,6 +428,7 @@ mod tests {
             command_execute,
             file_write: false,
             file_delete: false,
+            command_policy: Default::default(),
         }
     }
 
@@ -469,7 +492,7 @@ mod tests {
         let directory = test_directory("settings-shortcuts");
         fs::write(
             directory.join(STORE_FILE),
-            br#"{
+            r#"{
   "version": 1,
   "language": "zh-CN",
   "autoUpdate": true,
@@ -495,6 +518,36 @@ mod tests {
         let restored = SettingsService::load(&directory).get();
         assert_eq!(restored.shortcuts, shortcuts);
         assert!(restored.auto_update);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 旧权限设置自动补充关闭的高级命令策略() {
+        let directory = test_directory("settings-command-policy-default");
+        fs::write(
+            directory.join(STORE_FILE),
+            r#"{
+  "version": 1,
+  "language": "zh-CN",
+  "autoUpdate": true,
+  "updateProxy": "",
+  "mcpGroupPermissions": [{
+    "groupName": "生产",
+    "enabled": true,
+    "sessionRead": true,
+    "fileRead": true,
+    "commandExecute": true,
+    "fileWrite": false,
+    "fileDelete": false
+  }]
+}"#,
+        )
+        .expect("无法写入旧设置文件");
+        let restored = SettingsService::load(&directory).get();
+        assert_eq!(
+            restored.mcp_group_permissions[0].command_policy,
+            Default::default()
+        );
         let _ = fs::remove_dir_all(directory);
     }
 

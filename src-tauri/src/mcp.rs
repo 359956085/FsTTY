@@ -548,11 +548,11 @@ impl McpService {
         Parameters(args): Parameters<CommandArgs>,
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("execute_command", Some(&args.session_id), &args);
-        if args.command.is_empty() || args.command.len() > 64 * 1024 {
+        if args.command.trim().is_empty() || args.command.len() > 64 * 1024 {
             return Ok(tool_error("命令为空或过长"));
         }
         let connection = self
-            .authorized_connection(&args.session_id, Permission::Command)
+            .authorized_command_connection(&args.session_id, &args.command)
             .await?;
         let _operation_lock = self.operation_lock(&args.session_id)?;
         let started = Instant::now();
@@ -920,6 +920,25 @@ impl McpService {
         let session = authorized_session(&self.state, session_id, required)
             .await
             .map_err(mcp_access_error)?;
+        self.connection_for_session(session_id, session).await
+    }
+
+    async fn authorized_command_connection(
+        &self,
+        session_id: &str,
+        command: &str,
+    ) -> Result<String, McpError> {
+        let session = authorized_command_session(&self.state, session_id, command)
+            .await
+            .map_err(mcp_access_error)?;
+        self.connection_for_session(session_id, session).await
+    }
+
+    async fn connection_for_session(
+        &self,
+        session_id: &str,
+        session: StoredSession,
+    ) -> Result<String, McpError> {
         let mut cache = self.connections.lock().await;
         if let Some(existing) = cache.get_mut(session_id) {
             if existing.last_used.elapsed() < CONNECTION_IDLE {
@@ -1019,6 +1038,34 @@ pub(crate) async fn authorized_session(
     session_id: &str,
     required: Permission,
 ) -> Result<StoredSession, McpAccessError> {
+    authorized_session_context(state, session_id, required)
+        .await
+        .map(|(session, _, _)| session)
+}
+
+async fn authorized_command_session(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
+) -> Result<StoredSession, McpAccessError> {
+    let (session, access, language) =
+        authorized_session_context(state, session_id, Permission::Command).await?;
+    if access.command_policy.enabled
+        && !crate::mcp_command_policy::command_allowed(&access.command_policy, command)
+    {
+        return Err(McpAccessError::Forbidden(localized_access_error(
+            &language,
+            AccessIssue::CommandPolicyDenied,
+        )));
+    }
+    Ok(session)
+}
+
+async fn authorized_session_context(
+    state: &AppState,
+    session_id: &str,
+    required: Permission,
+) -> Result<(StoredSession, McpGroupPermission, Language), McpAccessError> {
     let settings =
         current_mcp_settings(state).map_err(|error| McpAccessError::Internal(error.to_string()))?;
     if !settings.mcp_enabled {
@@ -1048,7 +1095,7 @@ pub(crate) async fn authorized_session(
             AccessIssue::PermissionDenied,
         )));
     }
-    Ok(session)
+    Ok((session, access.clone(), settings.language))
 }
 
 fn permission<'a>(
@@ -1065,6 +1112,7 @@ enum AccessIssue {
     ServiceDisabled,
     GroupDisabled,
     PermissionDenied,
+    CommandPolicyDenied,
 }
 
 fn localized_access_error(language: &Language, issue: AccessIssue) -> String {
@@ -1072,12 +1120,16 @@ fn localized_access_error(language: &Language, issue: AccessIssue) -> String {
         (Language::ZhCn, AccessIssue::ServiceDisabled) => "MCP 服务未启用。",
         (Language::ZhCn, AccessIssue::GroupDisabled) => "当前分组未授权。",
         (Language::ZhCn, AccessIssue::PermissionDenied) => "当前工具未获得分组权限。",
+        (Language::ZhCn, AccessIssue::CommandPolicyDenied) => "当前命令被高级命令策略拒绝。",
         (Language::EnUs, AccessIssue::ServiceDisabled) => "The MCP service is disabled.",
         (Language::EnUs, AccessIssue::GroupDisabled) => {
             "The current session group is not authorized."
         }
         (Language::EnUs, AccessIssue::PermissionDenied) => {
             "The current tool is not authorized for this session group."
+        }
+        (Language::EnUs, AccessIssue::CommandPolicyDenied) => {
+            "The command was denied by the advanced command policy."
         }
     };
     let hint = if matches!(language, Language::EnUs) {
@@ -1211,6 +1263,7 @@ mod tests {
             command_execute,
             file_write: false,
             file_delete: false,
+            command_policy: Default::default(),
         }
     }
 
@@ -1504,6 +1557,7 @@ mod tests {
             command_execute: true,
             file_write: true,
             file_delete: true,
+            command_policy: Default::default(),
         }];
         assert!(permission(&permissions, "生产").is_none());
         assert!(permission(&permissions, "未知").is_none());
@@ -1743,6 +1797,55 @@ mod tests {
             authorized_session(&http.state, &session_id, Permission::Command).await,
             Err(McpAccessError::Forbidden(_))
         ));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn stdio和http热加载高级命令策略() {
+        let directory =
+            std::env::temp_dir().join(format!("fstty-command-policy-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let session_id = Uuid::new_v4().to_string();
+        write_test_session(&directory, &session_id);
+        let mut writer = SettingsService::load(&directory);
+        let mut permission = mcp_permission(true);
+        permission.command_policy = crate::models::McpCommandPolicy {
+            enabled: true,
+            mode: crate::models::McpCommandPolicyMode::Allow,
+            rules: vec![crate::models::McpCommandRule {
+                match_type: crate::models::McpCommandMatchType::Glob,
+                pattern: "git status *".to_owned(),
+            }],
+        };
+        writer
+            .update_mcp(true, true, 37_653, vec![permission.clone()])
+            .expect("保存高级命令策略失败");
+
+        let state = AppState::new(directory.clone());
+        let stdio = McpService::new(state.clone(), "stdio");
+        let transfers = McpTransferRuntime::new(state.clone(), 37_653, CancellationToken::new());
+        let http = McpService::new_http(state, transfers);
+        for service in [&stdio, &http] {
+            assert!(
+                authorized_command_session(&service.state, &session_id, "git status --short")
+                    .await
+                    .is_ok()
+            );
+            assert!(matches!(
+                authorized_command_session(&service.state, &session_id, "rm -rf /tmp/demo").await,
+                Err(McpAccessError::Forbidden(_))
+            ));
+        }
+
+        permission.command_policy.mode = crate::models::McpCommandPolicyMode::Exclude;
+        writer
+            .update_mcp(true, true, 37_653, vec![permission])
+            .expect("切换排除模式失败");
+        assert!(
+            authorized_command_session(&stdio.state, &session_id, "rm -rf /tmp/demo")
+                .await
+                .is_ok()
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 

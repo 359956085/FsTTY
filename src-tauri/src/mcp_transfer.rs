@@ -941,6 +941,7 @@ mod tests {
                     command_execute: false,
                     file_write: true,
                     file_delete: false,
+                    command_policy: Default::default(),
                 }],
             )
             .expect("无法保存初始传输权限");
@@ -1110,6 +1111,7 @@ mod tests {
                     command_execute: false,
                     file_write: false,
                     file_delete: false,
+                    command_policy: Default::default(),
                 }],
             )
             .expect("无法撤销传输权限");

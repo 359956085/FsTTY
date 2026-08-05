@@ -24,6 +24,7 @@ import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { LocalAgentSetupDialog } from "./LocalAgentSetupDialog";
+import { McpCommandPolicyDialog } from "./McpCommandPolicyDialog";
 import {
   McpConfigDialog,
   type McpConfigDialogState,
@@ -88,6 +89,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [mcpHttpError, setMcpHttpError] = useState<string | null>(null);
   const [mcpPermissionError, setMcpPermissionError] = useState<string | null>(null);
   const [mcpPermissionSaveSucceeded, setMcpPermissionSaveSucceeded] = useState(false);
+  const [mcpCommandPolicyGroup, setMcpCommandPolicyGroup] = useState<string | null>(null);
   const [mcpPermissionTooltip, setMcpPermissionTooltip] =
     useState<McpPermissionTooltipState | null>(null);
   const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
@@ -828,6 +830,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
               error={mcpPermissionError}
               groups={groups}
               onHideTooltip={() => setMcpPermissionTooltip(null)}
+              onManageCommandPolicy={setMcpCommandPolicyGroup}
               onSave={() => void saveMcpSettings("permissions")}
               onShowTooltip={showMcpPermissionTooltip}
               onUpdate={updatePermission}
@@ -843,6 +846,17 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
       <McpPermissionTooltip
         onClose={() => setMcpPermissionTooltip(null)}
         tooltip={mcpPermissionTooltip}
+      />
+      <McpCommandPolicyDialog
+        groupName={mcpCommandPolicyGroup}
+        onClose={() => setMcpCommandPolicyGroup(null)}
+        onConfirm={(commandPolicy) => {
+          if (mcpCommandPolicyGroup) {
+            updatePermission(mcpCommandPolicyGroup, { commandPolicy });
+          }
+          setMcpCommandPolicyGroup(null);
+        }}
+        permission={mcpCommandPolicyGroup ? permissionFor(mcpCommandPolicyGroup) : null}
       />
       <McpConfigDialog
         dialog={mcpConfigDialog}

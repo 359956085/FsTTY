@@ -15,6 +15,7 @@ import type {
   LocalAgentTarget,
   LoginSaveDecision,
   McpClientTarget,
+  McpCommandPolicy,
   McpGroupPermission,
   McpHttpStatus,
   McpPermissionCatalogEntry,
@@ -218,6 +219,12 @@ export const api = {
   },
   getMcpStdioClientConfig(clientTarget: McpClientTarget) {
     return invoke<string>("get_mcp_stdio_client_config", { clientTarget });
+  },
+  importMcpCommandPolicy(path: string) {
+    return invoke<McpCommandPolicy>("import_mcp_command_policy", { path });
+  },
+  exportMcpCommandPolicy(path: string, policy: McpCommandPolicy) {
+    return invoke<void>("export_mcp_command_policy", { path, policy });
   },
   getMcpAgentPrompt() {
     return invoke<string>("get_mcp_agent_prompt");

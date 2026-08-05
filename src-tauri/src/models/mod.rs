@@ -23,4 +23,7 @@ pub use session::{
     PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,
     SessionProfile, StoredSession, UpdateSessionPayload,
 };
-pub use settings::{AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings};
+pub use settings::{
+    AppSettings, Language, McpCommandMatchType, McpCommandPolicy, McpCommandPolicyMode,
+    McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings,
+};
