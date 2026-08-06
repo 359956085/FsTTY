@@ -50,13 +50,15 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     error: promptError,
   } = useMcpPromptCopy(setPermissionTooltip);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode 会重放 Effect；新生命周期必须重新允许异步结果更新界面。
+    mountedRef.current = true;
+    const configRequest = configRequestRef.current;
+    return () => {
       mountedRef.current = false;
-      configRequestRef.current.invalidate();
-    },
-    [],
-  );
+      configRequest.invalidate();
+    };
+  }, []);
   useEffect(() => {
     const previousSaved = savedPermissionsRef.current;
     setPermissions((current) =>

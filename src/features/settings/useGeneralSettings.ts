@@ -32,12 +32,13 @@ export function useGeneralSettings({
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode 会重放 Effect；每次建立生命周期都必须恢复挂载状态。
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const changeLanguage = useCallback(
     async (language: Language) => {

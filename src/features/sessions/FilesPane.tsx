@@ -168,7 +168,9 @@ export function FilesPane({
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
   const inlineRenameRef = useRef<InlineRenameState | null>(null);
   const inlineRenameInputRef = useRef<HTMLInputElement>(null);
-  const operationControllerRef = useRef(createFileOperationController());
+  const operationControllerRef = useRef<ReturnType<
+    typeof createFileOperationController
+  > | null>(null);
   const fileNameClickRef = useRef<FileNameClick | null>(null);
   const filePointerIntentRef = useRef<FilePointerIntent | null>(null);
   const [operationPending, setOperationPending] = useState(false);
@@ -177,9 +179,6 @@ export function FilesPane({
   const remoteDragControllerRef = useRef<ReturnType<
     typeof createRemoteEntryDragController
   > | null>(null);
-  remoteDragControllerRef.current ??= createRemoteEntryDragController({
-    onChange: setRemoteDrag,
-  });
   const suppressRemoteClickRef = useRef(false);
   const moveSuccessTimerRef = useRef<number | null>(null);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
@@ -198,7 +197,7 @@ export function FilesPane({
   dragUploadRef.current = { enabled: !operationBlocked, onUploadFiles };
 
   const clearMoveFeedback = useCallback(() => {
-    operationControllerRef.current.cancel("move");
+    operationControllerRef.current?.cancel("move");
     if (moveSuccessTimerRef.current !== null) {
       window.clearTimeout(moveSuccessTimerRef.current);
       moveSuccessTimerRef.current = null;
@@ -209,7 +208,7 @@ export function FilesPane({
   const cancelInlineRename = useCallback(() => {
     fileNameClickRef.current = null;
     filePointerIntentRef.current = null;
-    operationControllerRef.current.cancel("inlineRename");
+    operationControllerRef.current?.cancel("inlineRename");
     inlineRenameRef.current = null;
     setInlineRename(null);
   }, []);
@@ -277,7 +276,13 @@ export function FilesPane({
     let disposed = false;
     let removeDragDropListener: () => void = () => undefined;
     let removeScaleListener: () => void = () => undefined;
-    const operationController = operationControllerRef.current;
+    // StrictMode 会重放 Effect；每次安装独占控制器，避免复用已销毁实例。
+    const operationController = createFileOperationController();
+    const remoteDragController = createRemoteEntryDragController({
+      onChange: setRemoteDrag,
+    });
+    operationControllerRef.current = operationController;
+    remoteDragControllerRef.current = remoteDragController;
     const handleWindowBlur = () => {
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
@@ -336,12 +341,18 @@ export function FilesPane({
       removeDragDropListener();
       removeScaleListener();
       window.removeEventListener("blur", handleWindowBlur);
-      remoteDragControllerRef.current?.dispose();
+      remoteDragController.dispose();
+      if (remoteDragControllerRef.current === remoteDragController) {
+        remoteDragControllerRef.current = null;
+      }
       suppressRemoteClickRef.current = false;
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
       inlineRenameRef.current = null;
       operationController.dispose();
+      if (operationControllerRef.current === operationController) {
+        operationControllerRef.current = null;
+      }
       if (moveSuccessTimerRef.current !== null) {
         window.clearTimeout(moveSuccessTimerRef.current);
         moveSuccessTimerRef.current = null;
@@ -462,7 +473,8 @@ export function FilesPane({
 
   async function submitInlineRename() {
     const current = inlineRenameRef.current;
-    if (!current || operationControllerRef.current.isPending("inlineRename")) {
+    const operationController = operationControllerRef.current;
+    if (!current || !operationController || operationController.isPending("inlineRename")) {
       return;
     }
 
@@ -482,7 +494,7 @@ export function FilesPane({
     const pending = { ...current, value: newName, error: null };
     inlineRenameRef.current = pending;
     setInlineRename(pending);
-    await operationControllerRef.current.run(
+    await operationController.run(
       "inlineRename",
       () => onRenameEntry(current.file.path, newName),
       {
@@ -580,13 +592,17 @@ export function FilesPane({
       return;
     }
     const { source, targetDirectory } = result.move;
+    const operationController = operationControllerRef.current;
+    if (!operationController) {
+      return;
+    }
 
     setMoveStatus({
       kind: "moving",
       sourceName: source.name,
       targetDirectory,
     });
-    void operationControllerRef.current.run(
+    void operationController.run(
       "move",
       () => onMoveEntry(source.path, targetDirectory),
       {
@@ -619,7 +635,8 @@ export function FilesPane({
   }
 
   async function submitFileOperation() {
-    if (!fileOperation || operationControllerRef.current.isPending("dialog")) {
+    const operationController = operationControllerRef.current;
+    if (!fileOperation || !operationController || operationController.isPending("dialog")) {
       return;
     }
     const normalizedName =
@@ -632,7 +649,7 @@ export function FilesPane({
     }
 
     setFileOperation({ ...fileOperation, error: null });
-    await operationControllerRef.current.run(
+    await operationController.run(
       "dialog",
       () => {
         if (fileOperation.kind === "create") {

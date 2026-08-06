@@ -23,7 +23,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 #### 应用更新
 
-- 修复发布流程无法识别 GitHub API 下载地址，导致国内更新源同步失败的问题。
+- 修复部分按钮点击无响应的问题。
 
 <!-- release-notes:zh-CN:end -->
 
@@ -32,7 +32,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 #### Application Updates
 
-- Fixed the release workflow failing to recognize GitHub API download URLs, which prevented synchronization to the mainland China update source.
+- Fixed an issue where some buttons did not respond to clicks.
 
 <!-- release-notes:en-US:end -->
 

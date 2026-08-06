@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from "@testing-library/react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
@@ -12,7 +13,9 @@ const apiMocks = vi.hoisted(() => ({
   getMcpPermissionCatalog: vi.fn(),
   getMcpStdioClientConfig: vi.fn(),
   listSessions: vi.fn(),
+  rotateMcpHttpToken: vi.fn(),
   updateAppSettings: vi.fn(),
+  updateMcpSettings: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
@@ -127,6 +130,60 @@ describe("设置状态控制器", () => {
     request.resolve(settings);
     await save;
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("StrictMode 重放后仍能手工检查更新", async () => {
+    apiMocks.updateAppSettings.mockResolvedValue(settings);
+    const checkForUpdates = vi.fn().mockResolvedValue(undefined);
+    const updater = { checkForUpdates } as unknown as AppUpdaterController;
+    const { result } = renderHook(
+      () =>
+        useGeneralSettings({
+          onChange: vi.fn(),
+          settings,
+          translate: (key) => key,
+          updater,
+        }),
+      { wrapper: StrictMode },
+    );
+
+    await act(async () => result.current.checkForUpdates());
+
+    expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
+    expect(checkForUpdates).toHaveBeenCalledWith("manual", settings.updateProxy);
+  });
+
+  it("StrictMode 重放后仍能保存 MCP 设置", async () => {
+    const nextSettings = { ...settings, mcpEnabled: false };
+    apiMocks.updateMcpSettings.mockResolvedValue(nextSettings);
+    const onChange = vi.fn();
+    const { result } = renderHook(
+      () => useMcpSettings({ onChange, settings, translate: (key) => key }),
+      { wrapper: StrictMode },
+    );
+
+    await act(async () => result.current.save("stdio", false));
+
+    expect(apiMocks.updateMcpSettings).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(nextSettings);
+    expect(result.current.saving).toBe(false);
+  });
+
+  it("StrictMode 重放后轮换 Token 能结束处理中状态并显示错误", async () => {
+    apiMocks.rotateMcpHttpToken.mockResolvedValueOnce(undefined);
+    const { result } = renderHook(
+      () => useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+      { wrapper: StrictMode },
+    );
+
+    await act(async () => result.current.rotateToken());
+    expect(result.current.saving).toBe(false);
+
+    apiMocks.rotateMcpHttpToken.mockRejectedValueOnce(new Error("token failed"));
+    await act(async () => result.current.rotateToken());
+
+    expect(result.current.saving).toBe(false);
+    expect(result.current.httpError).toBe("token failed");
   });
 
   it("MCP 配置只接受最新请求，关闭后丢弃响应", async () => {
