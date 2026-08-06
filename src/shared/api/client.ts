@@ -189,6 +189,9 @@ export const api = {
   openLogDirectory() {
     return invoke<void>("open_log_directory");
   },
+  openProjectLink() {
+    return invoke<void>("open_project_link");
+  },
   setLanguage(language: Language) {
     return invoke<AppSettings>("set_language", { language });
   },

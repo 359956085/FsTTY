@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   inspectLocalAgentSetup: vi.fn(),
   importCommandHistory: vi.fn(),
   listSessions: vi.fn(),
+  openProjectLink: vi.fn(),
   updateMcpSettings: vi.fn(),
   updateLogSettings: vi.fn(),
   updateShortcutSettings: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../../shared/api/client", () => ({
     inspectLocalAgentSetup: mocks.inspectLocalAgentSetup,
     importCommandHistory: mocks.importCommandHistory,
     listSessions: mocks.listSessions,
+    openProjectLink: mocks.openProjectLink,
     updateMcpSettings: mocks.updateMcpSettings,
     updateCommandHistoryDeduplication: mocks.updateCommandHistoryDeduplication,
     updateLogSettings: mocks.updateLogSettings,
@@ -122,7 +124,6 @@ describe("SettingsPage 本地 Agent 配置", () => {
       "settings.shortcuts",
       "settings.commandHistory",
       "settings.logs",
-      "settings.version",
     ]);
     const generalPanel = screen
       .getByRole("heading", { name: "settings.generalSettings" })
@@ -154,6 +155,28 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const enabledSettings = { ...settings, recordMcpToolInputs: true };
     finishSave?.(enabledSettings);
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(enabledSettings));
+  });
+
+  it("关于页展示项目、邮箱和当前版本并支持打开项目与复制邮箱", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.openProjectLink.mockResolvedValue(undefined);
+    mocks.writeText.mockResolvedValue(undefined);
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    expect(screen.queryByText("v1.0.0")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "settings.about" }));
+
+    expect(screen.getByText("v1.0.0")).not.toBeNull();
+    const projectButton = screen.getByRole("button", {
+      name: "https://github.com/359956085/FsTTY",
+    });
+    const emailButton = screen.getByRole("button", { name: "359956085@163.com" });
+    fireEvent.click(projectButton);
+    fireEvent.click(emailButton);
+
+    await waitFor(() => expect(mocks.openProjectLink).toHaveBeenCalledTimes(1));
+    expect(mocks.writeText).toHaveBeenCalledWith("359956085@163.com");
   });
 
   it("日志设置保存失败后恢复开关并显示错误", async () => {

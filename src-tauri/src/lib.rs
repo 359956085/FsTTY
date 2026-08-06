@@ -17,12 +17,12 @@ use commands::{
     get_mcp_http_client_config, get_mcp_http_status, get_mcp_permission_catalog,
     get_mcp_stdio_client_config, get_system_clipboard_content_kind, import_command_history,
     import_mcp_command_policy, inspect_local_agent_setup, install_app_update, list_command_history,
-    list_remote_files, list_sessions, move_remote_entry, open_log_directory, rename_remote_entry,
-    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
-    resolve_session_login_save_prompt, rotate_mcp_http_token, set_ignored_update_version,
-    set_language, set_session_credential, trust_host_key, update_app_settings,
-    update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
-    update_shortcut_settings, upload_file, write_terminal,
+    list_remote_files, list_sessions, move_remote_entry, open_log_directory, open_project_link,
+    rename_remote_entry, rename_session_group, reorder_session, reorder_session_group,
+    resize_terminal, resolve_session_login_save_prompt, rotate_mcp_http_token,
+    set_ignored_update_version, set_language, set_session_credential, trust_host_key,
+    update_app_settings, update_command_history_deduplication, update_log_settings,
+    update_mcp_settings, update_session, update_shortcut_settings, upload_file, write_terminal,
 };
 use services::AppState;
 use tauri::{
@@ -200,6 +200,7 @@ pub fn run() {
             get_mcp_http_status,
             rotate_mcp_http_token,
             open_log_directory,
+            open_project_link,
             check_app_update,
             install_app_update,
             close_app_update

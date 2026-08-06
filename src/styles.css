@@ -2104,6 +2104,41 @@ textarea:focus-visible,
   font-size: 14px;
 }
 
+.settings-about-last-row {
+  border-bottom: 0;
+}
+
+.settings-about-link {
+  display: inline-flex;
+  min-width: 0;
+  padding: 5px 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.settings-about-link:hover {
+  color: #8fc5ff;
+  text-decoration: underline;
+}
+
+.settings-about-link:focus-visible {
+  outline: 2px solid rgba(72, 159, 247, 0.75);
+  outline-offset: 2px;
+}
+
+.settings-about-link svg {
+  flex: none;
+}
+
 .settings-update-control {
   display: flex;
   align-items: center;
@@ -3008,7 +3043,8 @@ textarea:focus-visible,
 
   .settings-sidebar-item {
     width: auto;
-    min-width: 104px;
+    min-width: 0;
+    flex: 1;
     justify-content: center;
   }
 
@@ -3034,6 +3070,11 @@ textarea:focus-visible,
 
   .settings-update-control {
     justify-content: space-between;
+  }
+
+  .settings-about-link {
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .settings-mcp-port-input {

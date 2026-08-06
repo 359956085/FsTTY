@@ -1,5 +1,6 @@
 import {
   Copy,
+  Info,
   Plug,
   RotateCcw,
   Settings2,
@@ -23,6 +24,7 @@ import type {
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { AboutSettingsPanel } from "./AboutSettingsPanel";
 import { LocalAgentSetupDialog } from "./LocalAgentSetupDialog";
 import { McpCommandPolicyDialog } from "./McpCommandPolicyDialog";
 import {
@@ -49,7 +51,7 @@ interface SettingsPageProps {
   updater: AppUpdaterController;
 }
 
-type SettingsSection = "general" | "mcp";
+type SettingsSection = "about" | "general" | "mcp";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
 const manualPromptCopiedKeys: Partial<Record<LocalAgentTarget, string>> = {
   cursor: "settings.localAgentCursorPromptCopied",
@@ -548,6 +550,11 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     mcpPermissions,
     savedMcpPermissions,
   );
+  const sectionTitle = {
+    about: t("settings.about"),
+    general: t("settings.general"),
+    mcp: t("settings.mcpTitle"),
+  }[activeSection];
 
   return (
     <section aria-labelledby="settings-title" className="settings-page">
@@ -573,21 +580,27 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
           <Plug aria-hidden="true" size={16} />
           <span>{t("settings.mcpTitle")}</span>
         </button>
+        <button
+          aria-current={activeSection === "about" ? "page" : undefined}
+          className="settings-sidebar-item"
+          onClick={() => setActiveSection("about")}
+          type="button"
+        >
+          <Info aria-hidden="true" size={16} />
+          <span>{t("settings.about")}</span>
+        </button>
       </nav>
 
       <div className="settings-content">
         <header className="settings-section-heading">
-          <h2>{activeSection === "general" ? t("settings.general") : t("settings.mcpTitle")}</h2>
+          <h2>{sectionTitle}</h2>
         </header>
 
         {activeSection === "general" ? (
           <GeneralSettingsPanel
             activeTooltipKey={mcpPermissionTooltip?.key ?? null}
-            error={visibleError}
             logDirectoryError={logDirectoryError}
             logSettingsError={logSettingsError}
-            onAutoUpdateChange={(enabled) => void saveUpdateSettings(enabled)}
-            onCheckUpdates={() => void handleCheckForUpdates()}
             onClipboardChange={(enabled) =>
               void saveUpdateSettings(settings.autoUpdate, proxy, enabled)
             }
@@ -595,14 +608,22 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             onLanguageChange={(language) => void handleLanguageChange(language)}
             onOpenLogDirectory={() => void openLogDirectory()}
             onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
-            onProxyChange={setProxy}
-            onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
             onShowTooltip={showMcpPermissionTooltip}
             onSettingsChange={onChange}
             openingLogDirectory={openingLogDirectory}
-            proxy={proxy}
             savingLanguage={savingLanguage}
             savingLogSettings={savingLogSettings}
+            savingUpdateSettings={savingUpdateSettings}
+            settings={settings}
+          />
+        ) : activeSection === "about" ? (
+          <AboutSettingsPanel
+            error={visibleError}
+            onAutoUpdateChange={(enabled) => void saveUpdateSettings(enabled)}
+            onCheckUpdates={() => void handleCheckForUpdates()}
+            onProxyChange={setProxy}
+            onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
+            proxy={proxy}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}
             status={status}

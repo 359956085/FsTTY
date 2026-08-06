@@ -9,6 +9,7 @@ use tauri_plugin_opener::OpenerExt;
 
 const MCP_HTTP_CLIENT_HOST_PLACEHOLDER: &str = "<FSTTY_HOST_IP>";
 const MCP_HTTP_LISTEN_HOST: &str = "0.0.0.0";
+const PROJECT_URL: &str = "https://github.com/359956085/FsTTY";
 
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +39,13 @@ pub fn open_log_directory(app: AppHandle, state: State<'_, AppState>) -> Result<
     app.opener()
         .open_path(state.log_directory.to_string_lossy(), None::<&str>)
         .map_err(|error| AppError::Internal(format!("无法打开日志目录：{error}")))
+}
+
+#[tauri::command]
+pub fn open_project_link(app: AppHandle) -> Result<(), AppError> {
+    app.opener()
+        .open_url(PROJECT_URL, None::<&str>)
+        .map_err(|error| AppError::Internal(format!("无法打开关于链接：{error}")))
 }
 
 #[tauri::command]
@@ -482,6 +490,11 @@ pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), App
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 项目链接使用固定地址() {
+        assert_eq!(PROJECT_URL, "https://github.com/359956085/FsTTY");
+    }
 
     #[test]
     fn http_client_config_uses_host_placeholder_and_token() {
