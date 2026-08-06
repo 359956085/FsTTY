@@ -16,6 +16,26 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 <!-- release-notes:en-US:end -->
 
+## [1.2.1] - 2026-08-06
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### 应用更新
+
+- 修复发布流程无法识别 GitHub API 下载地址，导致国内更新源同步失败的问题。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### Application Updates
+
+- Fixed the release workflow failing to recognize GitHub API download URLs, which prevented synchronization to the mainland China update source.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.2.0] - 2026-08-06
 
 <!-- release-notes:zh-CN:start -->
