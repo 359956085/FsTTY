@@ -49,6 +49,7 @@
     "updater": {
       "pubkey": "",
       "endpoints": [
+        "https://cnb.cool/359956085/FsTTY/-/releases/download/updater/latest.json",
         "https://github.com/359956085/FsTTY/releases/latest/download/latest.json"
       ]
     }

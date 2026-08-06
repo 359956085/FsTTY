@@ -69,7 +69,7 @@ A transfer link is its own credential and does not require the Bearer Token. Dow
 
 ## Quick Start
 
-1. Install FsTTY from [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
+1. Install FsTTY from [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) or [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
 2. Create an SSH session and complete the initial host-key verification.
 3. Open **Settings → MCP** and enable `stdio`.
 4. Enable the required session groups under **Permissions**, then grant only the needed tool categories.
@@ -123,7 +123,7 @@ Selecting a history entry with Enter or the mouse inserts it into the terminal w
 
 ## Download and Install
 
-Open [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) and download a Windows x64 installer:
+Prefer [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) in mainland China, or use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
 
 - `*-setup.exe` (NSIS) is recommended for most users.
 - Use `*.msi` for enterprise or MSI-based deployment.

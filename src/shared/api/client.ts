@@ -1,6 +1,8 @@
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  AppUpdateInfo,
+  AppUpdateProgress,
   ClipboardContentKind,
   CommandHistoryImportResult,
   CommandHistoryPage,
@@ -150,6 +152,15 @@ export const api = {
   },
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
+  },
+  checkAppUpdate(proxy: string) {
+    return invoke<AppUpdateInfo | null>("check_app_update", { proxy });
+  },
+  installAppUpdate(onProgress: Channel<AppUpdateProgress>) {
+    return invoke<void>("install_app_update", { onProgress });
+  },
+  closeAppUpdate() {
+    return invoke<void>("close_app_update");
   },
   getCommandHistorySettings() {
     return invoke<CommandHistorySettings>("get_command_history_settings");

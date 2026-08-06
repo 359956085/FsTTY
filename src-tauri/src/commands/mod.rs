@@ -2,6 +2,7 @@ mod clipboard_commands;
 mod command_history_commands;
 mod session_commands;
 mod settings_commands;
+mod update_commands;
 
 pub use clipboard_commands::get_system_clipboard_content_kind;
 pub use command_history_commands::{
@@ -24,3 +25,4 @@ pub use settings_commands::{
     open_log_directory, rotate_mcp_http_token, set_ignored_update_version, set_language,
     update_app_settings, update_log_settings, update_mcp_settings, update_shortcut_settings,
 };
+pub use update_commands::{check_app_update, close_app_update, install_app_update};

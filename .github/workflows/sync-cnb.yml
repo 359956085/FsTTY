@@ -1,0 +1,27 @@
+name: 同步 CNB 主分支
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 同步 main 到 CNB
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$CNB_TOKEN" ]; then
+            echo "缺少 Actions Secret：CNB_TOKEN" >&2
+            exit 1
+          fi
+          auth="$(printf 'cnb:%s' "$CNB_TOKEN" | base64 -w 0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraHeader=Authorization: Basic $auth" push --force \
+            https://cnb.cool/359956085/FsTTY.git HEAD:refs/heads/main

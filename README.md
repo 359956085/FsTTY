@@ -69,7 +69,7 @@ HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Orig
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
+1. 从 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases) 或 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
 2. 创建 SSH 会话并完成首次主机密钥确认。
 3. 打开“设置 → MCP”，启用 `stdio`。
 4. 在“权限”中开启需要暴露的会话分组，并按需授权工具类别。
@@ -117,13 +117,13 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 | 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
 | 文件管理 | SFTP 浏览、上传、下载、拖放移动、新建目录、重命名、复制路径和递归删除 |
 | 设备状态 | CPU、内存趋势、磁盘、网络上下行、操作系统和运行时间 |
-| 自动更新 | 手动或启动时检查、版本忽略、Markdown 更新说明和更新代理 |
+| 自动更新 | CNB/GitHub 并发检查、版本忽略、Markdown 更新说明和更新代理 |
 
 历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
+优先前往 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases)，也可使用 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
 - 普通用户推荐 `*-setup.exe`（NSIS）。
 - 企业部署或 MSI 场景使用 `*.msi`。

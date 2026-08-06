@@ -1,8 +1,8 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { Channel } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
-import type { AppSettings } from "../../shared/api/types";
+import type { AppSettings, AppUpdateProgress } from "../../shared/api/types";
 import { normalizeReleaseVersion, shouldSuppressUpdate } from "./updateVersion";
 
 export type UpdatePhase =
@@ -86,7 +86,7 @@ export function useAppUpdater({
   startupReady,
 }: UseAppUpdaterOptions): AppUpdaterController {
   const [state, setState] = useState(INITIAL_STATE);
-  const updateRef = useRef<Update | null>(null);
+  const updatePendingRef = useRef(false);
   const checkingRef = useRef(false);
   const ignoringRef = useRef(false);
   const installingRef = useRef(false);
@@ -94,10 +94,9 @@ export function useAppUpdater({
   const startupCheckStartedRef = useRef(false);
 
   const releaseUpdate = useCallback(async () => {
-    const update = updateRef.current;
-    updateRef.current = null;
-    if (update) {
-      await update.close().catch(() => undefined);
+    if (updatePendingRef.current) {
+      updatePendingRef.current = false;
+      await api.closeAppUpdate().catch(() => undefined);
     }
   }, []);
 
@@ -123,12 +122,11 @@ export function useAppUpdater({
 
       try {
         const normalizedProxy = proxyOverride.trim();
-        const update = await check({
-          ...(normalizedProxy ? { proxy: normalizedProxy } : {}),
-          timeout: 30_000,
-        });
+        const update = await api.checkAppUpdate(normalizedProxy);
         if (!mountedRef.current) {
-          await update?.close().catch(() => undefined);
+          if (update) {
+            await api.closeAppUpdate().catch(() => undefined);
+          }
           return;
         }
         if (!update) {
@@ -140,11 +138,11 @@ export function useAppUpdater({
         }
         const version = normalizeReleaseVersion(update.version);
         if (shouldSuppressUpdate(source, version, ignoredUpdateVersion)) {
-          await update.close().catch(() => undefined);
+          await api.closeAppUpdate().catch(() => undefined);
           setState((current) => ({ ...current, phase: "idle" }));
           return;
         }
-        updateRef.current = update;
+        updatePendingRef.current = true;
         setState((current) => ({
           ...current,
           availableUpdate: {
@@ -191,8 +189,14 @@ export function useAppUpdater({
   }, [releaseUpdate]);
 
   const ignoreUpdate = useCallback(async () => {
-    const update = updateRef.current;
-    if (!update || checkingRef.current || ignoringRef.current || installingRef.current) {
+    const update = state.availableUpdate;
+    if (
+      !updatePendingRef.current ||
+      !update ||
+      checkingRef.current ||
+      ignoringRef.current ||
+      installingRef.current
+    ) {
       return;
     }
     ignoringRef.current = true;
@@ -234,12 +238,11 @@ export function useAppUpdater({
     } finally {
       ignoringRef.current = false;
     }
-  }, [onSettingsChange, releaseUpdate]);
+  }, [onSettingsChange, releaseUpdate, state.availableUpdate]);
 
   const installUpdate = useCallback(async () => {
-    const update = updateRef.current;
     if (
-      !update ||
+      !updatePendingRef.current ||
       installingRef.current ||
       checkingRef.current ||
       ignoringRef.current
@@ -260,19 +263,20 @@ export function useAppUpdater({
     }
 
     try {
-      await update.downloadAndInstall((event: DownloadEvent) => {
+      const channel = new Channel<AppUpdateProgress>();
+      channel.onmessage = (event) => {
         if (!mountedRef.current) {
           return;
         }
-        if (event.event === "Started") {
+        if (event.kind === "started") {
           setState((current) => ({
             ...current,
             downloadedBytes: 0,
             phase: "downloading",
-            totalBytes: event.data.contentLength ?? null,
+            totalBytes: event.totalBytes ?? null,
           }));
-        } else if (event.event === "Progress") {
-          downloadedBytes += event.data.chunkLength;
+        } else if (event.kind === "progress") {
+          downloadedBytes += event.chunkBytes;
           setState((current) => ({
             ...current,
             downloadedBytes,
@@ -280,8 +284,9 @@ export function useAppUpdater({
         } else {
           setState((current) => ({ ...current, phase: "installing" }));
         }
-      });
-      await releaseUpdate();
+      };
+      await api.installAppUpdate(channel);
+      updatePendingRef.current = false;
       if (mountedRef.current) {
         setState((current) => ({ ...current, phase: "completed" }));
       }
@@ -297,7 +302,7 @@ export function useAppUpdater({
     } finally {
       installingRef.current = false;
     }
-  }, [releaseUpdate]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -337,9 +342,10 @@ export function useAppUpdater({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      const update = updateRef.current;
-      updateRef.current = null;
-      void update?.close().catch(() => undefined);
+      if (updatePendingRef.current) {
+        updatePendingRef.current = false;
+        void api.closeAppUpdate().catch(() => undefined);
+      }
     };
   }, []);
 

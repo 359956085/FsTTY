@@ -6,6 +6,7 @@ mod device;
 mod file;
 mod session;
 mod settings;
+mod update;
 
 pub use app_error::AppError;
 pub use clipboard::ClipboardContentKind;
@@ -27,3 +28,4 @@ pub use settings::{
     AppSettings, Language, McpCommandMatchType, McpCommandPolicy, McpCommandPolicyMode,
     McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings,
 };
+pub use update::{AppUpdateInfo, AppUpdateProgress, AppUpdateSource};

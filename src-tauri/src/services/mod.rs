@@ -1,3 +1,4 @@
+mod app_update_service;
 mod command_history_service;
 mod connection_manager;
 mod connection_paths;
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
+pub use app_update_service::AppUpdateService;
 pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
@@ -23,6 +25,7 @@ pub use settings_service::SettingsService;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub app_update_service: AppUpdateService,
     pub log_directory: PathBuf,
     pub command_history_service: Arc<StdMutex<CommandHistoryService>>,
     pub session_service: Arc<Mutex<SessionService>>,
@@ -48,6 +51,7 @@ impl AppState {
             }
         }
         Self {
+            app_update_service: AppUpdateService::default(),
             log_directory: log_directory.clone(),
             command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
                 &app_data_dir,

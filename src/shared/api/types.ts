@@ -15,6 +15,20 @@ export interface AppSettings {
   shortcuts: ShortcutSettings;
 }
 
+export type AppUpdateSource = "cnb" | "gitHub";
+
+export interface AppUpdateInfo {
+  body?: string;
+  date?: string;
+  source: AppUpdateSource;
+  version: string;
+}
+
+export type AppUpdateProgress =
+  | { kind: "started"; totalBytes?: number | null }
+  | { kind: "progress"; chunkBytes: number }
+  | { kind: "finished" };
+
 export interface ShortcutBinding {
   code: string;
   ctrl: boolean;

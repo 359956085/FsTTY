@@ -12,6 +12,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -48,7 +50,6 @@ jobs:
           # 私钥只能放在 Actions Secrets，禁止放入普通 Variables。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          FSTTY_UPDATE_ENDPOINT: ${{ vars.FSTTY_UPDATE_ENDPOINT }}
         with:
           tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
@@ -58,3 +59,25 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+      - name: 下载 GitHub Release 附件
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$env:GITHUB_REF_NAME" --dir .cnb-release --clobber
+      - name: 同步标签到 CNB
+        shell: pwsh
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) {
+            throw "缺少 Actions Secret：CNB_TOKEN"
+          }
+          $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("cnb:$env:CNB_TOKEN"))
+          Write-Output "::add-mask::$auth"
+          git -c "http.extraHeader=Authorization: Basic $auth" push --force `
+            https://cnb.cool/359956085/FsTTY.git "$env:GITHUB_REF_NAME`:refs/tags/$env:GITHUB_REF_NAME"
+      - name: 同步 Release 到 CNB
+        shell: pwsh
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: node scripts/sync-cnb-release.mjs 359956085/FsTTY "$env:GITHUB_REF_NAME" "$env:GITHUB_SHA" .cnb-release
