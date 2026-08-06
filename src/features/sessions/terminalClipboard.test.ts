@@ -5,6 +5,8 @@ import {
   MAX_REMOTE_CLIPBOARD_BYTES,
   StrictClipboardBase64,
   TauriClipboardProvider,
+  createSerialClipboardWriter,
+  createTerminalMouseSelectionCopyState,
   resolveTerminalClipboardShortcut,
 } from "./terminalClipboard";
 
@@ -93,6 +95,201 @@ describe("resolveTerminalClipboardShortcut", () => {
         false,
       ),
     ).toBeNull();
+  });
+});
+
+describe("createTerminalMouseSelectionCopyState", () => {
+  it("普通左键选择只在匹配指针松开后返回最终文本", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    expect(
+      state.begin({
+        button: 0,
+        mouseTrackingMode: "none",
+        pointerId: 7,
+        pointerType: "mouse",
+        shiftKey: false,
+      }),
+    ).toBe(true);
+    state.markSelectionChanged();
+    state.markSelectionChanged();
+
+    expect(state.finish(8, "错误指针")).toBeNull();
+    expect(state.finish(7, "最终文本")).toBe("最终文本");
+    expect(state.finish(7, "重复释放")).toBeNull();
+  });
+
+  it("mouseup 可完成选择，随后 pointerup 兜底不会重复返回", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 7,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+
+    // 实际事件顺序中，pointerup 先发生，xterm 到 mouseup 才发出选择变化。
+    state.markSelectionChanged();
+    expect(state.finishMouse("最终文本")).toBe("最终文本");
+    expect(state.finish(7, "重复释放")).toBeNull();
+  });
+
+  it("只有 mouseup 时仍可完成选择", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 8,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    state.markSelectionChanged();
+
+    expect(state.finishMouse("mouseup 兜底")).toBe("mouseup 兜底");
+    expect(state.finishMouse("重复 mouseup")).toBeNull();
+  });
+
+  it("未改变选区或最终选区为空时不复制旧内容", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 1,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    expect(state.finish(1, "旧选区")).toBeNull();
+
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 2,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    state.markSelectionChanged();
+    expect(state.finish(2, "")).toBeNull();
+  });
+
+  it("远端鼠标模式只允许按住 Shift 的左键选择", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    expect(
+      state.begin({
+        button: 0,
+        mouseTrackingMode: "any",
+        pointerId: 1,
+        pointerType: "mouse",
+        shiftKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      state.begin({
+        button: 0,
+        mouseTrackingMode: "drag",
+        pointerId: 2,
+        pointerType: "mouse",
+        shiftKey: true,
+      }),
+    ).toBe(true);
+    state.markSelectionChanged();
+    expect(state.finish(2, "Shift 选区")).toBe("Shift 选区");
+  });
+
+  it("忽略非鼠标左键并支持取消当前手势", () => {
+    const state = createTerminalMouseSelectionCopyState();
+    expect(
+      state.begin({
+        button: 2,
+        mouseTrackingMode: "none",
+        pointerId: 1,
+        pointerType: "mouse",
+        shiftKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      state.begin({
+        button: 0,
+        mouseTrackingMode: "none",
+        pointerId: 2,
+        pointerType: "touch",
+        shiftKey: false,
+      }),
+    ).toBe(false);
+
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 3,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    state.markSelectionChanged();
+    state.cancelPointer(4);
+    expect(state.finish(3, "仍有效")).toBe("仍有效");
+
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 5,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    state.markSelectionChanged();
+    state.cancelPointer(5);
+    expect(state.finish(5, "已取消")).toBeNull();
+
+    state.begin({
+      button: 0,
+      mouseTrackingMode: "none",
+      pointerId: 6,
+      pointerType: "mouse",
+      shiftKey: false,
+    });
+    state.markSelectionChanged();
+    state.cancel();
+    expect(state.finish(6, "失焦或卸载后取消")).toBeNull();
+  });
+});
+
+describe("createSerialClipboardWriter", () => {
+  it("按选择完成顺序串行写入", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const calls: string[] = [];
+    const writer = createSerialClipboardWriter({
+      onError: vi.fn(),
+      writer: async (text) => {
+        calls.push(text);
+        if (text === "first") {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      },
+    });
+
+    const first = writer.write("first");
+    const second = writer.write("second");
+    await Promise.resolve();
+    expect(calls).toEqual(["first"]);
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(calls).toEqual(["first", "second"]);
+  });
+
+  it("写入失败报告错误且后续复制继续执行", async () => {
+    const onError = vi.fn();
+    const clipboard = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("clipboard busy"))
+      .mockResolvedValue(undefined);
+    const writer = createSerialClipboardWriter({ onError, writer: clipboard });
+
+    await writer.write("first");
+    await writer.write("second");
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(clipboard).toHaveBeenNthCalledWith(1, "first");
+    expect(clipboard).toHaveBeenNthCalledWith(2, "second");
   });
 });
 

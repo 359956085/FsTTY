@@ -7,6 +7,7 @@ import type {
   IBase64,
   IClipboardProvider,
 } from "@xterm/addon-clipboard";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ShortcutSettings } from "../../shared/api/types";
 import { DEFAULT_SHORTCUTS, matchesShortcut } from "../../shared/shortcuts";
 
@@ -97,6 +98,95 @@ export function writeSystemClipboard(text: string) {
 
 export function readSystemClipboard() {
   return readClipboardText();
+}
+
+type TerminalMouseTrackingMode = XTerm["modes"]["mouseTrackingMode"];
+
+interface TerminalMouseSelectionStart {
+  button: number;
+  mouseTrackingMode: TerminalMouseTrackingMode;
+  pointerId: number;
+  pointerType: string;
+  shiftKey: boolean;
+}
+
+export function createTerminalMouseSelectionCopyState() {
+  let pointerId: number | null = null;
+  let selectionChanged = false;
+
+  const cancel = () => {
+    pointerId = null;
+    selectionChanged = false;
+  };
+
+  const finishActiveSelection = (selection: string) => {
+    if (pointerId === null) {
+      return null;
+    }
+    const result = selectionChanged && selection ? selection : null;
+    cancel();
+    return result;
+  };
+
+  return {
+    begin({
+      button,
+      mouseTrackingMode,
+      pointerId: nextPointerId,
+      pointerType,
+      shiftKey,
+    }: TerminalMouseSelectionStart) {
+      cancel();
+      if (
+        pointerType !== "mouse" ||
+        button !== 0 ||
+        (mouseTrackingMode !== "none" && !shiftKey)
+      ) {
+        return false;
+      }
+      pointerId = nextPointerId;
+      return true;
+    },
+    markSelectionChanged() {
+      if (pointerId !== null) {
+        selectionChanged = true;
+      }
+    },
+    finish(releasedPointerId: number, selection: string) {
+      if (pointerId === null || pointerId !== releasedPointerId) {
+        return null;
+      }
+      return finishActiveSelection(selection);
+    },
+    finishMouse(selection: string) {
+      // MouseEvent 没有 pointerId；仅在左键 mouseup 后调用，活动状态仍负责过滤无效手势。
+      return finishActiveSelection(selection);
+    },
+    cancel,
+    cancelPointer(cancelledPointerId: number) {
+      if (pointerId === cancelledPointerId) {
+        cancel();
+      }
+    },
+  };
+}
+
+interface SerialClipboardWriterOptions {
+  onError: () => void;
+  writer?: (text: string) => Promise<void>;
+}
+
+export function createSerialClipboardWriter({
+  onError,
+  writer = writeSystemClipboard,
+}: SerialClipboardWriterOptions) {
+  let chain = Promise.resolve();
+  return {
+    write(text: string) {
+      chain = chain.then(() => writer(text)).catch(onError);
+      return chain;
+    },
+  };
 }
 
 interface TerminalClipboardShortcutEvent {

@@ -42,6 +42,8 @@ import {
 import {
   StrictClipboardBase64,
   TauriClipboardProvider,
+  createSerialClipboardWriter,
+  createTerminalMouseSelectionCopyState,
   readSystemClipboard,
   resolveTerminalClipboardShortcut,
   writeSystemClipboard,
@@ -610,6 +612,7 @@ export const TerminalPane = memo(function TerminalPane({
     let oscHandler: { dispose(): void } | null = null;
     let terminalInstance: XTerm | null = null;
     let disposeImeListeners: (() => void) | null = null;
+    let disposeMouseSelectionListeners: (() => void) | null = null;
     let remoteMouseListenersAttached = false;
     let resizeObserverActive = false;
     const terminalLoginInput = terminalLoginInputRef.current;
@@ -661,6 +664,82 @@ export const TerminalPane = memo(function TerminalPane({
         ),
       );
       terminal.open(container);
+      const mouseSelectionState = createTerminalMouseSelectionCopyState();
+      const mouseSelectionWriter = createSerialClipboardWriter({
+        onError: () => reportClipboardErrorRef.current(),
+      });
+      const selectionChangeSubscription = terminal.onSelectionChange(() => {
+        mouseSelectionState.markSelectionChanged();
+      });
+      const copyMouseSelection = (selection: string | null) => {
+        if (selection) {
+          // 自动复制保留高亮和焦点；连续选择由写入器串行提交，最后一次结果最终生效。
+          void mouseSelectionWriter.write(selection);
+        }
+      };
+      const handleMouseSelectionPointerDown = (event: PointerEvent) => {
+        const target = event.target;
+        if (
+          !activeRef.current ||
+          !visibleRef.current ||
+          !(target instanceof Node) ||
+          !container.contains(target)
+        ) {
+          mouseSelectionState.cancel();
+          return;
+        }
+        mouseSelectionState.begin({
+          button: event.button,
+          mouseTrackingMode: terminal.modes.mouseTrackingMode,
+          pointerId: event.pointerId,
+          pointerType: event.pointerType,
+          shiftKey: event.shiftKey,
+        });
+      };
+      const handleMouseSelectionPointerUp = (event: PointerEvent) => {
+        const releasedPointerId = event.pointerId;
+        // xterm 在紧随 pointerup 的 mouseup 中提交选区；下一任务仅作为 mouseup 丢失时的兜底。
+        window.setTimeout(() => {
+          if (disposed) {
+            mouseSelectionState.cancelPointer(releasedPointerId);
+            return;
+          }
+          copyMouseSelection(
+            mouseSelectionState.finish(releasedPointerId, terminal.getSelection()),
+          );
+        }, 0);
+      };
+      const handleMouseSelectionMouseUp = (event: MouseEvent) => {
+        if (event.button !== 0) {
+          return;
+        }
+        // window 冒泡阶段位于 xterm 的 document mouseup 之后；微任务再读取最终选区。
+        queueMicrotask(() => {
+          if (disposed) {
+            mouseSelectionState.cancel();
+            return;
+          }
+          copyMouseSelection(mouseSelectionState.finishMouse(terminal.getSelection()));
+        });
+      };
+      const handleMouseSelectionPointerCancel = (event: PointerEvent) => {
+        mouseSelectionState.cancelPointer(event.pointerId);
+      };
+      const cancelMouseSelection = () => mouseSelectionState.cancel();
+      window.addEventListener("pointerdown", handleMouseSelectionPointerDown, true);
+      window.addEventListener("pointerup", handleMouseSelectionPointerUp, true);
+      window.addEventListener("mouseup", handleMouseSelectionMouseUp);
+      window.addEventListener("pointercancel", handleMouseSelectionPointerCancel, true);
+      window.addEventListener("blur", cancelMouseSelection);
+      disposeMouseSelectionListeners = () => {
+        window.removeEventListener("pointerdown", handleMouseSelectionPointerDown, true);
+        window.removeEventListener("pointerup", handleMouseSelectionPointerUp, true);
+        window.removeEventListener("mouseup", handleMouseSelectionMouseUp);
+        window.removeEventListener("pointercancel", handleMouseSelectionPointerCancel, true);
+        window.removeEventListener("blur", cancelMouseSelection);
+        selectionChangeSubscription.dispose();
+        mouseSelectionState.cancel();
+      };
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();
       const syntheticMouseReleases = new WeakSet<Event>();
@@ -1099,6 +1178,8 @@ export const TerminalPane = memo(function TerminalPane({
       }
       disposeImeListeners?.();
       disposeImeListeners = null;
+      disposeMouseSelectionListeners?.();
+      disposeMouseSelectionListeners = null;
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
       const connection = connectionRef.current;
