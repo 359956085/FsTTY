@@ -18,18 +18,67 @@ function releaseDownloadUrl(repo, tag, fileName) {
   return `${CNB_WEB_BASE}/${encodeRepoPath(repo)}/-/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(fileName)}`;
 }
 
-function githubReleasePathPrefix(hostname, repo, tag) {
-  const releasePath = `${repo}/releases/download/${encodeURIComponent(tag)}/`;
-  if (hostname === "github.com") {
-    return `/${releasePath}`;
+async function buildSignaturePackageMap(files) {
+  const assetNames = new Set(files.map((file) => basename(file)));
+  const signaturePackages = new Map();
+  for (const signatureFile of files.filter((file) => file.endsWith(".sig"))) {
+    const signatureFileName = basename(signatureFile);
+    const packageFileName = signatureFileName.slice(0, -".sig".length);
+    if (!assetNames.has(packageFileName)) {
+      throw new Error(`签名文件缺少对应安装包：${signatureFileName}`);
+    }
+    const signature = (await readFile(signatureFile, "utf8")).trim();
+    if (!signature) {
+      throw new Error(`签名文件内容为空：${signatureFileName}`);
+    }
+    const existingPackage = signaturePackages.get(signature);
+    if (existingPackage && existingPackage !== packageFileName) {
+      throw new Error(
+        `签名内容对应多个安装包：${existingPackage}、${packageFileName}`,
+      );
+    }
+    signaturePackages.set(signature, packageFileName);
   }
-  if (hostname === "api.github.com") {
-    return `/repos/${releasePath}`;
-  }
-  return null;
+  return signaturePackages;
 }
 
-export function rewriteCnbUpdateManifest(manifest, repo, tag) {
+function githubReleaseFileName(sourceUrl, repo, tag, signature, signaturePackages) {
+  if (sourceUrl.username || sourceUrl.password || sourceUrl.port || sourceUrl.search || sourceUrl.hash) {
+    throw new Error("下载地址包含非预期认证、端口或参数");
+  }
+  if (sourceUrl.hostname === "github.com") {
+    const expectedPrefix = `/${repo}/releases/download/${encodeURIComponent(tag)}/`;
+    if (!sourceUrl.pathname.startsWith(expectedPrefix)) {
+      throw new Error("包含非预期仓库或标签");
+    }
+    const encodedFileName = sourceUrl.pathname.slice(expectedPrefix.length);
+    if (!encodedFileName || encodedFileName.includes("/")) {
+      throw new Error("下载文件名无效");
+    }
+    const fileName = decodeURIComponent(encodedFileName);
+    if (!fileName || fileName === "." || fileName === ".." || basename(fileName) !== fileName) {
+      throw new Error("下载文件名无效");
+    }
+    return fileName;
+  }
+  if (sourceUrl.hostname === "api.github.com") {
+    const expectedPrefix = `/repos/${repo}/releases/assets/`;
+    const assetId = sourceUrl.pathname.startsWith(expectedPrefix)
+      ? sourceUrl.pathname.slice(expectedPrefix.length)
+      : "";
+    if (!/^\d+$/.test(assetId)) {
+      throw new Error("包含非预期仓库或非数字资产 ID");
+    }
+    const packageFileName = signaturePackages.get(signature.trim());
+    if (!packageFileName) {
+      throw new Error("找不到与更新签名匹配的安装包");
+    }
+    return packageFileName;
+  }
+  throw new Error(`包含非预期下载域名：${sourceUrl.hostname}`);
+}
+
+export function rewriteCnbUpdateManifest(manifest, repo, tag, signaturePackages = new Map()) {
   if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
     throw new Error(`CNB 发布标签无效：${tag}`);
   }
@@ -58,19 +107,19 @@ export function rewriteCnbUpdateManifest(manifest, repo, tag) {
       if (sourceUrl.protocol !== "https:") {
         throw new Error(`latest.json 平台 ${platform} 下载地址必须使用 HTTPS`);
       }
-      const expectedPathPrefix = githubReleasePathPrefix(sourceUrl.hostname, repo, tag);
-      if (!expectedPathPrefix) {
-        // 只接受 GitHub 官方页面或 API 域名，避免把第三方清单地址带入国内更新源。
-        throw new Error(
-          `latest.json 平台 ${platform} 包含非预期下载域名：${sourceUrl.hostname}`,
+      let fileName;
+      try {
+        // Tauri 的 GitHub API 地址只有资产 ID，因此用签名内容关联本地安装包。
+        fileName = githubReleaseFileName(
+          sourceUrl,
+          repo,
+          tag,
+          item.signature,
+          signaturePackages,
         );
-      }
-      if (!sourceUrl.pathname.startsWith(expectedPathPrefix)) {
-        throw new Error(`latest.json 平台 ${platform} 包含非预期仓库或标签`);
-      }
-      const fileName = basename(decodeURIComponent(sourceUrl.pathname));
-      if (!fileName || fileName === "." || fileName === "/") {
-        throw new Error(`latest.json 平台 ${platform} 下载文件名无效`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`latest.json 平台 ${platform} ${reason}`);
       }
       return [
         platform,
@@ -180,6 +229,25 @@ export async function syncCnbRelease({
 }) {
   const client = new CnbClient(token, fetchImpl);
   const releaseBody = extractVersionReleaseNotes(changelog, tag);
+  const entries = await readdir(assetsDirectory, { withFileTypes: true });
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => join(assetsDirectory, entry.name));
+  const latestPath = files.find((file) => basename(file) === "latest.json");
+  if (!latestPath) {
+    throw new Error("GitHub Release 缺少 latest.json");
+  }
+  const originalManifest = JSON.parse(await readFile(latestPath, "utf8"));
+  const signaturePackages = await buildSignaturePackageMap(files);
+  const cnbManifest = rewriteCnbUpdateManifest(originalManifest, repo, tag, signaturePackages);
+  const assetNames = new Set(files.map((file) => basename(file)));
+  for (const platform of Object.values(cnbManifest.platforms)) {
+    const fileName = basename(new URL(platform.url).pathname);
+    if (!assetNames.has(fileName)) {
+      throw new Error(`GitHub Release 缺少更新包：${fileName}`);
+    }
+  }
+  const cnbManifestPath = join(assetsDirectory, "latest-cnb.json");
+  await writeFile(cnbManifestPath, `${JSON.stringify(cnbManifest, null, 2)}\n`, "utf8");
+
   const release = await client.ensureRelease(repo, {
     tag,
     commit,
@@ -194,24 +262,6 @@ export async function syncCnbRelease({
     body: "供 FsTTY 自动更新客户端读取的稳定元数据入口。",
     makeLatest: false,
   });
-
-  const entries = await readdir(assetsDirectory, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile()).map((entry) => join(assetsDirectory, entry.name));
-  const latestPath = files.find((file) => basename(file) === "latest.json");
-  if (!latestPath) {
-    throw new Error("GitHub Release 缺少 latest.json");
-  }
-  const originalManifest = JSON.parse(await readFile(latestPath, "utf8"));
-  const cnbManifest = rewriteCnbUpdateManifest(originalManifest, repo, tag);
-  const assetNames = new Set(files.map((file) => basename(file)));
-  for (const platform of Object.values(cnbManifest.platforms)) {
-    const fileName = basename(new URL(platform.url).pathname);
-    if (!assetNames.has(fileName)) {
-      throw new Error(`GitHub Release 缺少更新包：${fileName}`);
-    }
-  }
-  const cnbManifestPath = join(assetsDirectory, "latest-cnb.json");
-  await writeFile(cnbManifestPath, `${JSON.stringify(cnbManifest, null, 2)}\n`, "utf8");
 
   for (const file of files.filter((file) => basename(file) !== "latest.json")) {
     await client.uploadReleaseAsset(repo, release.id, file);
