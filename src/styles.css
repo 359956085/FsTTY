@@ -2318,12 +2318,12 @@ textarea:focus-visible,
 .settings-mcp-command-policy-open.active {
   border-color: transparent;
   background: transparent;
-  color: var(--accent);
+  color: #489ff7;
 }
 
 .settings-mcp-command-policy-open.active:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
-  color: var(--accent);
+  color: #489ff7;
 }
 
 .settings-mcp-permissions-header {

@@ -37,7 +37,7 @@ export function defaultMcpPermission(groupName: string): McpGroupPermission {
 }
 
 export function defaultMcpCommandPolicy(): McpCommandPolicy {
-  return { enabled: false, mode: "allow", rules: [] };
+  return { enabled: false, mode: "allow", allowRules: [], excludeRules: [] };
 }
 
 export function permissionFrom(
@@ -70,11 +70,20 @@ function commandPoliciesEqual(left: McpCommandPolicy, right: McpCommandPolicy): 
   return (
     left.enabled === right.enabled &&
     left.mode === right.mode &&
-    left.rules.length === right.rules.length &&
-    left.rules.every(
+    rulesEqual(left.allowRules, right.allowRules) &&
+    rulesEqual(left.excludeRules, right.excludeRules)
+  );
+}
+
+function rulesEqual(
+  left: McpCommandPolicy["allowRules"],
+  right: McpCommandPolicy["allowRules"],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
       (rule, index) =>
-        rule.matchType === right.rules[index]?.matchType &&
-        rule.pattern === right.rules[index]?.pattern,
+        rule.matchType === right[index]?.matchType && rule.pattern === right[index]?.pattern,
     )
   );
 }
@@ -88,9 +97,15 @@ export type McpCommandPolicyValidationError =
 export function validateMcpCommandPolicy(
   policy: McpCommandPolicy,
 ): McpCommandPolicyValidationError | null {
-  if (policy.rules.length > 100) return "tooMany";
+  if (policy.allowRules.length > 1000 || policy.excludeRules.length > 1000) return "tooMany";
+  return validateRules(policy.allowRules) ?? validateRules(policy.excludeRules);
+}
+
+function validateRules(
+  rules: McpCommandPolicy["allowRules"],
+): McpCommandPolicyValidationError | null {
   const seen = new Set<string>();
-  for (const rule of policy.rules) {
+  for (const rule of rules) {
     const pattern = rule.pattern.trim();
     if (!pattern) return "empty";
     if (
@@ -112,7 +127,11 @@ export function validateMcpCommandPolicy(
 export function normalizeMcpCommandPolicy(policy: McpCommandPolicy): McpCommandPolicy {
   return {
     ...policy,
-    rules: policy.rules.map((rule) => ({ ...rule, pattern: rule.pattern.trim() })),
+    allowRules: policy.allowRules.map((rule) => ({ ...rule, pattern: rule.pattern.trim() })),
+    excludeRules: policy.excludeRules.map((rule) => ({
+      ...rule,
+      pattern: rule.pattern.trim(),
+    })),
   };
 }
 

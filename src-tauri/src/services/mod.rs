@@ -3,6 +3,7 @@ mod connection_manager;
 mod connection_paths;
 mod credential_service;
 mod device_service;
+mod mcp_command_policy_service;
 mod mcp_support_service;
 mod session_service;
 mod session_structure;
@@ -15,6 +16,7 @@ use tokio::sync::Mutex;
 pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
+pub use mcp_command_policy_service::McpCommandPolicyService;
 pub use mcp_support_service::{McpAuditService, McpOperationLock, McpOperationLockService};
 pub use session_service::SessionService;
 pub use settings_service::SettingsService;
@@ -28,6 +30,7 @@ pub struct AppState {
     pub connection_manager: ConnectionManager,
     pub device_service: DeviceService,
     pub settings_service: Arc<StdMutex<SettingsService>>,
+    pub mcp_command_policy_service: Arc<StdMutex<McpCommandPolicyService>>,
     pub mcp_http_runtime: crate::mcp::McpHttpRuntime,
     pub mcp_audit_service: McpAuditService,
     pub mcp_operation_lock_service: McpOperationLockService,
@@ -36,6 +39,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(app_data_dir: PathBuf) -> Self {
         let log_directory = app_data_dir.join("logs");
+        let mut settings_service = SettingsService::load(&app_data_dir);
+        let legacy_permissions = settings_service.get().mcp_group_permissions;
+        let policy_service = McpCommandPolicyService::load(&app_data_dir, legacy_permissions);
+        if let Ok(permissions) = policy_service.list_permissions() {
+            if let Err(error) = settings_service.externalize_mcp_permissions(permissions) {
+                log::error!("无法从设置文件移除已迁移的 MCP 权限：{error}");
+            }
+        }
         Self {
             log_directory: log_directory.clone(),
             command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
@@ -45,7 +56,8 @@ impl AppState {
             credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new(&app_data_dir),
             device_service: DeviceService,
-            settings_service: Arc::new(StdMutex::new(SettingsService::load(&app_data_dir))),
+            settings_service: Arc::new(StdMutex::new(settings_service)),
+            mcp_command_policy_service: Arc::new(StdMutex::new(policy_service)),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),
             mcp_audit_service: McpAuditService::new(&log_directory),
             mcp_operation_lock_service: McpOperationLockService::new(&app_data_dir),

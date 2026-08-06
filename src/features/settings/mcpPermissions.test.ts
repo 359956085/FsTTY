@@ -20,7 +20,7 @@ describe("MCP 权限表单纯函数", () => {
       commandExecute: false,
       fileWrite: false,
       fileDelete: false,
-      commandPolicy: { enabled: false, mode: "allow", rules: [] },
+      commandPolicy: { enabled: false, mode: "allow", allowRules: [], excludeRules: [] },
     });
   });
 
@@ -34,7 +34,12 @@ describe("MCP 权限表单纯函数", () => {
     expect(
       permissionsChanged(
         groups,
-        [{ ...saved[0], commandPolicy: { enabled: true, mode: "allow", rules: [] } }],
+        [
+          {
+            ...saved[0],
+            commandPolicy: { enabled: true, mode: "allow", allowRules: [], excludeRules: [] },
+          },
+        ],
         saved,
       ),
     ).toBe(true);
@@ -45,26 +50,48 @@ describe("MCP 权限表单纯函数", () => {
       validateMcpCommandPolicy({
         enabled: true,
         mode: "allow",
-        rules: [{ matchType: "exact", pattern: "" }],
+        allowRules: [{ matchType: "exact", pattern: "" }],
+        excludeRules: [],
       }),
     ).toBe("empty");
     expect(
       validateMcpCommandPolicy({
         enabled: true,
         mode: "allow",
-        rules: [
+        allowRules: [
           { matchType: "glob", pattern: "git *" },
           { matchType: "glob", pattern: " git * " },
         ],
+        excludeRules: [],
       }),
     ).toBe("duplicate");
     expect(
       validateMcpCommandPolicy({
         enabled: true,
         mode: "exclude",
-        rules: [{ matchType: "exact", pattern: "echo\nsecret" }],
+        allowRules: [],
+        excludeRules: [{ matchType: "exact", pattern: "echo\nsecret" }],
       }),
     ).toBe("invalid");
+    expect(
+      validateMcpCommandPolicy({
+        enabled: true,
+        mode: "allow",
+        allowRules: [{ matchType: "exact", pattern: "pwd" }],
+        excludeRules: [{ matchType: "exact", pattern: "pwd" }],
+      }),
+    ).toBeNull();
+    expect(
+      validateMcpCommandPolicy({
+        enabled: true,
+        mode: "allow",
+        allowRules: Array.from({ length: 1001 }, (_, index) => ({
+          matchType: "exact" as const,
+          pattern: `command-${index}`,
+        })),
+        excludeRules: [],
+      }),
+    ).toBe("tooMany");
   });
 
   it("验证 HTTP 端口边界", () => {

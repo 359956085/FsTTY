@@ -51,7 +51,8 @@ export interface McpCommandRule {
 export interface McpCommandPolicy {
   enabled: boolean;
   mode: McpCommandPolicyMode;
-  rules: McpCommandRule[];
+  allowRules: McpCommandRule[];
+  excludeRules: McpCommandRule[];
 }
 
 export interface CommandHistoryEntry {

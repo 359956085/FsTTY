@@ -379,10 +379,17 @@ impl McpService {
             .list_groups(&self.state.credential_service)
             .await
             .map_err(mcp_error)?;
+        let permissions = self
+            .state
+            .mcp_command_policy_service
+            .lock()
+            .map_err(|_| McpError::internal_error("MCP 策略服务锁定失败", None))?
+            .list_permissions()
+            .map_err(mcp_error)?;
         let sessions = groups
             .into_iter()
             .filter(|group| {
-                permission(&settings.mcp_group_permissions, &group.name)
+                permission(&permissions, &group.name)
                     .is_some_and(|permission| permission.session_read)
             })
             .flat_map(|group| {
@@ -1083,19 +1090,26 @@ async fn authorized_session_context(
             AppError::NotFound(message) => McpAccessError::NotFound(message),
             error => McpAccessError::Internal(error.to_string()),
         })?;
-    let access = permission(&settings.mcp_group_permissions, &session.group).ok_or_else(|| {
-        McpAccessError::Forbidden(localized_access_error(
-            &settings.language,
-            AccessIssue::GroupDisabled,
-        ))
-    })?;
-    if !required.allowed(access) {
+    let access = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| McpAccessError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .permission(&session.group)
+        .map_err(|error| McpAccessError::Internal(error.to_string()))?
+        .filter(|permission| permission.enabled)
+        .ok_or_else(|| {
+            McpAccessError::Forbidden(localized_access_error(
+                &settings.language,
+                AccessIssue::GroupDisabled,
+            ))
+        })?;
+    if !required.allowed(&access) {
         return Err(McpAccessError::Forbidden(localized_access_error(
             &settings.language,
             AccessIssue::PermissionDenied,
         )));
     }
-    Ok((session, access.clone(), settings.language))
+    Ok((session, access, settings.language))
 }
 
 fn permission<'a>(
@@ -1772,8 +1786,12 @@ mod tests {
             Err(McpAccessError::Forbidden(_))
         ));
 
-        writer
-            .update_mcp(true, true, 37_653, vec![mcp_permission(true)])
+        stdio
+            .state
+            .mcp_command_policy_service
+            .lock()
+            .expect("策略服务应可锁定")
+            .replace_all(vec![mcp_permission(true)])
             .expect("授予命令权限失败");
         assert!(
             authorized_session(&stdio.state, &session_id, Permission::Command)
@@ -1786,8 +1804,12 @@ mod tests {
                 .is_ok()
         );
 
-        writer
-            .update_mcp(true, true, 37_653, vec![mcp_permission(false)])
+        stdio
+            .state
+            .mcp_command_policy_service
+            .lock()
+            .expect("策略服务应可锁定")
+            .replace_all(vec![mcp_permission(false)])
             .expect("撤销命令权限失败");
         assert!(matches!(
             authorized_session(&stdio.state, &session_id, Permission::Command).await,
@@ -1812,9 +1834,13 @@ mod tests {
         permission.command_policy = crate::models::McpCommandPolicy {
             enabled: true,
             mode: crate::models::McpCommandPolicyMode::Allow,
-            rules: vec![crate::models::McpCommandRule {
+            allow_rules: vec![crate::models::McpCommandRule {
                 match_type: crate::models::McpCommandMatchType::Glob,
                 pattern: "git status *".to_owned(),
+            }],
+            exclude_rules: vec![crate::models::McpCommandRule {
+                match_type: crate::models::McpCommandMatchType::Glob,
+                pattern: "rm *".to_owned(),
             }],
         };
         writer
@@ -1838,14 +1864,48 @@ mod tests {
         }
 
         permission.command_policy.mode = crate::models::McpCommandPolicyMode::Exclude;
-        writer
-            .update_mcp(true, true, 37_653, vec![permission])
+        stdio
+            .state
+            .mcp_command_policy_service
+            .lock()
+            .expect("策略服务应可锁定")
+            .replace_all(vec![permission])
             .expect("切换排除模式失败");
+        assert!(matches!(
+            authorized_command_session(&stdio.state, &session_id, "rm -rf /tmp/demo").await,
+            Err(McpAccessError::Forbidden(_))
+        ));
         assert!(
-            authorized_command_session(&stdio.state, &session_id, "rm -rf /tmp/demo")
+            authorized_command_session(&stdio.state, &session_id, "git status --short")
                 .await
                 .is_ok()
         );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn 策略数据库异常时命令授权失败关闭() {
+        let directory =
+            std::env::temp_dir().join(format!("fstty-command-policy-failed-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let session_id = Uuid::new_v4().to_string();
+        write_test_session(&directory, &session_id);
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .update_mcp(true, false, 37_653, vec![mcp_permission(true)])
+            .expect("保存初始权限失败");
+        let connection = rusqlite::Connection::open(directory.join("mcp-command-policy.v1.db"))
+            .expect("应创建策略数据库");
+        connection
+            .pragma_update(None, "user_version", 2)
+            .expect("应写入未来版本");
+        drop(connection);
+
+        let state = AppState::new(directory.clone());
+        assert!(matches!(
+            authorized_command_session(&state, &session_id, "pwd").await,
+            Err(McpAccessError::Internal(_))
+        ));
         let _ = std::fs::remove_dir_all(directory);
     }
 

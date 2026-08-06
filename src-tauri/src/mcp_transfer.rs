@@ -900,7 +900,7 @@ mod tests {
         url.rsplit('/').next().expect("链接应包含票据").to_owned()
     }
 
-    fn permission_runtime() -> (McpTransferRuntime, SettingsService, PathBuf, String) {
+    fn permission_runtime() -> (McpTransferRuntime, PathBuf, String) {
         let directory =
             std::env::temp_dir().join(format!("fstty-mcp-transfer-auth-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&directory).expect("无法创建测试目录");
@@ -948,7 +948,6 @@ mod tests {
         let state = AppState::new(directory.clone());
         (
             McpTransferRuntime::new(state, 37_653, CancellationToken::new()),
-            settings,
             directory,
             session_id,
         )
@@ -1084,7 +1083,7 @@ mod tests {
 
     #[tokio::test]
     async fn 下载和上传请求热加载撤销后的权限() {
-        let (runtime, mut settings, directory, session_id) = permission_runtime();
+        let (runtime, directory, session_id) = permission_runtime();
         let download = runtime
             .issue_download(
                 "http://127.0.0.1:37653",
@@ -1098,22 +1097,22 @@ mod tests {
             .issue_upload("http://127.0.0.1:37653", session_id, "/tmp".to_owned())
             .await
             .expect("无法签发上传票据");
-        settings
-            .update_mcp(
-                true,
-                true,
-                37_653,
-                vec![McpGroupPermission {
-                    group_name: "生产".to_owned(),
-                    enabled: true,
-                    session_read: true,
-                    file_read: false,
-                    command_execute: false,
-                    file_write: false,
-                    file_delete: false,
-                    command_policy: Default::default(),
-                }],
-            )
+        runtime
+            .inner
+            .state
+            .mcp_command_policy_service
+            .lock()
+            .expect("策略服务应可锁定")
+            .replace_all(vec![McpGroupPermission {
+                group_name: "生产".to_owned(),
+                enabled: true,
+                session_read: true,
+                file_read: false,
+                command_execute: false,
+                file_write: false,
+                file_delete: false,
+                command_policy: Default::default(),
+            }])
             .expect("无法撤销传输权限");
 
         let download_token = token_from_url(&download.url);

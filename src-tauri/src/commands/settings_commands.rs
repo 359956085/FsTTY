@@ -23,12 +23,12 @@ pub enum McpClientTarget {
 
 #[tauri::command]
 pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError> {
-    let service = state
+    let settings = state
         .settings_service
         .lock()
-        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-
-    Ok(service.get())
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .get();
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -50,7 +50,9 @@ pub fn set_language(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
 
-    service.set_language(language)
+    let settings = service.set_language(language)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -64,7 +66,9 @@ pub fn update_app_settings(
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    service.update(auto_update, update_proxy, allow_remote_clipboard_write)
+    let settings = service.update(auto_update, update_proxy, allow_remote_clipboard_write)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -76,7 +80,9 @@ pub fn update_log_settings(
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    service.update_log_settings(record_mcp_tool_inputs)
+    let settings = service.update_log_settings(record_mcp_tool_inputs)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -88,7 +94,9 @@ pub fn update_shortcut_settings(
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    service.update_shortcut_settings(shortcuts)
+    let settings = service.update_shortcut_settings(shortcuts)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -110,7 +118,9 @@ pub fn set_ignored_update_version(
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    service.set_ignored_update_version(version)
+    let settings = service.set_ignored_update_version(version)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
 }
 
 #[tauri::command]
@@ -126,18 +136,47 @@ pub async fn update_mcp_settings(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
         .get();
+    let previous_permissions = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .list_permissions()?;
+    let permissions = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .replace_all(group_permissions)?;
     let http_token = if enabled && http_enabled {
-        Some(crate::mcp::get_or_create_http_token(&state).await?)
+        match crate::mcp::get_or_create_http_token(&state).await {
+            Ok(token) => Some(token),
+            Err(error) => {
+                restore_mcp_permissions(&state, previous_permissions.clone())?;
+                return Err(error);
+            }
+        }
     } else {
         None
     };
-    let settings = {
+    let settings_result = {
         let mut service = state
             .settings_service
             .lock()
             .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-        service.update_mcp(enabled, http_enabled, http_port, group_permissions)?
+        service.update_mcp_transport(enabled, http_enabled, http_port)
     };
+    let mut settings = match settings_result {
+        Ok(settings) => settings,
+        Err(error) => {
+            restore_mcp_permissions(&state, previous_permissions.clone())?;
+            return Err(error);
+        }
+    };
+    settings.mcp_group_permissions = permissions.clone();
+    state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .set_mcp_permissions_in_memory(permissions);
     if settings.mcp_enabled && settings.mcp_http_enabled {
         let token = http_token
             .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
@@ -170,16 +209,16 @@ pub async fn update_mcp_settings(
                 "MCP HTTP 服务切换失败：port={}，error={error}",
                 settings.mcp_http_port
             );
-            let mut service = state
+            restore_mcp_permissions(&state, previous_permissions)?;
+            state
                 .settings_service
                 .lock()
-                .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-            service.update_mcp(
-                previous.mcp_enabled,
-                previous.mcp_http_enabled,
-                previous.mcp_http_port,
-                previous.mcp_group_permissions,
-            )?;
+                .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+                .update_mcp_transport(
+                    previous.mcp_enabled,
+                    previous.mcp_http_enabled,
+                    previous.mcp_http_port,
+                )?;
             return Err(error);
         }
         log::info!("MCP HTTP 服务运行：port={}", settings.mcp_http_port);
@@ -191,6 +230,35 @@ pub async fn update_mcp_settings(
         log::info!("MCP stdio 服务状态变更：enabled={}", settings.mcp_enabled);
     }
     Ok(settings)
+}
+
+fn hydrate_mcp_permissions(
+    state: &AppState,
+    mut settings: AppSettings,
+) -> Result<AppSettings, AppError> {
+    settings.mcp_group_permissions = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .list_permissions()?;
+    Ok(settings)
+}
+
+fn restore_mcp_permissions(
+    state: &AppState,
+    permissions: Vec<McpGroupPermission>,
+) -> Result<(), AppError> {
+    let permissions = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .replace_all(permissions)?;
+    state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .set_mcp_permissions_in_memory(permissions);
+    Ok(())
 }
 
 #[tauri::command]

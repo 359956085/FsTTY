@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,15 +56,53 @@ fn default_enabled() -> bool {
     true
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpCommandPolicy {
-    #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
     pub mode: McpCommandPolicyMode,
-    #[serde(default)]
-    pub rules: Vec<McpCommandRule>,
+    pub allow_rules: Vec<McpCommandRule>,
+    pub exclude_rules: Vec<McpCommandRule>,
+}
+
+impl<'de> Deserialize<'de> for McpCommandPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PolicyWire {
+            #[serde(default)]
+            enabled: bool,
+            #[serde(default)]
+            mode: McpCommandPolicyMode,
+            #[serde(default)]
+            allow_rules: Option<Vec<McpCommandRule>>,
+            #[serde(default)]
+            exclude_rules: Option<Vec<McpCommandRule>>,
+            #[serde(default)]
+            rules: Option<Vec<McpCommandRule>>,
+        }
+
+        let wire = PolicyWire::deserialize(deserializer)?;
+        if wire.rules.is_some() && (wire.allow_rules.is_some() || wire.exclude_rules.is_some()) {
+            return Err(D::Error::custom("高级命令策略不能同时包含新旧规则字段"));
+        }
+        let mut policy = Self {
+            enabled: wire.enabled,
+            mode: wire.mode,
+            allow_rules: wire.allow_rules.unwrap_or_default(),
+            exclude_rules: wire.exclude_rules.unwrap_or_default(),
+        };
+        if let Some(rules) = wire.rules {
+            match policy.mode {
+                McpCommandPolicyMode::Allow => policy.allow_rules = rules,
+                McpCommandPolicyMode::Exclude => policy.exclude_rules = rules,
+            }
+        }
+        Ok(policy)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -135,4 +173,34 @@ pub enum Language {
     ZhCn,
     #[serde(rename = "en-US")]
     EnUs,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 旧单名单按原模式迁入对应名单() {
+        let allow = serde_json::from_str::<McpCommandPolicy>(
+            r#"{"enabled":true,"mode":"allow","rules":[{"matchType":"exact","pattern":"pwd"}]}"#,
+        )
+        .expect("应读取旧白名单");
+        assert_eq!(allow.allow_rules.len(), 1);
+        assert!(allow.exclude_rules.is_empty());
+
+        let exclude = serde_json::from_str::<McpCommandPolicy>(
+            r#"{"enabled":true,"mode":"exclude","rules":[{"matchType":"glob","pattern":"rm *"}]}"#,
+        )
+        .expect("应读取旧黑名单");
+        assert!(exclude.allow_rules.is_empty());
+        assert_eq!(exclude.exclude_rules.len(), 1);
+    }
+
+    #[test]
+    fn 新旧规则字段不能混用() {
+        assert!(serde_json::from_str::<McpCommandPolicy>(
+            r#"{"mode":"allow","rules":[],"allowRules":[],"excludeRules":[]}"#,
+        )
+        .is_err());
+    }
 }

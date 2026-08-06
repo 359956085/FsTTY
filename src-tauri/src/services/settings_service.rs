@@ -1,4 +1,4 @@
-use crate::mcp_command_policy::{normalize_policy, MAX_TOTAL_PATTERN_BYTES, MAX_TOTAL_RULES};
+use crate::mcp_command_policy::normalize_policy;
 use crate::models::{
     AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
 };
@@ -36,6 +36,7 @@ pub struct SettingsService {
     backup_path: PathBuf,
     temp_path: PathBuf,
     primary_trusted: bool,
+    mcp_permissions_externalized: bool,
 }
 
 impl SettingsService {
@@ -62,6 +63,7 @@ impl SettingsService {
             backup_path,
             temp_path,
             primary_trusted,
+            mcp_permissions_externalized: false,
         }
     }
 
@@ -70,15 +72,29 @@ impl SettingsService {
     }
 
     pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
-        // MCP 独立进程需要同步语言、权限和审计开关；主文件异常时必须失败关闭，不能回退旧授权。
+        // MCP 独立进程只从设置文件同步通用运行时字段；授权由独立数据库实时读取。
         let store = read_store(&self.store_path)?
             .ok_or_else(|| AppError::Persistence("MCP 权限设置文件不存在".to_owned()))?;
-        let permissions = validate_mcp_permissions(store.settings.mcp_group_permissions)
-            .map_err(|_| AppError::Persistence("MCP 分组权限数据无效".to_owned()))?;
         self.settings.language = store.settings.language;
-        self.settings.mcp_group_permissions = permissions;
+        if !self.mcp_permissions_externalized {
+            self.settings.mcp_group_permissions = store.settings.mcp_group_permissions;
+        }
         self.settings.record_mcp_tool_inputs = store.settings.record_mcp_tool_inputs;
         Ok(())
+    }
+
+    pub fn externalize_mcp_permissions(
+        &mut self,
+        permissions: Vec<McpGroupPermission>,
+    ) -> Result<(), AppError> {
+        let permissions = validate_mcp_permissions(permissions)?;
+        self.settings.mcp_group_permissions = permissions;
+        self.mcp_permissions_externalized = true;
+        self.persist()
+    }
+
+    pub fn set_mcp_permissions_in_memory(&mut self, permissions: Vec<McpGroupPermission>) {
+        self.settings.mcp_group_permissions = permissions;
     }
 
     pub fn set_language(&mut self, language: Language) -> Result<AppSettings, AppError> {
@@ -101,6 +117,7 @@ impl SettingsService {
         self.replace(next)
     }
 
+    #[cfg(test)]
     pub fn update_mcp(
         &mut self,
         enabled: bool,
@@ -117,6 +134,22 @@ impl SettingsService {
         next.mcp_http_enabled = http_enabled;
         next.mcp_http_port = http_port;
         next.mcp_group_permissions = group_permissions;
+        self.replace(next)
+    }
+
+    pub fn update_mcp_transport(
+        &mut self,
+        enabled: bool,
+        http_enabled: bool,
+        http_port: u16,
+    ) -> Result<AppSettings, AppError> {
+        if http_port == 0 {
+            return Err(AppError::Validation("MCP HTTP 端口无效".to_owned()));
+        }
+        let mut next = self.settings.clone();
+        next.mcp_enabled = enabled;
+        next.mcp_http_enabled = http_enabled;
+        next.mcp_http_port = http_port;
         self.replace(next)
     }
 
@@ -137,31 +170,6 @@ impl SettingsService {
         let mut next = self.settings.clone();
         next.shortcuts = shortcuts;
         self.replace(next)
-    }
-
-    pub fn rename_mcp_group(&mut self, old_name: &str, new_name: &str) -> Result<(), AppError> {
-        let mut next = self.settings.clone();
-        if let Some(permission) = next
-            .mcp_group_permissions
-            .iter_mut()
-            .find(|permission| permission.group_name == old_name)
-        {
-            permission.group_name = new_name.to_owned();
-            next.mcp_group_permissions = validate_mcp_permissions(next.mcp_group_permissions)?;
-            self.replace(next)?;
-        }
-        Ok(())
-    }
-
-    pub fn delete_mcp_group(&mut self, group_name: &str) -> Result<(), AppError> {
-        let mut next = self.settings.clone();
-        let original_len = next.mcp_group_permissions.len();
-        next.mcp_group_permissions
-            .retain(|permission| permission.group_name != group_name);
-        if next.mcp_group_permissions.len() != original_len {
-            self.replace(next)?;
-        }
-        Ok(())
     }
 
     pub fn set_ignored_update_version(&mut self, version: String) -> Result<AppSettings, AppError> {
@@ -187,9 +195,13 @@ impl SettingsService {
                 .ok_or_else(|| AppError::Persistence("设置存储目录无效".to_owned()))?,
         )
         .map_err(|_| AppError::Persistence("无法创建设置存储目录".to_owned()))?;
+        let mut stored_settings = self.settings.clone();
+        if self.mcp_permissions_externalized {
+            stored_settings.mcp_group_permissions.clear();
+        }
         let content = serde_json::to_vec_pretty(&SettingsStore {
             version: STORE_VERSION,
-            settings: self.settings.clone(),
+            settings: stored_settings,
         })
         .map_err(|_| AppError::Persistence("无法序列化设置数据".to_owned()))?;
         if content.len() as u64 > MAX_STORE_BYTES {
@@ -320,8 +332,6 @@ fn validate_mcp_permissions(
         return Err(AppError::Validation("MCP 分组权限数量过多".to_owned()));
     }
     let mut result = Vec::with_capacity(permissions.len());
-    let mut total_rules = 0usize;
-    let mut total_pattern_bytes = 0usize;
     for permission in permissions {
         let name = permission.group_name.trim();
         if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
@@ -334,17 +344,6 @@ fn validate_mcp_permissions(
             return Err(AppError::Validation("MCP 分组权限重复".to_owned()));
         }
         let command_policy = normalize_policy(permission.command_policy)?;
-        total_rules += command_policy.rules.len();
-        total_pattern_bytes += command_policy
-            .rules
-            .iter()
-            .map(|rule| rule.pattern.len())
-            .sum::<usize>();
-        if total_rules > MAX_TOTAL_RULES || total_pattern_bytes > MAX_TOTAL_PATTERN_BYTES {
-            return Err(AppError::Validation(
-                "高级命令规则总数或正文总大小超过限制".to_owned(),
-            ));
-        }
         result.push(McpGroupPermission {
             group_name: name.to_owned(),
             command_policy,
@@ -469,6 +468,24 @@ mod tests {
         assert!(restored.mcp_enabled);
         assert!(restored.mcp_http_enabled);
         assert_eq!(restored.mcp_group_permissions, vec![permission]);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 外置权限后设置文件不再保存规则正文() {
+        let directory = test_directory("settings-mcp-externalized");
+        let mut service = SettingsService::load(&directory);
+        let permission = mcp_permission(true);
+        service
+            .update_mcp(true, false, 37_653, vec![permission.clone()])
+            .expect("应保存旧权限");
+        service
+            .externalize_mcp_permissions(vec![permission.clone()])
+            .expect("应外置权限");
+
+        let content = fs::read_to_string(directory.join(STORE_FILE)).expect("应读取设置文件");
+        assert!(!content.contains("生产"));
+        assert_eq!(service.get().mcp_group_permissions, vec![permission]);
         let _ = fs::remove_dir_all(directory);
     }
 

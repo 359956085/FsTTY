@@ -108,12 +108,12 @@ pub async fn rename_session_group(
         .lock()
         .await
         .rename_group(&group_name, &new_name)?;
-    let settings_result = state
-        .settings_service
+    let policy_result = state
+        .mcp_command_policy_service
         .lock()
-        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-        .rename_mcp_group(&group_name, &new_name);
-    if let Err(error) = settings_result {
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .rename_group(&group_name, &new_name);
+    if let Err(error) = policy_result {
         let _ = state
             .session_service
             .lock()
@@ -136,16 +136,16 @@ pub async fn delete_session_group(
             .await
             .session_ids_in_group(&group_name)?
     };
-    let previous_settings = state
-        .settings_service
+    let previous_permissions = state
+        .mcp_command_policy_service
         .lock()
-        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-        .get();
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .list_permissions()?;
     state
-        .settings_service
+        .mcp_command_policy_service
         .lock()
-        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-        .delete_mcp_group(&group_name)?;
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .delete_group(&group_name)?;
     for session_id in &session_ids {
         state
             .connection_manager
@@ -160,15 +160,10 @@ pub async fn delete_session_group(
         .await;
     if result.is_err() {
         let _ = state
-            .settings_service
+            .mcp_command_policy_service
             .lock()
-            .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-            .update_mcp(
-                previous_settings.mcp_enabled,
-                previous_settings.mcp_http_enabled,
-                previous_settings.mcp_http_port,
-                previous_settings.mcp_group_permissions,
-            );
+            .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+            .replace_all(previous_permissions);
     }
     result
 }

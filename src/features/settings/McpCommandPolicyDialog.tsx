@@ -61,7 +61,9 @@ export function McpCommandPolicyDialog({
     { value: "exact", label: t("settings.mcpCommandPolicyExact") },
     { value: "glob", label: t("settings.mcpCommandPolicyGlob") },
   ] as const;
-  const displayedRules = draft.rules
+  const activeRules = draft.mode === "allow" ? draft.allowRules : draft.excludeRules;
+  const activeRulesField = draft.mode === "allow" ? "allowRules" : "excludeRules";
+  const displayedRules = activeRules
     .map((rule, ruleIndex) => ({ rule, ruleIndex }))
     .reverse();
 
@@ -71,7 +73,7 @@ export function McpCommandPolicyDialog({
       current
         ? {
             ...current,
-            rules: current.rules.map((rule, ruleIndex) =>
+            [activeRulesField]: current[activeRulesField].map((rule, ruleIndex) =>
               ruleIndex === index ? { ...rule, ...patch } : rule,
             ),
           }
@@ -213,13 +215,16 @@ export function McpCommandPolicyDialog({
                 {t("settings.mcpCommandPolicyExport")}
               </Button>
               <Button
-                disabled={busy || draft.rules.length >= 100}
+                disabled={busy || activeRules.length >= 1000}
                 icon={<Plus aria-hidden="true" size={15} />}
                 onClick={() => {
                   setError(null);
                   setDraft({
                     ...draft,
-                    rules: [...draft.rules, { matchType: "exact", pattern: "" }],
+                    [activeRulesField]: [
+                      ...activeRules,
+                      { matchType: "exact", pattern: "" },
+                    ],
                   });
                 }}
               >
@@ -233,7 +238,7 @@ export function McpCommandPolicyDialog({
           </div>
 
           <div className="settings-mcp-command-policy-rules">
-            {draft.rules.length === 0 ? (
+            {activeRules.length === 0 ? (
               <div className="settings-mcp-command-policy-empty">
                 {t(
                   draft.mode === "allow"
@@ -281,7 +286,7 @@ export function McpCommandPolicyDialog({
                       setError(null);
                       setDraft({
                         ...draft,
-                        rules: draft.rules.filter(
+                        [activeRulesField]: activeRules.filter(
                           (_, currentRuleIndex) => currentRuleIndex !== ruleIndex,
                         ),
                       });
@@ -316,7 +321,11 @@ export function McpCommandPolicyDialog({
 }
 
 function clonePolicy(policy: McpCommandPolicy): McpCommandPolicy {
-  return { ...policy, rules: policy.rules.map((rule) => ({ ...rule })) };
+  return {
+    ...policy,
+    allowRules: policy.allowRules.map((rule) => ({ ...rule })),
+    excludeRules: policy.excludeRules.map((rule) => ({ ...rule })),
+  };
 }
 
 function defaultExportName() {

@@ -67,14 +67,15 @@ describe("McpCommandPolicyDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith({
       enabled: true,
       mode: "allow",
-      rules: [{ matchType: "glob", pattern: "git status *" }],
+      allowRules: [{ matchType: "glob", pattern: "git status *" }],
+      excludeRules: [],
     });
   });
 
   it("规则倒序显示且新建、编辑和删除映射到原数组", () => {
     const onConfirm = vi.fn();
     const permission = defaultMcpPermission("prod");
-    permission.commandPolicy.rules = [
+    permission.commandPolicy.allowRules = [
       { matchType: "exact", pattern: "first" },
       { matchType: "glob", pattern: "second *" },
     ];
@@ -113,10 +114,11 @@ describe("McpCommandPolicyDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith({
       enabled: false,
       mode: "allow",
-      rules: [
+      allowRules: [
         { matchType: "exact", pattern: "first" },
         { matchType: "exact", pattern: "newest" },
       ],
+      excludeRules: [],
     });
   });
 
@@ -125,8 +127,8 @@ describe("McpCommandPolicyDialog", () => {
     mocks.importPolicy.mockResolvedValue({
       enabled: true,
       mode: "exclude",
-      rules: [
-        { matchType: "exact", pattern: "pwd" },
+      allowRules: [{ matchType: "exact", pattern: "pwd" }],
+      excludeRules: [
         { matchType: "glob", pattern: "rm *" },
       ],
     });
@@ -147,7 +149,7 @@ describe("McpCommandPolicyDialog", () => {
       screen
         .getAllByLabelText("settings.mcpCommandPolicyPattern")
         .map((input) => (input as HTMLInputElement).value),
-    ).toEqual(["rm *", "pwd"]);
+    ).toEqual(["rm *"]);
     expect(screen.getByLabelText("settings.mcpCommandPolicyMode").textContent).toContain(
       "settings.mcpCommandPolicyExclude",
     );
@@ -157,10 +159,8 @@ describe("McpCommandPolicyDialog", () => {
       expect(mocks.exportPolicy).toHaveBeenCalledWith("C:\\export.json", {
         enabled: true,
         mode: "exclude",
-        rules: [
-          { matchType: "exact", pattern: "pwd" },
-          { matchType: "glob", pattern: "rm *" },
-        ],
+        allowRules: [{ matchType: "exact", pattern: "pwd" }],
+        excludeRules: [{ matchType: "glob", pattern: "rm *" }],
       }),
     );
   });
@@ -191,6 +191,47 @@ describe("McpCommandPolicyDialog", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "settings.mcpCommandPolicyComplete" }),
     );
-    expect(onConfirm).toHaveBeenCalledWith({ enabled: false, mode: "exclude", rules: [] });
+    expect(onConfirm).toHaveBeenCalledWith({
+      enabled: false,
+      mode: "exclude",
+      allowRules: [],
+      excludeRules: [],
+    });
+  });
+
+  it("切换名单保留两份草稿且只编辑当前名单", () => {
+    const onConfirm = vi.fn();
+    const permission = defaultMcpPermission("prod");
+    permission.commandPolicy.allowRules = [{ matchType: "exact", pattern: "pwd" }];
+    permission.commandPolicy.excludeRules = [{ matchType: "glob", pattern: "rm *" }];
+    render(
+      <McpCommandPolicyDialog
+        groupName="prod"
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+        permission={permission}
+      />,
+    );
+
+    const mode = screen.getByLabelText("settings.mcpCommandPolicyMode");
+    fireEvent.click(mode);
+    fireEvent.click(screen.getByRole("option", { name: "settings.mcpCommandPolicyExclude" }));
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpCommandPolicyAdd" }));
+    fireEvent.change(screen.getAllByLabelText("settings.mcpCommandPolicyPattern")[0], {
+      target: { value: "shutdown *" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.mcpCommandPolicyComplete" }),
+    );
+
+    expect(onConfirm).toHaveBeenCalledWith({
+      enabled: false,
+      mode: "exclude",
+      allowRules: [{ matchType: "exact", pattern: "pwd" }],
+      excludeRules: [
+        { matchType: "glob", pattern: "rm *" },
+        { matchType: "exact", pattern: "shutdown *" },
+      ],
+    });
   });
 });

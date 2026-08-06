@@ -8,12 +8,10 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
-pub const MAX_RULES_PER_GROUP: usize = 100;
-pub const MAX_TOTAL_RULES: usize = 500;
+pub const MAX_RULES_PER_LIST: usize = 1_000;
 pub const MAX_PATTERN_BYTES: usize = 4 * 1024;
-pub const MAX_TOTAL_PATTERN_BYTES: usize = 128 * 1024;
-const POLICY_FILE_VERSION: u8 = 1;
-const MAX_POLICY_FILE_BYTES: u64 = 256 * 1024;
+const POLICY_FILE_VERSION: u8 = 2;
+const MAX_POLICY_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,7 +19,8 @@ struct McpCommandPolicyDocument {
     version: u8,
     enabled: bool,
     mode: McpCommandPolicyMode,
-    rules: Vec<McpCommandRule>,
+    allow_rules: Vec<McpCommandRule>,
+    exclude_rules: Vec<McpCommandRule>,
 }
 
 impl From<McpCommandPolicy> for McpCommandPolicyDocument {
@@ -30,7 +29,8 @@ impl From<McpCommandPolicy> for McpCommandPolicyDocument {
             version: POLICY_FILE_VERSION,
             enabled: policy.enabled,
             mode: policy.mode,
-            rules: policy.rules,
+            allow_rules: policy.allow_rules,
+            exclude_rules: policy.exclude_rules,
         }
     }
 }
@@ -40,19 +40,26 @@ impl From<McpCommandPolicyDocument> for McpCommandPolicy {
         Self {
             enabled: document.enabled,
             mode: document.mode,
-            rules: document.rules,
+            allow_rules: document.allow_rules,
+            exclude_rules: document.exclude_rules,
         }
     }
 }
 
 pub fn normalize_policy(mut policy: McpCommandPolicy) -> Result<McpCommandPolicy, AppError> {
-    if policy.rules.len() > MAX_RULES_PER_GROUP {
-        return Err(AppError::Validation(
-            "单个分组的高级命令规则不能超过 100 条".to_owned(),
-        ));
+    normalize_rules(&mut policy.allow_rules, "白名单")?;
+    normalize_rules(&mut policy.exclude_rules, "黑名单")?;
+    Ok(policy)
+}
+
+fn normalize_rules(rules: &mut [McpCommandRule], list_name: &str) -> Result<(), AppError> {
+    if rules.len() > MAX_RULES_PER_LIST {
+        return Err(AppError::Validation(format!(
+            "单个分组的{list_name}规则不能超过 1000 条"
+        )));
     }
-    let mut seen = HashSet::with_capacity(policy.rules.len());
-    for rule in &mut policy.rules {
+    let mut seen = HashSet::with_capacity(rules.len());
+    for rule in rules {
         let pattern = rule.pattern.trim();
         if pattern.is_empty()
             || pattern.len() > MAX_PATTERN_BYTES
@@ -67,7 +74,7 @@ pub fn normalize_policy(mut policy: McpCommandPolicy) -> Result<McpCommandPolicy
             return Err(AppError::Validation("高级命令规则重复".to_owned()));
         }
     }
-    Ok(policy)
+    Ok(())
 }
 
 pub fn command_allowed(policy: &McpCommandPolicy, command: &str) -> bool {
@@ -75,7 +82,11 @@ pub fn command_allowed(policy: &McpCommandPolicy, command: &str) -> bool {
         return true;
     }
     let command = command.trim();
-    let matched = policy.rules.iter().any(|rule| match rule.match_type {
+    let rules = match policy.mode {
+        McpCommandPolicyMode::Allow => &policy.allow_rules,
+        McpCommandPolicyMode::Exclude => &policy.exclude_rules,
+    };
+    let matched = rules.iter().any(|rule| match rule.match_type {
         McpCommandMatchType::Exact => command == rule.pattern,
         McpCommandMatchType::Glob => glob_matches(&rule.pattern, command),
     });
@@ -91,16 +102,20 @@ pub fn import_policy(path: &Path) -> Result<McpCommandPolicy, AppError> {
         .map_err(|error| AppError::Persistence(format!("无法读取高级命令策略文件：{error}")))?;
     if !metadata.is_file() || metadata.len() > MAX_POLICY_FILE_BYTES {
         return Err(AppError::Validation(
-            "高级命令策略文件无效或超过 256 KiB".to_owned(),
+            "高级命令策略文件无效或超过 16 MiB".to_owned(),
         ));
     }
     let content = fs::read(path)
         .map_err(|error| AppError::Persistence(format!("无法读取高级命令策略文件：{error}")))?;
-    let document = serde_json::from_slice::<McpCommandPolicyDocument>(&content)
+    let value = serde_json::from_slice::<serde_json::Value>(&content)
         .map_err(|error| AppError::Validation(format!("高级命令策略 JSON 无效：{error}")))?;
-    if document.version != POLICY_FILE_VERSION {
+    if value.get("version").and_then(serde_json::Value::as_u64)
+        != Some(u64::from(POLICY_FILE_VERSION))
+    {
         return Err(AppError::Validation("高级命令策略版本不受支持".to_owned()));
     }
+    let document = serde_json::from_value::<McpCommandPolicyDocument>(value)
+        .map_err(|error| AppError::Validation(format!("高级命令策略 JSON 无效：{error}")))?;
     normalize_policy(document.into())
 }
 
@@ -243,7 +258,8 @@ mod tests {
         let policy = McpCommandPolicy {
             enabled: true,
             mode: McpCommandPolicyMode::Allow,
-            rules: vec![rule(McpCommandMatchType::Exact, "pwd")],
+            allow_rules: vec![rule(McpCommandMatchType::Exact, "pwd")],
+            exclude_rules: Vec::new(),
         };
         assert!(command_allowed(&policy, "  pwd \n"));
         assert!(!command_allowed(&policy, "PWD"));
@@ -262,7 +278,8 @@ mod tests {
         let mut policy = McpCommandPolicy {
             enabled: true,
             mode: McpCommandPolicyMode::Allow,
-            rules: Vec::new(),
+            allow_rules: Vec::new(),
+            exclude_rules: Vec::new(),
         };
         assert!(!command_allowed(&policy, "pwd"));
         policy.mode = McpCommandPolicyMode::Exclude;
@@ -276,17 +293,20 @@ mod tests {
         let normalized = normalize_policy(McpCommandPolicy {
             enabled: true,
             mode: McpCommandPolicyMode::Allow,
-            rules: vec![rule(McpCommandMatchType::Exact, " pwd ")],
+            allow_rules: vec![rule(McpCommandMatchType::Exact, " pwd ")],
+            exclude_rules: vec![rule(McpCommandMatchType::Exact, " pwd ")],
         })
         .expect("规则应有效");
-        assert_eq!(normalized.rules[0].pattern, "pwd");
+        assert_eq!(normalized.allow_rules[0].pattern, "pwd");
+        assert_eq!(normalized.exclude_rules[0].pattern, "pwd");
         assert!(normalize_policy(McpCommandPolicy {
             enabled: true,
             mode: McpCommandPolicyMode::Allow,
-            rules: vec![
+            allow_rules: vec![
                 rule(McpCommandMatchType::Exact, "pwd"),
                 rule(McpCommandMatchType::Exact, " pwd "),
             ],
+            exclude_rules: Vec::new(),
         })
         .is_err());
     }
@@ -299,14 +319,27 @@ mod tests {
         let policy = McpCommandPolicy {
             enabled: true,
             mode: McpCommandPolicyMode::Exclude,
-            rules: vec![rule(McpCommandMatchType::Glob, "rm *")],
+            allow_rules: vec![rule(McpCommandMatchType::Exact, "pwd")],
+            exclude_rules: vec![rule(McpCommandMatchType::Glob, "rm *")],
         };
         export_policy(&path, policy.clone()).expect("应导出策略");
+        let exported = fs::read_to_string(&path).expect("应读取导出文件");
+        assert!(exported.contains("\"version\": 2"));
+        assert!(exported.contains("\"allowRules\""));
+        assert!(exported.contains("\"excludeRules\""));
         assert_eq!(import_policy(&path).expect("应导入策略"), policy);
 
-        fs::write(&path, br#"{"version":1,"enabled":true,"mode":"allow","rules":[{"matchType":"exact","pattern":""}]}"#)
-            .expect("应写入损坏策略");
-        assert!(import_policy(&path).is_err());
+        fs::write(
+            &path,
+            br#"{"version":1,"enabled":true,"mode":"allow","rules":[]}"#,
+        )
+        .expect("应写入旧版策略");
+        assert_eq!(
+            import_policy(&path)
+                .expect_err("应拒绝旧版策略")
+                .to_string(),
+            "高级命令策略版本不受支持"
+        );
         let _ = fs::remove_dir_all(directory);
     }
 }
