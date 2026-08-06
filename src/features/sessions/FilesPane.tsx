@@ -33,7 +33,6 @@ import {
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
 import { resolveApiError } from "../../shared/api/errors";
-import { createLatestRequestGuard } from "../../shared/async/latestRequest";
 import { Button } from "../../shared/ui/Button";
 import type { TransferProgress } from "./useSessionConnections";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
@@ -59,6 +58,11 @@ import {
   updateWorkspacePreferences,
   type FileColumnPreferences,
 } from "./workspacePreferences";
+import { createRemoteEntryDragController } from "./remoteEntryDrag";
+import {
+  createFileOperationController,
+  normalizeRemoteEntryName,
+} from "./fileOperationController";
 
 type ResizableFileColumn = "name" | "size" | "modified";
 const RESIZABLE_FILE_COLUMNS: readonly ResizableFileColumn[] = [
@@ -68,7 +72,6 @@ const RESIZABLE_FILE_COLUMNS: readonly ResizableFileColumn[] = [
 ];
 
 const FILE_COLUMN_KEYBOARD_STEP = 8;
-const REMOTE_ENTRY_DRAG_THRESHOLD = 5;
 
 function clampFileColumn(column: ResizableFileColumn, value: number) {
   const limits = FILE_COLUMN_LIMITS[column];
@@ -115,14 +118,6 @@ type FileOperationDialog =
 interface RemoteEntryDrag {
   source: FileEntry;
   targetDirectory: string | null;
-}
-
-interface RemoteEntryPointerDrag extends RemoteEntryDrag {
-  captureTarget: HTMLDivElement;
-  dragging: boolean;
-  pointerId: number;
-  startX: number;
-  startY: number;
 }
 
 interface InlineRenameState {
@@ -173,16 +168,19 @@ export function FilesPane({
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
   const inlineRenameRef = useRef<InlineRenameState | null>(null);
   const inlineRenameInputRef = useRef<HTMLInputElement>(null);
-  const inlineRenameOperationRef = useRef(createLatestRequestGuard());
-  const inlineRenameSubmittingRef = useRef(false);
+  const operationControllerRef = useRef(createFileOperationController());
   const fileNameClickRef = useRef<FileNameClick | null>(null);
   const filePointerIntentRef = useRef<FilePointerIntent | null>(null);
   const [operationPending, setOperationPending] = useState(false);
   const [dragUploadActive, setDragUploadActive] = useState(false);
   const [remoteDrag, setRemoteDrag] = useState<RemoteEntryDrag | null>(null);
-  const remotePointerDragRef = useRef<RemoteEntryPointerDrag | null>(null);
+  const remoteDragControllerRef = useRef<ReturnType<
+    typeof createRemoteEntryDragController
+  > | null>(null);
+  remoteDragControllerRef.current ??= createRemoteEntryDragController({
+    onChange: setRemoteDrag,
+  });
   const suppressRemoteClickRef = useRef(false);
-  const moveOperationRef = useRef(createLatestRequestGuard());
   const moveSuccessTimerRef = useRef<number | null>(null);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
   const [moveRequestPending, setMoveRequestPending] = useState(false);
@@ -200,7 +198,7 @@ export function FilesPane({
   dragUploadRef.current = { enabled: !operationBlocked, onUploadFiles };
 
   const clearMoveFeedback = useCallback(() => {
-    moveOperationRef.current.invalidate();
+    operationControllerRef.current.cancel("move");
     if (moveSuccessTimerRef.current !== null) {
       window.clearTimeout(moveSuccessTimerRef.current);
       moveSuccessTimerRef.current = null;
@@ -211,18 +209,13 @@ export function FilesPane({
   const cancelInlineRename = useCallback(() => {
     fileNameClickRef.current = null;
     filePointerIntentRef.current = null;
-    inlineRenameOperationRef.current.invalidate();
+    operationControllerRef.current.cancel("inlineRename");
     inlineRenameRef.current = null;
     setInlineRename(null);
   }, []);
 
   const finishRemoteDrag = useCallback(() => {
-    const drag = remotePointerDragRef.current;
-    remotePointerDragRef.current = null;
-    if (drag?.captureTarget.hasPointerCapture(drag.pointerId)) {
-      drag.captureTarget.releasePointerCapture(drag.pointerId);
-    }
-    setRemoteDrag(null);
+    remoteDragControllerRef.current?.cancel();
     setDragUploadActive(false);
   }, []);
 
@@ -284,8 +277,7 @@ export function FilesPane({
     let disposed = false;
     let removeDragDropListener: () => void = () => undefined;
     let removeScaleListener: () => void = () => undefined;
-    const inlineRenameOperation = inlineRenameOperationRef.current;
-    const moveOperation = moveOperationRef.current;
+    const operationController = operationControllerRef.current;
     const handleWindowBlur = () => {
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
@@ -344,13 +336,12 @@ export function FilesPane({
       removeDragDropListener();
       removeScaleListener();
       window.removeEventListener("blur", handleWindowBlur);
-      remotePointerDragRef.current = null;
+      remoteDragControllerRef.current?.dispose();
       suppressRemoteClickRef.current = false;
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
-      inlineRenameOperation.invalidate();
       inlineRenameRef.current = null;
-      moveOperation.invalidate();
+      operationController.dispose();
       if (moveSuccessTimerRef.current !== null) {
         window.clearTimeout(moveSuccessTimerRef.current);
         moveSuccessTimerRef.current = null;
@@ -471,11 +462,11 @@ export function FilesPane({
 
   async function submitInlineRename() {
     const current = inlineRenameRef.current;
-    if (!current || inlineRenameSubmittingRef.current) {
+    if (!current || operationControllerRef.current.isPending("inlineRename")) {
       return;
     }
 
-    const newName = current.value.trim();
+    const newName = normalizeRemoteEntryName(current.value);
     if (!newName) {
       const next = { ...current, error: t("sessions.remoteNameRequired") };
       inlineRenameRef.current = next;
@@ -488,32 +479,29 @@ export function FilesPane({
       return;
     }
 
-    const operationId = inlineRenameOperationRef.current.begin();
-    inlineRenameSubmittingRef.current = true;
-    setOperationPending(true);
     const pending = { ...current, value: newName, error: null };
     inlineRenameRef.current = pending;
     setInlineRename(pending);
-    try {
-      await onRenameEntry(current.file.path, newName);
-      if (inlineRenameOperationRef.current.isCurrent(operationId)) {
+    await operationControllerRef.current.run(
+      "inlineRename",
+      () => onRenameEntry(current.file.path, newName),
+      {
+        onPendingChange: setOperationPending,
+        onSuccess: () => {
         inlineRenameRef.current = null;
         setInlineRename(null);
-      }
-    } catch (error) {
-      if (inlineRenameOperationRef.current.isCurrent(operationId)) {
-        const failed = {
-          ...pending,
-          error: resolveApiError(error, t("errors.unknown")),
-        };
-        inlineRenameRef.current = failed;
-        setInlineRename(failed);
-        window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
-      }
-    } finally {
-      inlineRenameSubmittingRef.current = false;
-      setOperationPending(false);
-    }
+        },
+        onError: (error) => {
+          const failed = {
+            ...pending,
+            error: resolveApiError(error, t("errors.unknown")),
+          };
+          inlineRenameRef.current = failed;
+          setInlineRename(failed);
+          window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
+        },
+      },
+    );
   }
 
   function beginRemotePointerDrag(
@@ -542,58 +530,43 @@ export function FilesPane({
     setSelectedPath(file.path);
     setDragUploadActive(false);
     suppressRemoteClickRef.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    remotePointerDragRef.current = {
-      source: file,
-      targetDirectory: null,
+    remoteDragControllerRef.current?.begin({
       captureTarget: event.currentTarget,
-      dragging: false,
+      clientX: event.clientX,
+      clientY: event.clientY,
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
+      source: file,
+    });
   }
 
   function updateRemotePointerDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    const drag = remotePointerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-
-    if (!drag.dragging) {
-      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-      if (distance < REMOTE_ENTRY_DRAG_THRESHOLD) {
-        return;
-      }
-      fileNameClickRef.current = null;
-      filePointerIntentRef.current = null;
-      clearMoveFeedback();
-      drag.dragging = true;
-      setRemoteDrag({ source: drag.source, targetDirectory: null });
-    }
-
-    event.preventDefault();
     const targetDirectory = findRemoteDropTarget(
       event.clientX,
       event.clientY,
-      drag.source,
+      remoteDragControllerRef.current?.source() ?? null,
       panelRef.current,
     );
-    if (drag.targetDirectory === targetDirectory) {
+    const result = remoteDragControllerRef.current?.move({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      pointerId: event.pointerId,
+      targetDirectory,
+    });
+    if (!result?.active) {
       return;
     }
-    drag.targetDirectory = targetDirectory;
-    setRemoteDrag({ source: drag.source, targetDirectory });
+    if (result.started) {
+      fileNameClickRef.current = null;
+      filePointerIntentRef.current = null;
+      clearMoveFeedback();
+    }
+    event.preventDefault();
   }
 
   function finishRemotePointerDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    const drag = remotePointerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    const { dragging, source, targetDirectory } = drag;
-    finishRemoteDrag();
-    if (!dragging) {
+    const result = remoteDragControllerRef.current?.finish(event.pointerId);
+    setDragUploadActive(false);
+    if (!result?.suppressClick) {
       return;
     }
 
@@ -603,45 +576,40 @@ export function FilesPane({
     window.setTimeout(() => {
       suppressRemoteClickRef.current = false;
     }, 0);
-    if (!targetDirectory) {
+    if (!result.move) {
       return;
     }
+    const { source, targetDirectory } = result.move;
 
-    const operationId = moveOperationRef.current.begin();
-    setMoveRequestPending(true);
     setMoveStatus({
       kind: "moving",
       sourceName: source.name,
       targetDirectory,
     });
-    void onMoveEntry(source.path, targetDirectory)
-      .then(() => {
-        if (!moveOperationRef.current.isCurrent(operationId)) {
-          return;
-        }
+    void operationControllerRef.current.run(
+      "move",
+      () => onMoveEntry(source.path, targetDirectory),
+      {
+        onPendingChange: setMoveRequestPending,
+        onSuccess: () => {
         setMoveStatus({
           kind: "success",
           sourceName: source.name,
           targetDirectory,
         });
         moveSuccessTimerRef.current = window.setTimeout(() => {
-          if (moveOperationRef.current.isCurrent(operationId)) {
-            setMoveStatus(null);
-          }
+          setMoveStatus(null);
           moveSuccessTimerRef.current = null;
         }, 2500);
-      })
-      .catch((error) => {
-        if (moveOperationRef.current.isCurrent(operationId)) {
+        },
+        onError: (error) => {
           setMoveStatus({
             kind: "error",
             message: resolveApiError(error, t("sessions.moveRemoteEntryFailed")),
           });
-        }
-      })
-      .finally(() => {
-        setMoveRequestPending(false);
-      });
+        },
+      },
+    );
   }
 
   function updateOperationValue(value: string) {
@@ -651,31 +619,41 @@ export function FilesPane({
   }
 
   async function submitFileOperation() {
-    if (!fileOperation || operationPending) {
+    if (!fileOperation || operationControllerRef.current.isPending("dialog")) {
       return;
     }
-    if (fileOperation.kind !== "delete" && !fileOperation.value.trim()) {
+    const normalizedName =
+      fileOperation.kind === "delete"
+        ? null
+        : normalizeRemoteEntryName(fileOperation.value);
+    if (fileOperation.kind !== "delete" && !normalizedName) {
       setFileOperation({ ...fileOperation, error: t("sessions.remoteNameRequired") });
       return;
     }
 
-    setOperationPending(true);
     setFileOperation({ ...fileOperation, error: null });
-    try {
-      if (fileOperation.kind === "create") {
-        await onCreateDirectory(fileOperation.value.trim());
-      } else if (fileOperation.kind === "rename") {
-        await onRenameEntry(fileOperation.file.path, fileOperation.value.trim());
-      } else {
-        await onDeleteEntry(fileOperation.file.path);
-      }
-      setFileOperation(null);
-    } catch (error) {
-      const message = resolveApiError(error, t("errors.unknown"));
-      setFileOperation((current) => (current ? { ...current, error: message } : current));
-    } finally {
-      setOperationPending(false);
-    }
+    await operationControllerRef.current.run(
+      "dialog",
+      () => {
+        if (fileOperation.kind === "create") {
+          return onCreateDirectory(normalizedName!);
+        }
+        if (fileOperation.kind === "rename") {
+          return onRenameEntry(fileOperation.file.path, normalizedName!);
+        }
+        return onDeleteEntry(fileOperation.file.path);
+      },
+      {
+        onPendingChange: setOperationPending,
+        onSuccess: () => setFileOperation(null),
+        onError: (error) => {
+          const message = resolveApiError(error, t("errors.unknown"));
+          setFileOperation((current) =>
+            current ? { ...current, error: message } : current,
+          );
+        },
+      },
+    );
   }
 
   const commitFileColumn = useCallback(
@@ -1256,7 +1234,7 @@ function fileIcon(file: FileEntry) {
 function findRemoteDropTarget(
   clientX: number,
   clientY: number,
-  source: FileEntry,
+  source: FileEntry | null,
   panel: HTMLElement | null,
 ) {
   const target = document
@@ -1266,7 +1244,7 @@ function findRemoteDropTarget(
     return null;
   }
   const targetDirectory = target.dataset.remoteDropPath;
-  return targetDirectory && canMoveRemoteEntry(source, targetDirectory)
+  return source && targetDirectory && canMoveRemoteEntry(source, targetDirectory)
     ? targetDirectory
     : null;
 }

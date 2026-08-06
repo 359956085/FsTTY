@@ -16,6 +16,44 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 <!-- release-notes:en-US:end -->
 
+## [1.2.0] - 2026-08-06
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### MCP与安全
+
+- 新增 MCP 高级命令管理，可按会话分组精确配置 Agent 允许执行或需要排除的远程命令。
+
+#### 快捷键
+
+- 新增快捷键展示与自定义，支持配置终端复制、粘贴和历史命令相关快捷键。
+
+#### 更新与终端
+
+- 新增国内可用的应用更新下载源。
+- 终端支持鼠标拖动选择文本，并在松开后自动复制到系统剪贴板。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### MCP and Security
+
+- Added advanced MCP command management, allowing precise per-session-group control over remote commands that Agents may execute or that must be excluded.
+
+#### Keyboard Shortcuts
+
+- Added shortcut display and customization for terminal copy, paste, and command history actions.
+
+#### Updates and Terminal
+
+- Added an application update download source accessible from mainland China.
+- The terminal now copies mouse-dragged text selections to the system clipboard when the mouse button is released.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.1.0] - 2026-08-03
 
 <!-- release-notes:zh-CN:start -->

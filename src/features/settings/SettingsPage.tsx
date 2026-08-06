@@ -5,46 +5,22 @@ import {
   RotateCcw,
   Settings2,
 } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api } from "../../shared/api/client";
-import { resolveApiError } from "../../shared/api/errors";
-import type {
-  AppSettings,
-  Language,
-  LocalAgentCapability,
-  LocalAgentConfigureResult,
-  LocalAgentTarget,
-  McpClientTarget,
-  McpGroupPermission,
-  McpPermissionCatalogEntry,
-  SessionGroup,
-} from "../../shared/api/types";
-import { createLatestRequestGuard } from "../../shared/async/latestRequest";
+import type { AppSettings, McpClientTarget } from "../../shared/api/types";
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { AboutSettingsPanel } from "./AboutSettingsPanel";
 import { LocalAgentSetupDialog } from "./LocalAgentSetupDialog";
 import { McpCommandPolicyDialog } from "./McpCommandPolicyDialog";
-import {
-  McpConfigDialog,
-  type McpConfigDialogState,
-  type McpTransport,
-} from "./McpConfigDialog";
-import {
-  McpPermissionTooltip,
-  type McpPermissionTooltipState,
-} from "./McpPermissionTooltip";
-import {
-  permissionFrom,
-  permissionsChanged,
-  validateMcpPort,
-} from "./mcpPermissions";
+import { McpConfigDialog } from "./McpConfigDialog";
+import { McpPermissionTooltip } from "./McpPermissionTooltip";
 import { McpPermissionsPanel } from "./McpPermissionsPanel";
 import { SettingsIconAction } from "./SettingsIconAction";
-import { useMcpPromptCopy } from "./useMcpPromptCopy";
+import { useLocalAgentSetup } from "./useLocalAgentSetup";
+import { useGeneralSettings } from "./useGeneralSettings";
+import { useMcpSettings } from "./useMcpSettings";
 
 interface SettingsPageProps {
   onChange: (settings: AppSettings) => void;
@@ -53,470 +29,77 @@ interface SettingsPageProps {
 }
 
 type SettingsSection = "about" | "general" | "mcp";
-type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
-const manualPromptCopiedKeys: Partial<Record<LocalAgentTarget, string>> = {
-  cursor: "settings.localAgentCursorPromptCopied",
-  trae: "settings.localAgentTraePromptCopied",
-  traeCn: "settings.localAgentTraeCnPromptCopied",
-};
-
-const manualPromptCopyFailedKeys: Partial<Record<LocalAgentTarget, string>> = {
-  cursor: "settings.localAgentCursorPromptCopyFailed",
-  trae: "settings.localAgentTraePromptCopyFailed",
-  traeCn: "settings.localAgentTraeCnPromptCopyFailed",
-};
 
 export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
-  const [error, setError] = useState<string | null>(null);
-  const [logDirectoryError, setLogDirectoryError] = useState<string | null>(null);
-  const [logSettingsError, setLogSettingsError] = useState<string | null>(null);
-  const [openingLogDirectory, setOpeningLogDirectory] = useState(false);
-  const [proxy, setProxy] = useState(settings.updateProxy);
-  const [savingLanguage, setSavingLanguage] = useState(false);
-  const [savingLogSettings, setSavingLogSettings] = useState(false);
-  const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
-  const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
-  const [groups, setGroups] = useState<SessionGroup[]>([]);
-  const [mcpPermissionCatalog, setMcpPermissionCatalog] = useState<
-    McpPermissionCatalogEntry[]
-  >([]);
-  const [mcpPermissionCatalogFailed, setMcpPermissionCatalogFailed] = useState(false);
-  const [mcpPermissions, setMcpPermissions] = useState(settings.mcpGroupPermissions);
-  const [savedMcpPermissions, setSavedMcpPermissions] = useState(settings.mcpGroupPermissions);
-  const savedMcpPermissionsRef = useRef(settings.mcpGroupPermissions);
-  const [mcpPort, setMcpPort] = useState(String(settings.mcpHttpPort));
-  const [savingMcp, setSavingMcp] = useState(false);
-  const [mcpStdioError, setMcpStdioError] = useState<string | null>(null);
-  const [mcpHttpError, setMcpHttpError] = useState<string | null>(null);
-  const [mcpPermissionError, setMcpPermissionError] = useState<string | null>(null);
-  const [mcpPermissionSaveSucceeded, setMcpPermissionSaveSucceeded] = useState(false);
-  const [mcpCommandPolicyGroup, setMcpCommandPolicyGroup] = useState<string | null>(null);
-  const [mcpPermissionTooltip, setMcpPermissionTooltip] =
-    useState<McpPermissionTooltipState | null>(null);
-  const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
-  const mcpConfigRequestRef = useRef(createLatestRequestGuard());
-  const [localAgentDialogOpen, setLocalAgentDialogOpen] = useState(false);
-  const [localAgentCapabilities, setLocalAgentCapabilities] = useState<
-    LocalAgentCapability[]
-  >([]);
-  const [localAgentResults, setLocalAgentResults] = useState<LocalAgentConfigureResult[]>([]);
-  const [loadingLocalAgents, setLoadingLocalAgents] = useState(false);
-  const [configuringLocalAgents, setConfiguringLocalAgents] = useState(false);
-  const [localAgentError, setLocalAgentError] = useState<string | null>(null);
   const {
-    copied: mcpPromptCopied,
-    copying: copyingMcpPrompt,
-    copy: copyMcpAgentPrompt,
-    error: mcpPromptError,
-  } = useMcpPromptCopy(setMcpPermissionTooltip);
-
-  useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
-  useEffect(
-    () => () => {
-      mcpConfigRequestRef.current.invalidate();
-    },
-    [],
-  );
-  useEffect(() => {
-    const previousSaved = savedMcpPermissionsRef.current;
-    setMcpPermissions((current) =>
-      permissionsChanged(groups, current, previousSaved)
-        ? current
-        : settings.mcpGroupPermissions,
-    );
-    savedMcpPermissionsRef.current = settings.mcpGroupPermissions;
-    setSavedMcpPermissions(settings.mcpGroupPermissions);
-  }, [groups, settings.mcpGroupPermissions]);
-  useEffect(() => setMcpPort(String(settings.mcpHttpPort)), [settings.mcpHttpPort]);
-  useEffect(() => {
-    let active = true;
-    void api
-      .listSessions()
-      .then((nextGroups) => {
-        if (active) {
-          setGroups(nextGroups);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setGroups([]);
-        }
-      });
-    void api
-      .getMcpPermissionCatalog()
-      .then((catalog) => {
-        if (active) {
-          setMcpPermissionCatalog(catalog);
-          setMcpPermissionCatalogFailed(false);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setMcpPermissionCatalog([]);
-          setMcpPermissionCatalogFailed(true);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => setMcpPermissionTooltip(null), [settings.language]);
-
-  function showMcpPermissionTooltip(
-    key: string,
-    text: string,
-    target: HTMLElement,
-  ) {
-    const bounds = target.getBoundingClientRect();
-    setMcpPermissionTooltip({
-      key,
-      text,
-      anchor: {
-        bottom: bounds.bottom,
-        left: bounds.left,
-        top: bounds.top,
-        width: bounds.width,
-      },
-    });
-  }
-
-  function permissionFor(groupName: string): McpGroupPermission {
-    return permissionFrom(mcpPermissions, groupName);
-  }
-
-  function updatePermission(groupName: string, patch: Partial<McpGroupPermission>) {
-    const next = { ...permissionFor(groupName), ...patch };
-    setMcpPermissionError(null);
-    setMcpPermissionSaveSucceeded(false);
-    setMcpPermissions((current) => [
-      ...current.filter((permission) => permission.groupName !== groupName),
-      next,
-    ]);
-  }
-
-  async function saveMcpSettings(
-    scope: McpSaveScope,
-    enabled = settings.mcpEnabled,
-    httpEnabled = settings.mcpHttpEnabled,
-    httpPort = settings.mcpHttpPort,
-  ) {
-    setSavingMcp(true);
-    if (scope === "stdio") {
-      setMcpStdioError(null);
-    } else if (scope === "http" || scope === "httpPort") {
-      setMcpHttpError(null);
-    } else {
-      setMcpPermissionError(null);
-      setMcpPermissionSaveSucceeded(false);
-    }
-    try {
-      const permissions =
-        scope === "permissions" ? mcpPermissions : savedMcpPermissionsRef.current;
-      const next = await api.updateMcpSettings(
-        enabled,
-        httpEnabled,
-        httpPort,
-        permissions,
-      );
-      onChange(next);
-      if (scope === "permissions") {
-        savedMcpPermissionsRef.current = next.mcpGroupPermissions;
-        setSavedMcpPermissions(next.mcpGroupPermissions);
-        setMcpPermissions(next.mcpGroupPermissions);
-        setMcpPermissionSaveSucceeded(true);
-      } else if (scope === "httpPort") {
-        setMcpPort(String(next.mcpHttpPort));
-      }
-    } catch (nextError) {
-      const message = resolveApiError(nextError, t("settings.mcpSaveFailed"));
-      if (scope === "stdio") {
-        setMcpStdioError(message);
-      } else if (scope === "http" || scope === "httpPort") {
-        setMcpHttpError(message);
-      } else {
-        setMcpPermissionError(message);
-      }
-    } finally {
-      setSavingMcp(false);
-    }
-  }
-
-  async function loadMcpConfig(transport: McpTransport, target: McpClientTarget) {
-    const requestId = mcpConfigRequestRef.current.begin();
-    setMcpConfigDialog((current) =>
-      current
-        ? { ...current, config: "", error: null, loading: true, target }
-        : null,
-    );
-    try {
-      const config =
-        transport === "http"
-          ? await api.getMcpHttpClientConfig(target)
-          : await api.getMcpStdioClientConfig(target);
-      if (!mcpConfigRequestRef.current.isCurrent(requestId)) {
-        return;
-      }
-      setMcpConfigDialog((current) =>
-        current ? { ...current, config, loading: false } : null,
-      );
-    } catch (nextError) {
-      if (!mcpConfigRequestRef.current.isCurrent(requestId)) {
-        return;
-      }
-      setMcpConfigDialog((current) =>
-        current
-          ? {
-              ...current,
-              error: resolveApiError(nextError, t("settings.mcpConfigLoadFailed")),
-              loading: false,
-            }
-          : null,
-      );
-    }
-  }
-
-  function openMcpConfigDialog(transport: McpTransport) {
-    const target: McpClientTarget = "codex";
-    setMcpConfigDialog({
-      config: "",
-      error: null,
-      loading: true,
-      target,
-      transport,
-    });
-    void loadMcpConfig(transport, target);
-  }
-
-  const closeMcpConfigDialog = useCallback(() => {
-    mcpConfigRequestRef.current.invalidate();
-    setMcpConfigDialog(null);
-  }, []);
-
-  const closeLocalAgentDialog = useCallback(() => {
-    setLocalAgentDialogOpen(false);
-  }, []);
-
-  async function openLocalAgentDialog() {
-    setLocalAgentDialogOpen(true);
-    setLoadingLocalAgents(true);
-    setLocalAgentResults([]);
-    setLocalAgentError(null);
-    try {
-      setLocalAgentCapabilities(await api.inspectLocalAgentSetup());
-    } catch (nextError) {
-      setLocalAgentCapabilities([]);
-      setLocalAgentError(
-        resolveApiError(nextError, t("settings.localAgentDetectFailed")),
-      );
-    } finally {
-      setLoadingLocalAgents(false);
-    }
-  }
-
-  async function configureSelectedLocalAgents(targets: LocalAgentTarget[]) {
-    if (configuringLocalAgents || targets.length === 0) {
-      return;
-    }
-    setConfiguringLocalAgents(true);
-    setLocalAgentError(null);
-    setLocalAgentResults([]);
-    try {
-      if (!settings.mcpEnabled) {
-        const nextSettings = await api.updateMcpSettings(
-          true,
-          settings.mcpHttpEnabled,
-          settings.mcpHttpPort,
-          savedMcpPermissionsRef.current,
-        );
-        onChange(nextSettings);
-      }
-      let results = await api.configureLocalAgents(targets);
-      const manualTargets = new Set(
-        results
-          .filter(
-            (result) =>
-              result.mcpStatus !== "failed" &&
-              result.promptStatus === "manualRequired" &&
-              manualPromptCopiedKeys[result.target],
-          )
-          .map((result) => result.target),
-      );
-      if (manualTargets.size > 0) {
-        try {
-          await writeText(await api.getMcpAgentPrompt());
-          results = results.map((result) => {
-            const messageKey = manualPromptCopiedKeys[result.target];
-            return manualTargets.has(result.target) && messageKey
-              ? { ...result, message: t(messageKey) }
-              : result;
-          });
-        } catch (nextError) {
-          results = results.map((result) => {
-            const messageKey = manualPromptCopyFailedKeys[result.target];
-            return manualTargets.has(result.target) && messageKey
-              ? {
-                  ...result,
-                  message: resolveApiError(nextError, t(messageKey)),
-                  promptStatus: "failed" as const,
-                }
-              : result;
-          });
-        }
-      }
-      setLocalAgentResults(results);
-    } catch (nextError) {
-      setLocalAgentError(
-        resolveApiError(nextError, t("settings.localAgentConfigureFailed")),
-      );
-    } finally {
-      setConfiguringLocalAgents(false);
-    }
-  }
-
-  async function copyMcpConfig() {
-    if (!mcpConfigDialog?.config) {
-      return;
-    }
-    try {
-      await writeText(mcpConfigDialog.config);
-      closeMcpConfigDialog();
-    } catch (nextError) {
-      setMcpConfigDialog((current) =>
-        current
-          ? {
-              ...current,
-              error: resolveApiError(nextError, t("settings.mcpConfigCopyFailed")),
-            }
-          : null,
-      );
-    }
-  }
-
-  async function rotateMcpToken() {
-    setSavingMcp(true);
-    setMcpHttpError(null);
-    try {
-      await api.rotateMcpHttpToken();
-    } catch (nextError) {
-      setMcpHttpError(resolveApiError(nextError, t("errors.unknown")));
-    } finally {
-      setSavingMcp(false);
-    }
-  }
-
-  async function saveHttpPort() {
-    const parsedPort = validateMcpPort(mcpPort);
-    if (parsedPort === null) {
-      setMcpHttpError(t("settings.mcpInvalidPort"));
-      return;
-    }
-    if (parsedPort === settings.mcpHttpPort) {
-      setMcpHttpError(null);
-      return;
-    }
-    await saveMcpSettings(
-      "httpPort",
-      settings.mcpEnabled,
-      settings.mcpHttpEnabled,
-      parsedPort,
-    );
-  }
-
-  async function handleLanguageChange(language: Language) {
-    if (savingLanguage) {
-      return;
-    }
-    setSavingLanguage(true);
-    setError(null);
-    try {
-      const nextSettings = await api.setLanguage(language);
-      onChange(nextSettings);
-    } catch (nextError) {
-      setError(resolveApiError(nextError, t("errors.unknown")));
-    } finally {
-      setSavingLanguage(false);
-    }
-  }
-
-  async function openLogDirectory() {
-    if (openingLogDirectory) {
-      return;
-    }
-    setOpeningLogDirectory(true);
-    setLogDirectoryError(null);
-    try {
-      await api.openLogDirectory();
-    } catch (nextError) {
-      setLogDirectoryError(
-        resolveApiError(nextError, t("settings.openLogDirectoryFailed")),
-      );
-    } finally {
-      setOpeningLogDirectory(false);
-    }
-  }
-
-  async function saveLogSettings(recordMcpToolInputs: boolean) {
-    if (savingLogSettings) {
-      return;
-    }
-    setSavingLogSettings(true);
-    setLogSettingsError(null);
-    try {
-      onChange(await api.updateLogSettings(recordMcpToolInputs));
-    } catch (nextError) {
-      setLogSettingsError(resolveApiError(nextError, t("settings.logSettingsSaveFailed")));
-    } finally {
-      setSavingLogSettings(false);
-    }
-  }
-
-  async function saveUpdateSettings(
-    autoUpdate: boolean,
-    updateProxy = proxy,
-    allowRemoteClipboardWrite = settings.allowRemoteClipboardWrite,
-  ) {
-    setSavingUpdateSettings(true);
-    const save = updateSettingsSaveRef.current.then(async () => {
-      setSavingUpdateSettings(true);
-      setError(null);
-      try {
-        const nextSettings = await api.updateAppSettings(
-          autoUpdate,
-          updateProxy.trim(),
-          allowRemoteClipboardWrite,
-        );
-        setProxy(nextSettings.updateProxy);
-        onChange(nextSettings);
-        return nextSettings;
-      } catch (nextError) {
-        setError(resolveApiError(nextError, t("errors.unknown")));
-        return null;
-      }
-    });
-    // 失焦、开关和检查按钮可能连续触发保存，串行写入才能保证最后一次操作生效。
-    const queueTail = save.then(
-      () => undefined,
-      () => undefined,
-    );
-    updateSettingsSaveRef.current = queueTail;
-    try {
-      return await save;
-    } finally {
-      if (updateSettingsSaveRef.current === queueTail) {
-        setSavingUpdateSettings(false);
-      }
-    }
-  }
-
-  async function handleCheckForUpdates() {
-    const saved = await saveUpdateSettings(settings.autoUpdate);
-    if (saved) {
-      await updater.checkForUpdates("manual", saved.updateProxy);
-    }
-  }
-
+    changeLanguage: handleLanguageChange,
+    checkForUpdates: handleCheckForUpdates,
+    error,
+    logDirectoryError,
+    logSettingsError,
+    openLogDirectory,
+    openingLogDirectory,
+    proxy,
+    saveLogSettings,
+    saveUpdateSettings,
+    savingLanguage,
+    savingLogSettings,
+    savingUpdateSettings,
+    setProxy,
+  } = useGeneralSettings({ onChange, settings, translate: t, updater });
+  const {
+    clearHttpError,
+    closeConfigDialog: closeMcpConfigDialog,
+    commandPolicyGroup: mcpCommandPolicyGroup,
+    configDialog: mcpConfigDialog,
+    copyAgentPrompt: copyMcpAgentPrompt,
+    copyConfig: copyMcpConfig,
+    copyingPrompt: copyingMcpPrompt,
+    getSavedPermissions: getSavedMcpPermissions,
+    groups,
+    httpError: mcpHttpError,
+    loadConfig: loadMcpConfig,
+    openConfigDialog: openMcpConfigDialog,
+    permissionCatalog: mcpPermissionCatalog,
+    permissionCatalogFailed: mcpPermissionCatalogFailed,
+    permissionError: mcpPermissionError,
+    permissionFor,
+    permissions: mcpPermissions,
+    permissionsDirty: mcpPermissionsDirty,
+    permissionSaveSucceeded: mcpPermissionSaveSucceeded,
+    permissionTooltip: mcpPermissionTooltip,
+    port: mcpPort,
+    promptCopied: mcpPromptCopied,
+    promptError: mcpPromptError,
+    rotateToken: rotateMcpToken,
+    save: saveMcpSettings,
+    savePort: saveHttpPort,
+    saving: savingMcp,
+    setCommandPolicyGroup: setMcpCommandPolicyGroup,
+    setPermissionTooltip: setMcpPermissionTooltip,
+    setPort: setMcpPort,
+    showPermissionTooltip: showMcpPermissionTooltip,
+    stdioError: mcpStdioError,
+    updatePermission,
+  } = useMcpSettings({ onChange, settings, translate: t });
+  const {
+    capabilities: localAgentCapabilities,
+    cancel: closeLocalAgentDialog,
+    configure: configureSelectedLocalAgents,
+    configuring: configuringLocalAgents,
+    dialogOpen: localAgentDialogOpen,
+    error: localAgentError,
+    loading: loadingLocalAgents,
+    open: openLocalAgentDialog,
+    results: localAgentResults,
+  } = useLocalAgentSetup({
+    getSavedPermissions: getSavedMcpPermissions,
+    onChange,
+    settings,
+    translate: t,
+  });
   const status = (() => {
     if (updater.phase === "checking") {
       return t("settings.checkingUpdate");
@@ -552,11 +135,6 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     { value: "vsCode", label: "VS Code / GitHub Copilot" },
     { value: "geminiCli", label: "Gemini CLI" },
   ] satisfies ReadonlyArray<{ value: McpClientTarget; label: string }>;
-  const mcpPermissionsDirty = permissionsChanged(
-    groups,
-    mcpPermissions,
-    savedMcpPermissions,
-  );
   const sectionTitle = {
     about: t("settings.about"),
     general: t("settings.general"),
@@ -773,7 +351,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   onBlur={() => void saveHttpPort()}
                   onChange={(event) => {
                     setMcpPort(event.target.value);
-                    setMcpHttpError(null);
+                    clearHttpError();
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {

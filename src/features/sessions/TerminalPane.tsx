@@ -40,18 +40,19 @@ import {
   shouldOpenLocalTerminalContextMenu,
 } from "./terminalContextMenu";
 import {
-  StrictClipboardBase64,
-  TauriClipboardProvider,
   readSystemClipboard,
   resolveTerminalClipboardShortcut,
   writeSystemClipboard,
 } from "./terminalClipboard";
-import { installTerminalMouseSelectionCopy } from "./terminalMouseSelection";
+import {
+  installTerminalRuntime,
+  type InstalledTerminalRuntime,
+} from "./terminalRuntime";
 import {
   syncTerminalActivity,
   type TerminalActivityController,
 } from "./terminalActivity";
-import { createTerminalConnectionAttemptGuard } from "./terminalConnectionAttempt";
+import { createTerminalConnectionLifecycle } from "./terminalConnectionLifecycle";
 import { CommandHistoryPopover } from "./CommandHistoryPopover";
 import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
 import { matchesShortcut } from "../../shared/shortcuts";
@@ -134,8 +135,9 @@ export const TerminalPane = memo(function TerminalPane({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<XTermFitAddon | null>(null);
-  const connectionRef = useRef<SshConnection | null>(null);
-  const eventChannelRef = useRef<Channel<TerminalEvent> | null>(null);
+  const connectionLifecycleRef = useRef(
+    createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>(),
+  );
   const inputBufferRef = useRef("");
   const inputTimerRef = useRef<number | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
@@ -153,7 +155,6 @@ export const TerminalPane = memo(function TerminalPane({
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
-  const connectionAttemptGuardRef = useRef(createTerminalConnectionAttemptGuard());
   const consumedDirectoryRequestRef = useRef(0);
   const lastReportedDirectoryRef = useRef<string | null>(null);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
@@ -413,7 +414,7 @@ export const TerminalPane = memo(function TerminalPane({
       window.clearTimeout(inputTimerRef.current);
       inputTimerRef.current = null;
     }
-    const connection = connectionRef.current;
+    const connection = connectionLifecycleRef.current.connection();
     const data = inputBufferRef.current;
     inputBufferRef.current = "";
     if (!connection || !data) {
@@ -423,18 +424,16 @@ export const TerminalPane = memo(function TerminalPane({
     for (const chunk of splitUtf8(data, 64 * 1024)) {
       writeChainRef.current = writeChainRef.current
         .then(() => {
-          if (connectionRef.current?.connectionId !== connectionId) {
+          if (connectionLifecycleRef.current.connection()?.connectionId !== connectionId) {
             return;
           }
           return api.writeTerminal(connectionId, chunk);
         })
         .catch((error: unknown) => {
-          if (connectionRef.current?.connectionId !== connectionId) {
+          if (connectionLifecycleRef.current.connection()?.connectionId !== connectionId) {
             return;
           }
-          connectionAttemptGuardRef.current.invalidate();
-          connectionRef.current = null;
-          eventChannelRef.current = null;
+          connectionLifecycleRef.current.reset();
           clearPendingInput();
           void api.disconnectSession(connectionId).catch(() => undefined);
           reportState("error", resolveApiError(error, t("errors.unknown")));
@@ -448,8 +447,8 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   sendInputRef.current = (data) => {
-    const connection = connectionRef.current;
-    if (!connection && !connectionAttemptGuardRef.current.isConnecting()) {
+    const connection = connectionLifecycleRef.current.connection();
+    if (!connection && !connectionLifecycleRef.current.isConnecting()) {
       return;
     }
     const nextInput = inputBufferRef.current + data;
@@ -508,7 +507,7 @@ export const TerminalPane = memo(function TerminalPane({
       }
     }
     viewportMarker?.dispose();
-    const connection = connectionRef.current;
+    const connection = connectionLifecycleRef.current.connection();
     if (!connection || terminal.cols < 1 || terminal.rows < 1) {
       return;
     }
@@ -517,7 +516,7 @@ export const TerminalPane = memo(function TerminalPane({
     }
     resizeTimerRef.current = window.setTimeout(() => {
       resizeTimerRef.current = null;
-      const currentConnection = connectionRef.current;
+      const currentConnection = connectionLifecycleRef.current.connection();
       if (currentConnection && activeRef.current && visibleRef.current) {
         void api
           .resizeTerminal(
@@ -606,12 +605,14 @@ export const TerminalPane = memo(function TerminalPane({
 
   useEffect(() => {
     let disposed = false;
-    const connectionAttemptGuard = connectionAttemptGuardRef.current;
+    // StrictMode 会重放 Effect；每次安装必须拥有独立控制器，不能复用上次清理时已销毁的实例。
+    const connectionLifecycle =
+      createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>();
+    connectionLifecycleRef.current = connectionLifecycle;
     let observer: ResizeObserver | null = null;
     let oscHandler: { dispose(): void } | null = null;
-    let terminalInstance: XTerm | null = null;
+    let runtimeInstance: InstalledTerminalRuntime | null = null;
     let disposeImeListeners: (() => void) | null = null;
-    let disposeMouseSelectionListeners: (() => void) | null = null;
     let remoteMouseListenersAttached = false;
     let resizeObserverActive = false;
     const terminalLoginInput = terminalLoginInputRef.current;
@@ -621,56 +622,22 @@ export const TerminalPane = memo(function TerminalPane({
       if (!container) {
         return;
       }
-      const [{ Terminal }, { FitAddon }, { ClipboardAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-clipboard"),
-      ]);
-      if (disposed) {
-        return;
-      }
-      const terminal = new Terminal({
-        convertEol: false,
-        cursorBlink: true,
-        fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
-        fontSize: 13,
-        lineHeight: 1.38,
-        scrollback: 10_000,
-        theme: {
-          background: "#080d11",
-          foreground: "#d5d9dd",
-          cursor: "#f1f3f5",
-          black: "#111416",
-          blue: "#aeb6bd",
-          cyan: "#2dd4bf",
-          green: "#56cf63",
-          red: "#f06b72",
-          yellow: "#e5aa4b",
-        },
-      });
-      const fitAddon = new FitAddon();
-      terminal.loadAddon(fitAddon);
-      terminal.loadAddon(
-        new ClipboardAddon(
-          new StrictClipboardBase64(),
-          new TauriClipboardProvider({
-            isAllowed: () =>
-              allowRemoteClipboardWriteRef.current &&
-              activeRef.current &&
-              visibleRef.current,
-            onWriteError: () => reportClipboardErrorRef.current(),
-          }),
-        ),
-      );
-      terminal.open(container);
-      const mouseSelection = installTerminalMouseSelectionCopy({
+      const runtime = await installTerminalRuntime({
         container,
         isActive: () => activeRef.current,
+        isCancelled: () => disposed,
+        isRemoteClipboardAllowed: () =>
+          allowRemoteClipboardWriteRef.current &&
+          activeRef.current &&
+          visibleRef.current,
         isVisible: () => visibleRef.current,
-        onWriteError: () => reportClipboardErrorRef.current(),
-        terminal,
+        onClipboardWriteError: () => reportClipboardErrorRef.current(),
       });
-      disposeMouseSelectionListeners = () => mouseSelection.dispose();
+      if (!runtime) {
+        return;
+      }
+      runtimeInstance = runtime;
+      const { fitAddon, terminal } = runtime;
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();
       const syntheticMouseReleases = new WeakSet<Event>();
@@ -742,7 +709,7 @@ export const TerminalPane = memo(function TerminalPane({
           event.pointerType === "mouse" &&
           activeRef.current &&
           visibleRef.current &&
-          connectionRef.current !== null &&
+          connectionLifecycleRef.current.connection() !== null &&
           target instanceof Node &&
           container.contains(target);
         resetRemoteRightDrag();
@@ -1051,7 +1018,6 @@ export const TerminalPane = memo(function TerminalPane({
       });
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
-      terminalInstance = terminal;
       observer = new ResizeObserver(fitAndResize);
       const resizeObserverActivity = {
         start: () => {
@@ -1092,7 +1058,6 @@ export const TerminalPane = memo(function TerminalPane({
     });
     return () => {
       disposed = true;
-      connectionAttemptGuard.invalidate();
       resizeObserverActivityRef.current?.stop();
       resizeObserverActivityRef.current = null;
       oscHandler?.dispose();
@@ -1109,19 +1074,15 @@ export const TerminalPane = memo(function TerminalPane({
       }
       disposeImeListeners?.();
       disposeImeListeners = null;
-      disposeMouseSelectionListeners?.();
-      disposeMouseSelectionListeners = null;
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
-      const connection = connectionRef.current;
-      connectionRef.current = null;
+      const connection = connectionLifecycle.dispose();
       if (connection) {
         void api.disconnectSession(connection.connectionId).catch(() => undefined);
       }
-      eventChannelRef.current = null;
       terminalRef.current = null;
       fitAddonRef.current = null;
-      terminalInstance?.dispose();
+      runtimeInstance?.dispose();
     };
   }, []);
 
@@ -1132,7 +1093,7 @@ export const TerminalPane = memo(function TerminalPane({
     consumedDirectoryRequestRef.current = directoryRequest.id;
     if (
       connectionState !== "connected" ||
-      !connectionRef.current ||
+      !connectionLifecycleRef.current.connection() ||
       shellIntegrationRef.current?.stage !== "active" ||
       !shellAtPromptRef.current ||
       lastReportedDirectoryRef.current === directoryRequest.path ||
@@ -1177,9 +1138,8 @@ export const TerminalPane = memo(function TerminalPane({
   async function connectTerminal(options: ConnectTerminalOptions = {}) {
     const { fromCredentialPrompt = false, oneTimeCredential } = options;
     if (
-      connectionAttemptGuardRef.current.isConnecting() ||
       connectionState === "connecting" ||
-      connectionRef.current
+      !connectionLifecycleRef.current.canConnect()
     ) {
       return;
     }
@@ -1211,21 +1171,26 @@ export const TerminalPane = memo(function TerminalPane({
     resetShellIntegration();
     imeCompositionFallbackRef.current?.reset();
     terminal.reset();
-    const attemptId = connectionAttemptGuardRef.current.begin();
+    const attemptId = connectionLifecycleRef.current.beginConnect();
+    if (attemptId === null) {
+      return;
+    }
     setDialogError(null);
     setHostKeyChange(null);
     reportState("connecting");
     const isCurrentAttempt = () =>
-      mountedRef.current && connectionAttemptGuardRef.current.isCurrent(attemptId);
+      mountedRef.current && connectionLifecycleRef.current.isCurrent(attemptId);
     const canRetryAttempt = () => isCurrentAttempt() && activeRef.current;
     const runConnectAttempt = () => {
       const channel = new Channel<TerminalEvent>();
       channel.onmessage = (event) => {
         if (
           !isCurrentAttempt() ||
-          eventChannelRef.current !== channel ||
-          (connectionRef.current &&
-            event.connectionId !== connectionRef.current.connectionId)
+          !connectionLifecycleRef.current.acceptsEvent(
+            attemptId,
+            channel,
+            event.connectionId,
+          )
         ) {
           return;
         }
@@ -1234,9 +1199,7 @@ export const TerminalPane = memo(function TerminalPane({
           return;
         }
         if (event.kind === "error") {
-          connectionAttemptGuardRef.current.invalidate();
-          connectionRef.current = null;
-          eventChannelRef.current = null;
+          connectionLifecycleRef.current.reset();
           clearPendingInput();
           resetShellIntegration();
           clearTemporaryLogin();
@@ -1244,16 +1207,14 @@ export const TerminalPane = memo(function TerminalPane({
           reportState("error", event.message);
           return;
         }
-        connectionAttemptGuardRef.current.invalidate();
-        connectionRef.current = null;
-        eventChannelRef.current = null;
+        connectionLifecycleRef.current.reset();
         clearPendingInput();
         resetShellIntegration();
         clearTemporaryLogin();
         terminalRef.current?.writeln(`\r\n[FsTTY] ${event.message}`);
         reportState("disconnected");
       };
-      eventChannelRef.current = channel;
+      connectionLifecycleRef.current.attachChannel(attemptId, channel);
       return api.connectSession(
         session.id,
         Math.max(1, terminal.cols),
@@ -1270,13 +1231,13 @@ export const TerminalPane = memo(function TerminalPane({
         canRetryAttempt,
       );
       if (!result) {
-        eventChannelRef.current = null;
+        connectionLifecycleRef.current.clearChannel();
         clearPendingInput();
         resetShellIntegration();
         reportState("disconnected");
         return;
       }
-      if (!mountedRef.current || !connectionAttemptGuardRef.current.isCurrent(attemptId)) {
+      if (!mountedRef.current || !connectionLifecycleRef.current.isCurrent(attemptId)) {
         if (result.kind === "connected") {
           await api
             .disconnectSession(result.connection.connectionId)
@@ -1285,14 +1246,14 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       if (result.kind === "hostKeyRequired") {
-        eventChannelRef.current = null;
+        connectionLifecycleRef.current.clearChannel();
         clearPendingInput();
         setHostKeyChallenge(result.challenge);
         reportState("disconnected");
         return;
       }
       if (result.kind === "hostKeyChanged") {
-        eventChannelRef.current = null;
+        connectionLifecycleRef.current.clearChannel();
         clearPendingInput();
         setHostKeyChange(result.change);
         clearTemporaryLogin();
@@ -1300,7 +1261,7 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       if (result.kind === "credentialRequired") {
-        eventChannelRef.current = null;
+        connectionLifecycleRef.current.clearChannel();
         clearPendingInput();
         resetShellIntegration();
         if (
@@ -1317,7 +1278,10 @@ export const TerminalPane = memo(function TerminalPane({
         reportState("disconnected");
         return;
       }
-      connectionRef.current = result.connection;
+      if (!connectionLifecycleRef.current.setConnection(attemptId, result.connection)) {
+        await api.disconnectSession(result.connection.connectionId).catch(() => undefined);
+        return;
+      }
       setCredentialPrompt(null);
       setCredentialValue("");
       setDialogError(null);
@@ -1343,10 +1307,10 @@ export const TerminalPane = memo(function TerminalPane({
       startShellIntegration();
       fitAndResize();
     } catch (error) {
-      if (!mountedRef.current || !connectionAttemptGuardRef.current.isCurrent(attemptId)) {
+      if (!mountedRef.current || !connectionLifecycleRef.current.isCurrent(attemptId)) {
         return;
       }
-      eventChannelRef.current = null;
+      connectionLifecycleRef.current.clearChannel();
       clearPendingInput();
       resetShellIntegration();
       const info = readApiError(error, t("errors.unknown"));
@@ -1380,7 +1344,7 @@ export const TerminalPane = memo(function TerminalPane({
         reportState("error", message);
       }
     } finally {
-      connectionAttemptGuardRef.current.finish(attemptId);
+      connectionLifecycleRef.current.finishConnect(attemptId);
     }
   }
 
@@ -1459,7 +1423,7 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   async function disconnectTerminal() {
-    const connection = connectionRef.current;
+    const connection = connectionLifecycleRef.current.connection();
     if (!connection) {
       reportState("disconnected");
       return;
@@ -1469,9 +1433,7 @@ export const TerminalPane = memo(function TerminalPane({
     reportState("disconnecting");
     try {
       await api.disconnectSession(connection.connectionId);
-      connectionAttemptGuardRef.current.invalidate();
-      connectionRef.current = null;
-      eventChannelRef.current = null;
+      connectionLifecycleRef.current.reset();
       clearPendingInput();
       resetShellIntegration();
       clearTemporaryLogin();

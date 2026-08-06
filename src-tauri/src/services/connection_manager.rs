@@ -8,7 +8,7 @@ use super::connection_paths::{
 #[cfg(test)]
 use crate::models::PrivateKeySource;
 use crate::models::{
-    AppError, ConnectResult, CredentialKind, FileEntry, FileKind, HostKeyChallenge, HostKeyChange,
+    AppError, ConnectResult, CredentialKind, FileEntry, HostKeyChallenge, HostKeyChange,
     SessionAuth, SshConnection, StoredSession, TerminalEvent, TransferEvent,
 };
 use crate::services::CredentialService;
@@ -16,18 +16,14 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use russh::client;
 #[cfg(test)]
 use russh::keys::load_secret_key;
-use russh::keys::{
-    known_hosts::{check_known_hosts_path, known_host_keys_path, learn_known_hosts_path},
-    ssh_key::{HashAlg, PublicKey},
-};
+use russh::keys::{known_hosts::learn_known_hosts_path, ssh_key::PublicKey};
 #[cfg(test)]
 use russh::MethodKind;
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::{FilePermissions, FileType as SftpFileType, OpenFlags};
+use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -44,14 +40,24 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 mod authentication;
+mod remote_files;
 mod terminal_io;
+mod transfer;
 
-use authentication::authenticate;
+use authentication::{
+    authenticate, key_algorithm, key_fingerprint, remove_known_host, HostObservation, SshClient,
+};
 #[cfg(test)]
 use authentication::{
     authentication_rejected, is_authentication_interruption, map_authentication_exchange_error,
 };
+pub(crate) use remote_files::RemoteFileWindow;
+use remote_files::{file_entry_from_remote, file_kind_rank};
 use terminal_io::{run_terminal, wait_for_channel_success};
+use transfer::{
+    finalize_local_file, finalize_remote_file, send_progress, validate_download_target,
+    validate_upload_source, ActiveTransfer,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -97,14 +103,6 @@ pub struct OneTimeLogin {
     pub username: Option<String>,
 }
 
-pub(crate) struct RemoteFileWindow {
-    pub(crate) content: Vec<u8>,
-    pub(crate) offset: u64,
-    pub(crate) file_size: u64,
-    pub(crate) starts_at_line_boundary: bool,
-    pub(crate) end_of_file: bool,
-}
-
 struct ConnectionManagerInner {
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
@@ -128,11 +126,6 @@ struct PendingHostKey {
     port: u16,
     key: PublicKey,
     expires_at: Instant,
-}
-
-struct ActiveTransfer {
-    connection_id: String,
-    cancelled: Arc<AtomicBool>,
 }
 
 struct ConnectCancellation {
@@ -242,85 +235,6 @@ enum TerminalEnd {
 enum AuthenticationOutcome {
     Authenticated,
     CredentialRequired(CredentialKind),
-}
-
-#[derive(Clone, Debug)]
-enum HostObservation {
-    Unknown(PublicKey),
-    Changed {
-        old_key: PublicKey,
-        new_key: PublicKey,
-    },
-    Failure,
-}
-
-struct SshClient {
-    host: String,
-    port: u16,
-    known_hosts_path: PathBuf,
-    known_hosts_lock: Arc<StdMutex<()>>,
-    observation: Arc<StdMutex<Option<HostObservation>>>,
-}
-
-impl client::Handler for SshClient {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
-        let _known_hosts_guard = match self.known_hosts_lock.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                set_observation(&self.observation, HostObservation::Failure);
-                return Err(russh::Error::UnknownKey);
-            }
-        };
-        match check_known_hosts_path(
-            &self.host,
-            self.port,
-            server_public_key,
-            &self.known_hosts_path,
-        ) {
-            Ok(true) => Ok(true),
-            Ok(false) => {
-                set_observation(
-                    &self.observation,
-                    HostObservation::Unknown(server_public_key.clone()),
-                );
-                Ok(false)
-            }
-            Err(russh::keys::Error::KeyChanged { .. }) => {
-                match known_host_keys_path(&self.host, self.port, &self.known_hosts_path) {
-                    Ok(keys) => {
-                        let keys = keys.into_iter().map(|(_, key)| key).collect::<Vec<_>>();
-                        let old_key = keys
-                            .iter()
-                            .find(|key| key.algorithm() == server_public_key.algorithm())
-                            .or_else(|| keys.first())
-                            .cloned();
-                        if let Some(old_key) = old_key {
-                            set_observation(
-                                &self.observation,
-                                HostObservation::Changed {
-                                    old_key,
-                                    new_key: server_public_key.clone(),
-                                },
-                            );
-                        } else {
-                            set_observation(&self.observation, HostObservation::Failure);
-                        }
-                    }
-                    Err(_) => set_observation(&self.observation, HostObservation::Failure),
-                }
-                Ok(false)
-            }
-            Err(_) => {
-                set_observation(&self.observation, HostObservation::Failure);
-                Err(russh::Error::UnknownKey)
-            }
-        }
-    }
 }
 
 impl ConnectionManager {
@@ -1842,243 +1756,6 @@ async fn open_sftp_with_handle(
 async fn open_sftp(entry: &ConnectionEntry) -> Result<SftpSession, AppError> {
     let mut handle = entry.handle.lock().await;
     open_sftp_with_handle(&mut handle).await
-}
-
-fn set_observation(observation: &StdMutex<Option<HostObservation>>, value: HostObservation) {
-    if let Ok(mut observation) = observation.lock() {
-        *observation = Some(value);
-    }
-}
-
-fn key_algorithm(key: &PublicKey) -> String {
-    key.algorithm().as_str().to_owned()
-}
-
-fn key_fingerprint(key: &PublicKey) -> String {
-    key.fingerprint(HashAlg::Sha256).to_string()
-}
-
-fn remove_known_host(path: &Path, host: &str, port: u16) -> Result<bool, AppError> {
-    if !path.exists() {
-        return Ok(false);
-    }
-    let target = if port == 22 {
-        host.to_owned()
-    } else {
-        format!("[{host}]:{port}")
-    };
-    let content = fs::read_to_string(path)
-        .map_err(|_| AppError::Persistence("无法读取主机密钥文件".to_owned()))?;
-    let mut removed = false;
-    let retained = content
-        .lines()
-        .filter(|line| {
-            let host_field = line.split_whitespace().next().unwrap_or_default();
-            let matched = !line.starts_with('#')
-                && host_field.split(',').any(|candidate| candidate == target);
-            removed |= matched;
-            !matched
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if removed {
-        let temp = path.with_extension("tmp");
-        fs::write(&temp, format!("{retained}\n"))
-            .map_err(|_| AppError::Persistence("无法写入主机密钥临时文件".to_owned()))?;
-        fs::remove_file(path)
-            .map_err(|_| AppError::Persistence("无法替换主机密钥文件".to_owned()))?;
-        fs::rename(temp, path)
-            .map_err(|_| AppError::Persistence("无法提交主机密钥文件".to_owned()))?;
-    }
-    Ok(removed)
-}
-
-fn file_entry_from_remote(entry: russh_sftp::client::fs::DirEntry) -> Option<FileEntry> {
-    let name = entry.file_name();
-    validate_remote_name(&name).ok()?;
-    let path = normalize_remote_path(&entry.path()).ok()?;
-    let metadata = entry.metadata();
-    let kind = match metadata.file_type() {
-        SftpFileType::Dir => FileKind::Folder,
-        SftpFileType::File => FileKind::File,
-        SftpFileType::Symlink => FileKind::Symlink,
-        SftpFileType::Other => FileKind::Other,
-    };
-    let mode = metadata.permissions.unwrap_or_default();
-    let type_prefix = match kind {
-        FileKind::Folder => 'd',
-        FileKind::File => '-',
-        FileKind::Symlink => 'l',
-        FileKind::Other => '?',
-    };
-    let symbolic = FilePermissions::from(mode).to_string();
-    Some(FileEntry {
-        name,
-        path,
-        kind,
-        size: matches!(kind, FileKind::File).then_some(metadata.len()),
-        modified_at: metadata.mtime.map(|value| value as u64 * 1000),
-        owner: metadata
-            .user
-            .or_else(|| metadata.uid.map(|value| value.to_string()))
-            .unwrap_or_else(|| "--".to_owned()),
-        group: metadata
-            .group
-            .or_else(|| metadata.gid.map(|value| value.to_string()))
-            .unwrap_or_else(|| "--".to_owned()),
-        permissions: format!("{type_prefix}{symbolic} ({:03o})", mode & 0o7777),
-    })
-}
-
-fn file_kind_rank(kind: FileKind) -> u8 {
-    match kind {
-        FileKind::Folder => 0,
-        FileKind::File => 1,
-        FileKind::Symlink => 2,
-        FileKind::Other => 3,
-    }
-}
-
-async fn validate_upload_source(path: &str) -> Result<PathBuf, AppError> {
-    let path = validate_local_path(path, "本地文件路径无效")?;
-    let metadata = tokio::fs::symlink_metadata(&path)
-        .await
-        .map_err(|_| AppError::Validation("无法读取本地文件".to_owned()))?;
-    if !metadata.is_file() {
-        return Err(AppError::Validation("只能上传普通文件".to_owned()));
-    }
-    tokio::fs::canonicalize(path)
-        .await
-        .map_err(|_| AppError::Validation("无法规范化本地文件路径".to_owned()))
-}
-
-async fn validate_download_target(path: &str, overwrite: bool) -> Result<PathBuf, AppError> {
-    let requested = validate_local_path(path, "本地保存路径无效")?;
-    let file_name = requested
-        .file_name()
-        .ok_or_else(|| AppError::Validation("本地保存文件名无效".to_owned()))?;
-    let parent = requested
-        .parent()
-        .ok_or_else(|| AppError::Validation("本地保存目录无效".to_owned()))?;
-    let canonical_parent = tokio::fs::canonicalize(parent)
-        .await
-        .map_err(|_| AppError::Validation("本地保存目录不存在".to_owned()))?;
-    let parent_metadata = tokio::fs::metadata(&canonical_parent)
-        .await
-        .map_err(|_| AppError::Validation("本地保存目录不存在".to_owned()))?;
-    if !parent_metadata.is_dir() {
-        return Err(AppError::Validation("本地保存目录无效".to_owned()));
-    }
-    let path = canonical_parent.join(file_name);
-    if path.to_string_lossy().len() > MAX_REMOTE_PATH_BYTES {
-        return Err(AppError::Validation("本地保存路径过长".to_owned()));
-    }
-    if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
-        if !metadata.is_file() {
-            return Err(AppError::Conflict("本地目标不是普通文件".to_owned()));
-        }
-        if !overwrite {
-            return Err(AppError::Conflict("本地文件已存在".to_owned()));
-        }
-    }
-    Ok(path)
-}
-
-fn validate_local_path(path: &str, message: &str) -> Result<PathBuf, AppError> {
-    if path.is_empty()
-        || path.len() > MAX_REMOTE_PATH_BYTES
-        || path
-            .chars()
-            .any(|character| character == '\0' || character.is_control())
-    {
-        return Err(AppError::Validation(message.to_owned()));
-    }
-    let path = PathBuf::from(path);
-    if !path.is_absolute() {
-        return Err(AppError::Validation(message.to_owned()));
-    }
-    Ok(path)
-}
-
-async fn finalize_remote_file(
-    sftp: &SftpSession,
-    temp: &str,
-    target: &str,
-    backup: &str,
-    target_exists: bool,
-) -> Result<(), AppError> {
-    if target_exists
-        && sftp
-            .rename(target.to_owned(), backup.to_owned())
-            .await
-            .is_err()
-    {
-        let _ = sftp.remove_file(temp.to_owned()).await;
-        return Err(AppError::Sftp("无法备份远程原文件".to_owned()));
-    }
-    if sftp
-        .rename(temp.to_owned(), target.to_owned())
-        .await
-        .is_err()
-    {
-        if target_exists {
-            let _ = sftp.rename(backup.to_owned(), target.to_owned()).await;
-        }
-        let _ = sftp.remove_file(temp.to_owned()).await;
-        return Err(AppError::Sftp("无法提交远程文件".to_owned()));
-    }
-    if target_exists {
-        let _ = sftp.remove_file(backup.to_owned()).await;
-    }
-    Ok(())
-}
-
-async fn finalize_local_file(
-    temp: &Path,
-    target: &Path,
-    backup: &Path,
-    overwrite: bool,
-) -> Result<(), AppError> {
-    let target_exists = tokio::fs::metadata(target).await.is_ok();
-    if target_exists {
-        if !overwrite {
-            let _ = tokio::fs::remove_file(temp).await;
-            return Err(AppError::Conflict("本地文件已存在".to_owned()));
-        }
-        tokio::fs::rename(target, backup).await.map_err(|_| {
-            let _ = std::fs::remove_file(temp);
-            AppError::Internal("无法备份本地原文件".to_owned())
-        })?;
-    }
-    if tokio::fs::rename(temp, target).await.is_err() {
-        let restored = !target_exists || tokio::fs::rename(backup, target).await.is_ok();
-        let _ = tokio::fs::remove_file(temp).await;
-        return Err(AppError::Internal(
-            if restored {
-                "无法提交本地文件"
-            } else {
-                "无法提交本地文件，且原文件恢复失败"
-            }
-            .to_owned(),
-        ));
-    }
-    if target_exists {
-        let _ = tokio::fs::remove_file(backup).await;
-    }
-    Ok(())
-}
-
-fn send_progress(
-    progress: &Channel<TransferEvent>,
-    transfer_id: &str,
-    transferred_bytes: u64,
-    total_bytes: u64,
-) {
-    let _ = progress.send(TransferEvent::Progress {
-        transfer_id: transfer_id.to_owned(),
-        transferred_bytes,
-        total_bytes,
-    });
 }
 
 fn validate_terminal_size(columns: u32, rows: u32) -> Result<(), AppError> {

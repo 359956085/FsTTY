@@ -2,6 +2,8 @@ use super::session_structure::{
     flatten_session_blocks, group_session_blocks, normalize_group, normalize_tags,
     DEFAULT_SESSION_GROUP,
 };
+mod credentials;
+mod persistence;
 mod validation;
 use crate::models::{
     AppError, CreateSessionPayload, CredentialAction, CredentialState, LoginSaveDecision,
@@ -9,42 +11,18 @@ use crate::models::{
     SessionProfile, StoredSession, UpdateSessionPayload,
 };
 use crate::services::CredentialService;
-use serde::{Deserialize, Serialize};
+use credentials::*;
+use persistence::*;
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+#[cfg(test)]
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use validation::*;
 use zeroize::Zeroizing;
 
-const STORE_VERSION: u8 = 1;
-const STORE_FILE: &str = "sessions.v1.json";
-const STORE_BACKUP_FILE: &str = "sessions.v1.json.bak";
-const STORE_TEMP_FILE: &str = "sessions.v1.json.tmp";
-const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_SESSIONS: usize = 500;
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionStore {
-    version: u8,
-    sessions: Vec<StoredSession>,
-    #[serde(default)]
-    pending_credential_cleanup_ids: Vec<String>,
-}
-
-impl Default for SessionStore {
-    fn default() -> Self {
-        Self {
-            version: STORE_VERSION,
-            sessions: Vec::new(),
-            pending_credential_cleanup_ids: Vec::new(),
-        }
-    }
-}
 
 pub struct SessionService {
     store: SessionStore,
@@ -53,29 +31,6 @@ pub struct SessionService {
     temp_path: PathBuf,
     primary_trusted: bool,
     blocked_error: Option<AppError>,
-}
-
-enum SecretChange {
-    Preserve,
-    Set(Zeroizing<String>),
-    Delete,
-}
-
-struct AuthChanges {
-    credential: SecretChange,
-    private_key: SecretChange,
-}
-
-struct SecretSnapshot {
-    credential: Option<Zeroizing<String>>,
-    private_key: Option<Zeroizing<String>>,
-}
-
-impl AuthChanges {
-    fn changed(&self) -> bool {
-        !matches!(self.credential, SecretChange::Preserve)
-            || !matches!(self.private_key, SecretChange::Preserve)
-    }
 }
 
 impl SessionService {
@@ -730,43 +685,13 @@ impl SessionService {
     }
 
     fn persist(&mut self) -> Result<(), AppError> {
-        fs::create_dir_all(
-            self.store_path
-                .parent()
-                .ok_or_else(|| AppError::Persistence("会话存储目录无效".to_owned()))?,
+        persist_store(
+            &self.store,
+            &self.store_path,
+            &self.backup_path,
+            &self.temp_path,
+            &mut self.primary_trusted,
         )
-        .map_err(|_| AppError::Persistence("无法创建会话存储目录".to_owned()))?;
-        let content = serde_json::to_vec_pretty(&self.store)
-            .map_err(|_| AppError::Persistence("无法序列化会话数据".to_owned()))?;
-        let mut temp = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&self.temp_path)
-            .map_err(|_| AppError::Persistence("无法写入会话临时文件".to_owned()))?;
-        temp.write_all(&content)
-            .and_then(|_| temp.sync_all())
-            .map_err(|_| AppError::Persistence("无法同步会话临时文件".to_owned()))?;
-        drop(temp);
-
-        if self.store_path.exists() {
-            if self.primary_trusted {
-                let _ = fs::remove_file(&self.backup_path);
-                fs::rename(&self.store_path, &self.backup_path)
-                    .map_err(|_| AppError::Persistence("无法备份会话数据".to_owned()))?;
-            } else {
-                fs::remove_file(&self.store_path)
-                    .map_err(|_| AppError::Persistence("无法替换损坏的会话数据".to_owned()))?;
-            }
-        }
-        if fs::rename(&self.temp_path, &self.store_path).is_err() {
-            if !self.store_path.exists() && self.backup_path.exists() {
-                let _ = fs::copy(&self.backup_path, &self.store_path);
-            }
-            return Err(AppError::Persistence("无法提交会话数据".to_owned()));
-        }
-        self.primary_trusted = true;
-        Ok(())
     }
 }
 
@@ -1017,194 +942,6 @@ async fn prepare_auth(
             ))
         }
     }
-}
-
-async fn apply_auth_changes(
-    session_id: &str,
-    changes: &AuthChanges,
-    snapshot: &SecretSnapshot,
-    credentials: &CredentialService,
-) -> Result<(), AppError> {
-    let result = async {
-        apply_private_key_change(session_id, &changes.private_key, credentials).await?;
-        apply_credential_change(session_id, &changes.credential, credentials).await
-    }
-    .await;
-    if let Err(error) = result {
-        restore_secrets(session_id, snapshot, credentials)
-            .await
-            .map_err(|_| {
-                AppError::Credential(
-                    "系统凭据更新失败，且旧凭据回滚失败，请重新检查凭据".to_owned(),
-                )
-            })?;
-        return Err(error);
-    }
-    Ok(())
-}
-
-async fn apply_credential_change(
-    session_id: &str,
-    change: &SecretChange,
-    credentials: &CredentialService,
-) -> Result<(), AppError> {
-    match change {
-        SecretChange::Preserve => Ok(()),
-        SecretChange::Set(value) => credentials.set(session_id, value.clone()).await,
-        SecretChange::Delete => credentials.delete(session_id).await,
-    }
-}
-
-async fn apply_private_key_change(
-    session_id: &str,
-    change: &SecretChange,
-    credentials: &CredentialService,
-) -> Result<(), AppError> {
-    match change {
-        SecretChange::Preserve => Ok(()),
-        SecretChange::Set(value) => credentials.set_private_key(session_id, value.clone()).await,
-        SecretChange::Delete => credentials.delete_private_key(session_id).await,
-    }
-}
-
-async fn snapshot_secrets(
-    session_id: &str,
-    changes: &AuthChanges,
-    credentials: &CredentialService,
-) -> Result<SecretSnapshot, AppError> {
-    let private_key = if matches!(changes.private_key, SecretChange::Preserve) {
-        credentials.get_private_key(session_id).await?
-    } else {
-        // 替换或删除时允许清除已损坏分块；其他凭据库错误仍必须阻止更新。
-        credentials.get_private_key_snapshot(session_id).await?
-    };
-    Ok(SecretSnapshot {
-        credential: credentials.get(session_id).await?,
-        private_key,
-    })
-}
-
-async fn restore_secrets(
-    session_id: &str,
-    snapshot: &SecretSnapshot,
-    credentials: &CredentialService,
-) -> Result<(), AppError> {
-    let private_key_result = match &snapshot.private_key {
-        Some(value) => credentials.set_private_key(session_id, value.clone()).await,
-        None => credentials.delete_private_key(session_id).await,
-    };
-    let credential_result = match &snapshot.credential {
-        Some(value) => credentials.set(session_id, value.clone()).await,
-        None => credentials.delete(session_id).await,
-    };
-    private_key_result.and(credential_result)
-}
-
-async fn resolve_credential_state(
-    session: &StoredSession,
-    credentials: &CredentialService,
-) -> Result<CredentialState, AppError> {
-    match &session.auth {
-        SessionAuth::Password => Ok(if credentials.get(&session.id).await?.is_some() {
-            CredentialState::Stored
-        } else {
-            CredentialState::Missing
-        }),
-        SessionAuth::PrivateKey {
-            source: PrivateKeySource::File,
-            passphrase_required: false,
-            ..
-        } => Ok(CredentialState::NotRequired),
-        SessionAuth::PrivateKey {
-            source: PrivateKeySource::File,
-            passphrase_required: true,
-            ..
-        } => Ok(if credentials.get(&session.id).await?.is_some() {
-            CredentialState::Stored
-        } else {
-            CredentialState::Missing
-        }),
-        SessionAuth::PrivateKey {
-            source: PrivateKeySource::Inline,
-            passphrase_required,
-            ..
-        } => {
-            let has_private_key = credentials.private_key_is_complete(&session.id).await?;
-            let has_passphrase =
-                !passphrase_required || credentials.get(&session.id).await?.is_some();
-            Ok(if has_private_key && has_passphrase {
-                CredentialState::Stored
-            } else {
-                CredentialState::Missing
-            })
-        }
-    }
-}
-
-fn profile_with_state(stored: StoredSession, credential_state: CredentialState) -> SessionProfile {
-    let mut profile = SessionProfile::from(stored);
-    profile.credential_state = credential_state;
-    profile
-}
-
-fn read_store(path: &Path) -> Result<Option<SessionStore>, AppError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let metadata =
-        fs::metadata(path).map_err(|_| AppError::Persistence("无法读取会话存储信息".to_owned()))?;
-    if !metadata.is_file() || metadata.len() > MAX_STORE_BYTES {
-        return Err(AppError::Persistence("会话存储文件无效".to_owned()));
-    }
-    let content =
-        fs::read(path).map_err(|_| AppError::Persistence("无法读取会话存储文件".to_owned()))?;
-    let store: SessionStore = serde_json::from_slice(&content)
-        .map_err(|_| AppError::Persistence("会话存储文件已损坏".to_owned()))?;
-    validate_store(&store)?;
-    Ok(Some(store))
-}
-
-fn validate_store(store: &SessionStore) -> Result<(), AppError> {
-    if store.version != STORE_VERSION
-        || store.sessions.len() > MAX_SESSIONS
-        || store.pending_credential_cleanup_ids.len() > MAX_SESSIONS
-    {
-        return Err(AppError::Persistence("会话存储版本或数量无效".to_owned()));
-    }
-    let mut ids = HashSet::new();
-    for session in &store.sessions {
-        validate_id(&session.id).map_err(|_| AppError::Persistence("会话 ID 无效".to_owned()))?;
-        validate_common(
-            &session.name,
-            &session.host,
-            session.port,
-            &session.username,
-            &session.group,
-            &session.tags,
-        )
-        .map_err(|_| AppError::Persistence("会话字段无效".to_owned()))?;
-        if !ids.insert(&session.id) {
-            return Err(AppError::Persistence("会话 ID 重复".to_owned()));
-        }
-        if let SessionAuth::PrivateKey { source, path, .. } = &session.auth {
-            match (source, path.as_deref()) {
-                (PrivateKeySource::File, Some(path))
-                    if path.len() <= 4096
-                        && Path::new(path).is_absolute()
-                        && !path.chars().any(char::is_control) => {}
-                (PrivateKeySource::Inline, None) => {}
-                _ => return Err(AppError::Persistence("私钥来源或路径无效".to_owned())),
-            }
-        }
-    }
-    let mut cleanup_ids = HashSet::new();
-    for id in &store.pending_credential_cleanup_ids {
-        validate_id(id).map_err(|_| AppError::Persistence("待清理凭据 ID 无效".to_owned()))?;
-        if !cleanup_ids.insert(id) {
-            return Err(AppError::Persistence("待清理凭据 ID 重复".to_owned()));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

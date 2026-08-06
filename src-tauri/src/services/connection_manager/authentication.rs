@@ -1,12 +1,150 @@
-use super::{AuthenticationOutcome, SshClient, AUTH_TIMEOUT, MAX_PRIVATE_KEY_BYTES};
+use super::{AuthenticationOutcome, AUTH_TIMEOUT, MAX_PRIVATE_KEY_BYTES};
 use crate::models::{AppError, CredentialKind, PrivateKeySource, SessionAuth, StoredSession};
 use crate::services::CredentialService;
 use russh::client::{self, KeyboardInteractiveAuthResponse};
-use russh::keys::{decode_secret_key, load_secret_key, PrivateKeyWithHashAlg};
+use russh::keys::{
+    decode_secret_key,
+    known_hosts::{check_known_hosts_path, known_host_keys_path},
+    load_secret_key,
+    ssh_key::{HashAlg, PublicKey},
+    PrivateKeyWithHashAlg,
+};
 use russh::MethodKind;
-use std::sync::Arc;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex as StdMutex},
+};
 use tokio::time;
 use zeroize::Zeroizing;
+
+#[derive(Clone, Debug)]
+pub(super) enum HostObservation {
+    Unknown(PublicKey),
+    Changed {
+        old_key: PublicKey,
+        new_key: PublicKey,
+    },
+    Failure,
+}
+
+pub(super) struct SshClient {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) known_hosts_path: PathBuf,
+    pub(super) known_hosts_lock: Arc<StdMutex<()>>,
+    pub(super) observation: Arc<StdMutex<Option<HostObservation>>>,
+}
+
+impl client::Handler for SshClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
+        let _known_hosts_guard = match self.known_hosts_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                set_observation(&self.observation, HostObservation::Failure);
+                return Err(russh::Error::UnknownKey);
+            }
+        };
+        match check_known_hosts_path(
+            &self.host,
+            self.port,
+            server_public_key,
+            &self.known_hosts_path,
+        ) {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                set_observation(
+                    &self.observation,
+                    HostObservation::Unknown(server_public_key.clone()),
+                );
+                Ok(false)
+            }
+            Err(russh::keys::Error::KeyChanged { .. }) => {
+                match known_host_keys_path(&self.host, self.port, &self.known_hosts_path) {
+                    Ok(keys) => {
+                        let keys = keys.into_iter().map(|(_, key)| key).collect::<Vec<_>>();
+                        let old_key = keys
+                            .iter()
+                            .find(|key| key.algorithm() == server_public_key.algorithm())
+                            .or_else(|| keys.first())
+                            .cloned();
+                        if let Some(old_key) = old_key {
+                            set_observation(
+                                &self.observation,
+                                HostObservation::Changed {
+                                    old_key,
+                                    new_key: server_public_key.clone(),
+                                },
+                            );
+                        } else {
+                            set_observation(&self.observation, HostObservation::Failure);
+                        }
+                    }
+                    Err(_) => set_observation(&self.observation, HostObservation::Failure),
+                }
+                Ok(false)
+            }
+            Err(_) => {
+                set_observation(&self.observation, HostObservation::Failure);
+                Err(russh::Error::UnknownKey)
+            }
+        }
+    }
+}
+
+fn set_observation(observation: &StdMutex<Option<HostObservation>>, value: HostObservation) {
+    if let Ok(mut observation) = observation.lock() {
+        *observation = Some(value);
+    }
+}
+
+pub(super) fn key_algorithm(key: &PublicKey) -> String {
+    key.algorithm().as_str().to_owned()
+}
+
+pub(super) fn key_fingerprint(key: &PublicKey) -> String {
+    key.fingerprint(HashAlg::Sha256).to_string()
+}
+
+pub(super) fn remove_known_host(path: &Path, host: &str, port: u16) -> Result<bool, AppError> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let target = if port == 22 {
+        host.to_owned()
+    } else {
+        format!("[{host}]:{port}")
+    };
+    let content = fs::read_to_string(path)
+        .map_err(|_| AppError::Persistence("无法读取主机密钥文件".to_owned()))?;
+    let mut removed = false;
+    let retained = content
+        .lines()
+        .filter(|line| {
+            let host_field = line.split_whitespace().next().unwrap_or_default();
+            let matched = !line.starts_with('#')
+                && host_field.split(',').any(|candidate| candidate == target);
+            removed |= matched;
+            !matched
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if removed {
+        let temp = path.with_extension("tmp");
+        fs::write(&temp, format!("{retained}\n"))
+            .map_err(|_| AppError::Persistence("无法写入主机密钥临时文件".to_owned()))?;
+        fs::remove_file(path)
+            .map_err(|_| AppError::Persistence("无法替换主机密钥文件".to_owned()))?;
+        fs::rename(temp, path)
+            .map_err(|_| AppError::Persistence("无法提交主机密钥文件".to_owned()))?;
+    }
+    Ok(removed)
+}
 
 pub(super) async fn authenticate(
     handle: &mut client::Handle<SshClient>,

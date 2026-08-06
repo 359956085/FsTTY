@@ -1,0 +1,165 @@
+// @vitest-environment jsdom
+
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppSettings } from "../../shared/api/types";
+import type { AppUpdaterController } from "./useAppUpdater";
+import { useGeneralSettings } from "./useGeneralSettings";
+import { useMcpSettings } from "./useMcpSettings";
+
+const apiMocks = vi.hoisted(() => ({
+  getMcpHttpClientConfig: vi.fn(),
+  getMcpPermissionCatalog: vi.fn(),
+  getMcpStdioClientConfig: vi.fn(),
+  listSessions: vi.fn(),
+  updateAppSettings: vi.fn(),
+}));
+
+vi.mock("../../shared/api/client", () => ({
+  api: apiMocks,
+}));
+
+vi.mock("./useMcpPromptCopy", () => ({
+  useMcpPromptCopy: () => ({
+    copied: false,
+    copying: false,
+    copy: vi.fn(),
+    error: null,
+  }),
+}));
+
+const shortcuts = {
+  terminalCopy: { alt: false, code: "KeyC", ctrl: true, shift: true },
+  terminalPaste: { alt: false, code: "KeyV", ctrl: true, shift: true },
+  commandHistory: { alt: false, code: "KeyR", ctrl: true, shift: false },
+  commandHistorySearch: { alt: false, code: "KeyR", ctrl: true, shift: true },
+};
+
+const settings: AppSettings = {
+  allowRemoteClipboardWrite: false,
+  autoUpdate: true,
+  ignoredUpdateVersion: null,
+  language: "zh-CN",
+  mcpEnabled: true,
+  mcpGroupPermissions: [],
+  mcpHttpEnabled: false,
+  mcpHttpPort: 37653,
+  recordMcpToolInputs: false,
+  shortcuts,
+  updateProxy: "",
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+describe("设置状态控制器", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMocks.listSessions.mockResolvedValue([]);
+    apiMocks.getMcpPermissionCatalog.mockResolvedValue([]);
+  });
+
+  it("串行保存更新设置，并按提交顺序应用结果", async () => {
+    const first = deferred<AppSettings>();
+    const second = deferred<AppSettings>();
+    apiMocks.updateAppSettings
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useGeneralSettings({
+        onChange,
+        settings,
+        translate: (key) => key,
+        updater: {} as AppUpdaterController,
+      }),
+    );
+
+    let firstSave!: Promise<AppSettings | null>;
+    let secondSave!: Promise<AppSettings | null>;
+    act(() => {
+      firstSave = result.current.saveUpdateSettings(true, "http://first");
+      secondSave = result.current.saveUpdateSettings(true, "http://second");
+    });
+    await act(async () => Promise.resolve());
+    expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
+
+    const firstResult = { ...settings, updateProxy: "http://first" };
+    await act(async () => {
+      first.resolve(firstResult);
+      await firstSave;
+    });
+    expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(2);
+
+    const secondResult = { ...settings, updateProxy: "http://second" };
+    await act(async () => {
+      second.resolve(secondResult);
+      await secondSave;
+    });
+    expect(onChange).toHaveBeenNthCalledWith(1, firstResult);
+    expect(onChange).toHaveBeenNthCalledWith(2, secondResult);
+  });
+
+  it("卸载后不应用保存结果", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.updateAppSettings.mockReturnValue(request.promise);
+    const onChange = vi.fn();
+    const { result, unmount } = renderHook(() =>
+      useGeneralSettings({
+        onChange,
+        settings,
+        translate: (key) => key,
+        updater: {} as AppUpdaterController,
+      }),
+    );
+    let save!: Promise<AppSettings | null>;
+    act(() => {
+      save = result.current.saveUpdateSettings(true);
+    });
+    await act(async () => Promise.resolve());
+    expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
+    unmount();
+    request.resolve(settings);
+    await save;
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("MCP 配置只接受最新请求，关闭后丢弃响应", async () => {
+    const oldRequest = deferred<string>();
+    const newRequest = deferred<string>();
+    apiMocks.getMcpHttpClientConfig
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockImplementationOnce(() => newRequest.promise);
+    const { result } = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+
+    act(() => result.current.openConfigDialog("http"));
+    let latest!: Promise<void>;
+    act(() => {
+      latest = result.current.loadConfig("http", "claude");
+    });
+    await act(async () => {
+      newRequest.resolve("new-config");
+      await latest;
+    });
+    expect(result.current.configDialog?.config).toBe("new-config");
+
+    oldRequest.resolve("old-config");
+    await act(async () => Promise.resolve());
+    expect(result.current.configDialog?.config).toBe("new-config");
+
+    const closedRequest = deferred<string>();
+    apiMocks.getMcpHttpClientConfig.mockReturnValueOnce(closedRequest.promise);
+    act(() => result.current.openConfigDialog("http"));
+    act(() => result.current.closeConfigDialog());
+    closedRequest.resolve("closed-config");
+    await act(async () => Promise.resolve());
+    expect(result.current.configDialog).toBeNull();
+  });
+});
