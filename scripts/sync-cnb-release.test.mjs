@@ -26,6 +26,26 @@ describe("CNB 更新元数据", () => {
     });
   });
 
+  it("兼容 GitHub API 域名生成的 Release 下载地址", () => {
+    const manifest = rewriteCnbUpdateManifest(
+      {
+        version: "1.2.0",
+        platforms: {
+          "windows-x86_64": {
+            signature: "signed-value",
+            url: "https://api.github.com/repos/359956085/FsTTY/releases/download/v1.2.0/FsTTY_1.2.0_x64-setup.exe",
+          },
+        },
+      },
+      "359956085/FsTTY",
+      "v1.2.0",
+    );
+
+    expect(manifest.platforms["windows-x86_64"].url).toBe(
+      "https://cnb.cool/359956085/FsTTY/-/releases/download/v1.2.0/FsTTY_1.2.0_x64-setup.exe",
+    );
+  });
+
   it("拒绝第三方下载域名和缺失签名", () => {
     expect(() =>
       rewriteCnbUpdateManifest(
@@ -41,6 +61,39 @@ describe("CNB 更新元数据", () => {
         "v1.2.0",
       ),
     ).toThrow("缺少签名");
+  });
+
+  it("GitHub API 地址仍拒绝错误仓库和标签", () => {
+    expect(() =>
+      rewriteCnbUpdateManifest(
+        {
+          version: "1.2.0",
+          platforms: {
+            "windows-x86_64": {
+              signature: "x",
+              url: "https://api.github.com/repos/other/FsTTY/releases/download/v1.2.0/app.exe",
+            },
+          },
+        },
+        "359956085/FsTTY",
+        "v1.2.0",
+      ),
+    ).toThrow("非预期仓库或标签");
+    expect(() =>
+      rewriteCnbUpdateManifest(
+        {
+          version: "1.2.0",
+          platforms: {
+            "windows-x86_64": {
+              signature: "x",
+              url: "https://api.github.com/repos/359956085/FsTTY/releases/download/v1.1.0/app.exe",
+            },
+          },
+        },
+        "359956085/FsTTY",
+        "v1.2.0",
+      ),
+    ).toThrow("非预期仓库或标签");
   });
 
   it("拒绝非正式版本标签", () => {

@@ -18,6 +18,17 @@ function releaseDownloadUrl(repo, tag, fileName) {
   return `${CNB_WEB_BASE}/${encodeRepoPath(repo)}/-/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(fileName)}`;
 }
 
+function githubReleasePathPrefix(hostname, repo, tag) {
+  const releasePath = `${repo}/releases/download/${encodeURIComponent(tag)}/`;
+  if (hostname === "github.com") {
+    return `/${releasePath}`;
+  }
+  if (hostname === "api.github.com") {
+    return `/repos/${releasePath}`;
+  }
+  return null;
+}
+
 export function rewriteCnbUpdateManifest(manifest, repo, tag) {
   if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
     throw new Error(`CNB 发布标签无效：${tag}`);
@@ -44,10 +55,16 @@ export function rewriteCnbUpdateManifest(manifest, repo, tag) {
         throw new Error(`latest.json 平台 ${platform} 缺少签名`);
       }
       const sourceUrl = new URL(item.url);
-      if (sourceUrl.protocol !== "https:" || sourceUrl.hostname !== "github.com") {
-        throw new Error(`latest.json 平台 ${platform} 包含非预期下载域名`);
+      if (sourceUrl.protocol !== "https:") {
+        throw new Error(`latest.json 平台 ${platform} 下载地址必须使用 HTTPS`);
       }
-      const expectedPathPrefix = `/${repo}/releases/download/${tag}/`;
+      const expectedPathPrefix = githubReleasePathPrefix(sourceUrl.hostname, repo, tag);
+      if (!expectedPathPrefix) {
+        // 只接受 GitHub 官方页面或 API 域名，避免把第三方清单地址带入国内更新源。
+        throw new Error(
+          `latest.json 平台 ${platform} 包含非预期下载域名：${sourceUrl.hostname}`,
+        );
+      }
       if (!sourceUrl.pathname.startsWith(expectedPathPrefix)) {
         throw new Error(`latest.json 平台 ${platform} 包含非预期仓库或标签`);
       }
