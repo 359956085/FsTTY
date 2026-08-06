@@ -729,6 +729,9 @@ fn access_error_response(error: McpAccessError) -> Response {
         McpAccessError::Internal(message) => {
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &message)
         }
+        McpAccessError::UnsupportedSyntax { message, .. } => {
+            error_response(StatusCode::BAD_REQUEST, &message)
+        }
     }
 }
 

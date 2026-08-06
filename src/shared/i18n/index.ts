@@ -315,7 +315,7 @@ void i18n.use(initReactI18next).init({
           mcpCommandPolicyExportFailed: "无法导出高级命令策略",
           mcpCommandPolicyAdd: "新增规则",
           mcpCommandPolicyGlobWarning:
-            "模糊匹配作用于完整命令且区分大小写；* 和 ? 可覆盖空格及 &&、;、| 等 Shell 内容，请谨慎配置白名单规则。",
+            "精确与模糊规则均按拼接命令的每个命令段匹配且区分大小写。支持常用简单命令链；嵌套与复合语法会被拒绝，MCP 错误将返回完整限制。请勿宽泛放行 sh -c、bash -c 或 eval。",
           mcpCommandPolicyAllowEmpty: "白名单没有规则：所有命令均被拒绝",
           mcpCommandPolicyExcludeEmpty: "黑名单没有规则：所有命令均被允许",
           mcpCommandPolicyExact: "精确匹配",
@@ -735,7 +735,7 @@ void i18n.use(initReactI18next).init({
           mcpCommandPolicyExportFailed: "Unable to export the advanced command policy",
           mcpCommandPolicyAdd: "Add rule",
           mcpCommandPolicyGlobWarning:
-            "Glob matching is case-sensitive and applies to the full command. * and ? can cover spaces and shell content such as &&, ;, and |. Configure allowlist rules carefully.",
+            "Exact and glob rules are case-sensitive and apply to every segment of a chained command. Common simple command chains are supported; nested and compound syntax is rejected with the full limitations in the MCP error. Do not broadly allow sh -c, bash -c, or eval.",
           mcpCommandPolicyAllowEmpty: "The allowlist has no rules: all commands are denied",
           mcpCommandPolicyExcludeEmpty: "The blocklist has no rules: all commands are allowed",
           mcpCommandPolicyExact: "Exact match",

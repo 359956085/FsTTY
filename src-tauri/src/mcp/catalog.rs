@@ -174,6 +174,9 @@ Use FsTTY MCP:
 - Call list_sessions first to discover available sessions.
 - Use get_device_status for status; list_remote_files, read_remote_file, and search_remote_file for files and logs.
 - execute_command runs remote shell commands when commandExecute permission is enabled.
+- Advanced command policies support POSIX/Bash simple command chains separated by ;, &&, ||, |, |&, &, or newlines; every segment is authorized independently.
+- Nested and compound shell syntax is rejected. Split complex operations into separate execute_command calls.
+- Avoid broad sh -c, bash -c, or eval rules because interpreter arguments are not parsed recursively.
 - get_permission_guide returns FsTTY permission setup steps for a tool.
 - stdio local transfers require MCP client Roots. HTTP transfers use create_remote_file_upload_link or create_remote_file_download_link; links expire after five minutes.
 - Host-key and credential issues are handled in FsTTY.

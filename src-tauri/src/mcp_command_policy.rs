@@ -8,6 +8,11 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
+mod shell;
+
+use shell::split_simple_command_chain;
+pub(crate) use shell::UnsupportedShellSyntaxKind;
+
 pub const MAX_RULES_PER_LIST: usize = 1_000;
 pub const MAX_PATTERN_BYTES: usize = 4 * 1024;
 const POLICY_FILE_VERSION: u8 = 2;
@@ -77,22 +82,42 @@ fn normalize_rules(rules: &mut [McpCommandRule], list_name: &str) -> Result<(), 
     Ok(())
 }
 
-pub fn command_allowed(policy: &McpCommandPolicy, command: &str) -> bool {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommandPolicyDecision {
+    Allowed,
+    Denied,
+    UnsupportedSyntax(UnsupportedShellSyntaxKind),
+}
+
+pub(crate) fn evaluate_command_policy(
+    policy: &McpCommandPolicy,
+    command: &str,
+) -> CommandPolicyDecision {
     if !policy.enabled {
-        return true;
+        return CommandPolicyDecision::Allowed;
     }
-    let command = command.trim();
+    let segments = match split_simple_command_chain(command) {
+        Ok(segments) => segments,
+        Err(kind) => return CommandPolicyDecision::UnsupportedSyntax(kind),
+    };
     let rules = match policy.mode {
         McpCommandPolicyMode::Allow => &policy.allow_rules,
         McpCommandPolicyMode::Exclude => &policy.exclude_rules,
     };
-    let matched = rules.iter().any(|rule| match rule.match_type {
-        McpCommandMatchType::Exact => command == rule.pattern,
-        McpCommandMatchType::Glob => glob_matches(&rule.pattern, command),
-    });
-    match policy.mode {
-        McpCommandPolicyMode::Allow => matched,
-        McpCommandPolicyMode::Exclude => !matched,
+    let matches_rule = |segment: &str| {
+        rules.iter().any(|rule| match rule.match_type {
+            McpCommandMatchType::Exact => segment == rule.pattern,
+            McpCommandMatchType::Glob => glob_matches(&rule.pattern, segment),
+        })
+    };
+    let allowed = match policy.mode {
+        McpCommandPolicyMode::Allow => segments.iter().all(|segment| matches_rule(segment)),
+        McpCommandPolicyMode::Exclude => !segments.iter().any(|segment| matches_rule(segment)),
+    };
+    if allowed {
+        CommandPolicyDecision::Allowed
+    } else {
+        CommandPolicyDecision::Denied
     }
 }
 
@@ -261,13 +286,19 @@ mod tests {
             allow_rules: vec![rule(McpCommandMatchType::Exact, "pwd")],
             exclude_rules: Vec::new(),
         };
-        assert!(command_allowed(&policy, "  pwd \n"));
-        assert!(!command_allowed(&policy, "PWD"));
+        assert_eq!(
+            evaluate_command_policy(&policy, "  pwd \n"),
+            CommandPolicyDecision::Allowed
+        );
+        assert_eq!(
+            evaluate_command_policy(&policy, "PWD"),
+            CommandPolicyDecision::Denied
+        );
     }
 
     #[test]
-    fn 模糊匹配支持通配符转义复合命令和unicode() {
-        assert!(glob_matches("echo * && printf ?", "echo 你好 && printf 好"));
+    fn 模糊匹配支持通配符转义和unicode() {
+        assert!(glob_matches("echo *", "echo 你好"));
         assert!(glob_matches(r"echo \* \? \", r"echo * ? \"));
         assert!(!glob_matches("git ?", "git 状态表"));
         assert!(!glob_matches("git *", "Git status"));
@@ -281,11 +312,65 @@ mod tests {
             allow_rules: Vec::new(),
             exclude_rules: Vec::new(),
         };
-        assert!(!command_allowed(&policy, "pwd"));
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd"),
+            CommandPolicyDecision::Denied
+        );
         policy.mode = McpCommandPolicyMode::Exclude;
-        assert!(command_allowed(&policy, "pwd"));
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd"),
+            CommandPolicyDecision::Allowed
+        );
         policy.enabled = false;
-        assert!(command_allowed(&policy, "pwd"));
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd"),
+            CommandPolicyDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn 白名单要求每段命中且黑名单任一段命中即拒绝() {
+        let mut policy = McpCommandPolicy {
+            enabled: true,
+            mode: McpCommandPolicyMode::Allow,
+            allow_rules: vec![
+                rule(McpCommandMatchType::Exact, "pwd"),
+                rule(McpCommandMatchType::Glob, "git status *"),
+            ],
+            exclude_rules: vec![rule(McpCommandMatchType::Glob, "rm *")],
+        };
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd && git status --short"),
+            CommandPolicyDecision::Allowed
+        );
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd && whoami"),
+            CommandPolicyDecision::Denied
+        );
+
+        policy.mode = McpCommandPolicyMode::Exclude;
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd; rm -rf /tmp/demo; whoami"),
+            CommandPolicyDecision::Denied
+        );
+        assert_eq!(
+            evaluate_command_policy(&policy, "pwd; whoami"),
+            CommandPolicyDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn 高级策略关闭时不解析语法() {
+        let policy = McpCommandPolicy {
+            enabled: false,
+            mode: McpCommandPolicyMode::Allow,
+            allow_rules: Vec::new(),
+            exclude_rules: Vec::new(),
+        };
+        assert_eq!(
+            evaluate_command_policy(&policy, "echo $(pwd)"),
+            CommandPolicyDecision::Allowed
+        );
     }
 
     #[test]

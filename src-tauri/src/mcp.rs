@@ -543,7 +543,7 @@ impl McpService {
     }
 
     #[tool(
-        description = "执行非交互式远程 Shell 命令",
+        description = "执行非交互式远程 Shell 命令。高级策略支持 POSIX/Bash 简单命令及 ;、&&、||、|、|&、&、换行拼接，并逐段授权；嵌套或复合语法会被拒绝并返回完整能力范围",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1028,6 +1028,10 @@ pub(crate) enum McpAccessError {
     NotFound(String),
     Forbidden(String),
     Internal(String),
+    UnsupportedSyntax {
+        message: String,
+        kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind,
+    },
 }
 
 impl Display for McpAccessError {
@@ -1036,6 +1040,7 @@ impl Display for McpAccessError {
             Self::NotFound(message) | Self::Forbidden(message) | Self::Internal(message) => {
                 formatter.write_str(message)
             }
+            Self::UnsupportedSyntax { message, .. } => formatter.write_str(message),
         }
     }
 }
@@ -1057,13 +1062,20 @@ async fn authorized_command_session(
 ) -> Result<StoredSession, McpAccessError> {
     let (session, access, language) =
         authorized_session_context(state, session_id, Permission::Command).await?;
-    if access.command_policy.enabled
-        && !crate::mcp_command_policy::command_allowed(&access.command_policy, command)
-    {
-        return Err(McpAccessError::Forbidden(localized_access_error(
-            &language,
-            AccessIssue::CommandPolicyDenied,
-        )));
+    match crate::mcp_command_policy::evaluate_command_policy(&access.command_policy, command) {
+        crate::mcp_command_policy::CommandPolicyDecision::Allowed => {}
+        crate::mcp_command_policy::CommandPolicyDecision::Denied => {
+            return Err(McpAccessError::Forbidden(localized_access_error(
+                &language,
+                AccessIssue::CommandPolicyDenied,
+            )));
+        }
+        crate::mcp_command_policy::CommandPolicyDecision::UnsupportedSyntax(kind) => {
+            return Err(McpAccessError::UnsupportedSyntax {
+                message: localized_unsupported_syntax_error(&language, kind),
+                kind,
+            });
+        }
     }
     Ok(session)
 }
@@ -1158,6 +1170,51 @@ fn localized_access_error(language: &Language, issue: AccessIssue) -> String {
     }
 }
 
+fn localized_unsupported_syntax_error(
+    language: &Language,
+    kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind,
+) -> String {
+    if matches!(language, Language::EnUs) {
+        format!(
+            "The command uses POSIX/Bash syntax unsupported by the advanced command policy ({}). Split it into separate simple execute_command calls.",
+            kind.as_str()
+        )
+    } else {
+        format!(
+            "命令包含高级策略不支持的 POSIX/Bash 语法（{}）。请拆分为多次简单的 execute_command 调用。",
+            kind.as_str()
+        )
+    }
+}
+
+fn unsupported_shell_syntax_data(
+    kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind,
+) -> Value {
+    json!({
+        "reason": "unsupportedShellSyntax",
+        "detectedKind": kind.as_str(),
+        "supportedSyntax": {
+            "commandType": "posixSimpleCommandChain",
+            "operators": [";", "&&", "||", "|", "|&", "&", "newline"],
+            "quoting": ["singleQuote", "doubleQuote", "ansiCQuote", "backslashEscape"],
+            "redirections": ["input", "output", "append", "fileDescriptor"]
+        },
+        "rejectedSyntax": [
+            { "kind": "commandSubstitution", "forms": ["$(...)", "`...`"] },
+            { "kind": "processSubstitution", "forms": ["<(...)", ">(...)"] },
+            { "kind": "arithmeticExpansion", "forms": ["$((...))", "((...))"] },
+            { "kind": "subshell", "forms": ["(...)"] },
+            { "kind": "commandGroup", "forms": ["{ ...; }"] },
+            { "kind": "functionDefinition", "forms": ["name() { ...; }", "function name { ...; }"] },
+            { "kind": "compoundCommand", "forms": ["if", "for", "while", "until", "case", "select"] },
+            { "kind": "hereDocument", "forms": ["<<WORD", "<<<word"] },
+            { "kind": "malformedSyntax", "forms": ["unclosedQuote", "trailingEscape", "missingOperand", "invalidOperator"] },
+            { "kind": "segmentLimit", "forms": ["moreThan256Segments"] }
+        ],
+        "suggestedAction": "splitIntoSeparateExecuteCommandCalls"
+    })
+}
+
 fn mcp_error(error: AppError) -> McpError {
     McpError::internal_error(error.to_string(), None)
 }
@@ -1167,6 +1224,9 @@ fn mcp_access_error(error: McpAccessError) -> McpError {
         McpAccessError::Internal(message) => McpError::internal_error(message, None),
         McpAccessError::NotFound(message) | McpAccessError::Forbidden(message) => {
             McpError::invalid_request(message, None)
+        }
+        McpAccessError::UnsupportedSyntax { message, kind } => {
+            McpError::invalid_request(message, Some(unsupported_shell_syntax_data(kind)))
         }
     }
 }
@@ -1248,6 +1308,44 @@ impl ServerHandler for McpService {
 mod tests {
     use super::*;
     use crate::services::SettingsService;
+
+    #[test]
+    fn 语法拒绝返回完整稳定能力范围且不泄露命令位置() {
+        let error = mcp_access_error(McpAccessError::UnsupportedSyntax {
+            message: localized_unsupported_syntax_error(
+                &Language::ZhCn,
+                crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
+            ),
+            kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
+        });
+        let data = error.data.expect("语法拒绝应包含结构化能力范围");
+        assert_eq!(data["reason"], "unsupportedShellSyntax");
+        assert_eq!(data["detectedKind"], "commandSubstitution");
+        assert_eq!(
+            data["rejectedSyntax"]
+                .as_array()
+                .expect("拒绝范围应为数组")
+                .iter()
+                .map(|entry| entry["kind"].as_str().expect("类别应为字符串"))
+                .collect::<Vec<_>>(),
+            [
+                "commandSubstitution",
+                "processSubstitution",
+                "arithmeticExpansion",
+                "subshell",
+                "commandGroup",
+                "functionDefinition",
+                "compoundCommand",
+                "hereDocument",
+                "malformedSyntax",
+                "segmentLimit"
+            ]
+        );
+        assert!(data.get("position").is_none());
+        assert!(data.get("range").is_none());
+        assert!(data.get("source").is_none());
+        assert!(data.get("snippet").is_none());
+    }
 
     #[test]
     fn 写文件审计输入隐藏正文并记录长度和摘要() {
@@ -1641,6 +1739,10 @@ mod tests {
         assert!(prompt.contains("discover available sessions"));
         assert!(prompt.contains("execute_command runs remote shell commands"));
         assert!(prompt.contains("commandExecute permission"));
+        assert!(prompt.contains("every segment is authorized independently"));
+        assert!(prompt.contains("Nested and compound shell syntax is rejected"));
+        assert!(prompt.contains("separate execute_command calls"));
+        assert!(prompt.contains("sh -c, bash -c, or eval"));
         assert!(prompt.contains("MCP client Roots"));
         assert!(prompt.contains("links expire after five minutes"));
         assert!(prompt.contains("Host-key and credential issues are handled in FsTTY"));
@@ -1857,9 +1959,33 @@ mod tests {
                     .await
                     .is_ok()
             );
+            assert!(authorized_command_session(
+                &service.state,
+                &session_id,
+                "git status --short && git status --branch"
+            )
+            .await
+            .is_ok());
             assert!(matches!(
                 authorized_command_session(&service.state, &session_id, "rm -rf /tmp/demo").await,
                 Err(McpAccessError::Forbidden(_))
+            ));
+            assert!(matches!(
+                authorized_command_session(
+                    &service.state,
+                    &session_id,
+                    "git status --short && rm -rf /tmp/demo"
+                )
+                .await,
+                Err(McpAccessError::Forbidden(_))
+            ));
+            assert!(matches!(
+                authorized_command_session(&service.state, &session_id, "echo $(pwd)").await,
+                Err(McpAccessError::UnsupportedSyntax {
+                    kind:
+                        crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
+                    ..
+                })
             ));
         }
 
