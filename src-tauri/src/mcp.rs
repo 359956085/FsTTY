@@ -13,7 +13,6 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -32,11 +31,13 @@ use zeroize::Zeroizing;
 
 const CONNECTION_IDLE: Duration = Duration::from_secs(300);
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
+mod audit;
 mod catalog;
 mod http;
 mod result;
 mod search;
 
+use audit::{write_file_audit_input, AuditGuard};
 use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
@@ -95,35 +96,6 @@ struct CachedConnection {
     last_used: Instant,
 }
 
-struct AuditGuard {
-    service: crate::services::McpAuditService,
-    transport: &'static str,
-    tool: &'static str,
-    session_id: Option<String>,
-    started: Instant,
-    succeeded: bool,
-    input: Option<Value>,
-}
-
-impl AuditGuard {
-    fn succeed(mut self) {
-        self.succeeded = true;
-    }
-}
-
-impl Drop for AuditGuard {
-    fn drop(&mut self) {
-        self.service.record(
-            self.transport,
-            self.tool,
-            self.session_id.as_deref(),
-            if self.succeeded { "success" } else { "error" },
-            self.started.elapsed(),
-            self.input.as_ref(),
-        );
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct SessionArgs {
@@ -165,19 +137,6 @@ struct WriteFileArgs {
     content: String,
     #[serde(default)]
     base64: bool,
-}
-
-fn write_file_audit_input(args: &WriteFileArgs) -> Value {
-    // 文件正文可能包含密钥或大段源码，只保留可核对内容一致性的摘要。
-    let content_sha256 = format!("{:x}", Sha256::digest(args.content.as_bytes()));
-    json!({
-        "sessionId": args.session_id,
-        "path": args.path,
-        "contentOmitted": true,
-        "contentBytes": args.content.len(),
-        "contentSha256": content_sha256,
-        "base64": args.base64,
-    })
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -307,7 +266,9 @@ impl McpService {
         let input = current_mcp_settings(&self.state)
             .ok()
             .filter(|settings| settings.record_mcp_tool_inputs)
-            .map(|_| write_file_audit_input(args));
+            .map(|_| {
+                write_file_audit_input(&args.session_id, &args.path, &args.content, args.base64)
+            });
         self.audit_guard("write_remote_file", Some(&args.session_id), input)
     }
 
@@ -317,15 +278,13 @@ impl McpService {
         session_id: Option<&str>,
         input: Option<Value>,
     ) -> AuditGuard {
-        AuditGuard {
-            service: self.state.mcp_audit_service.clone(),
-            transport: self.transport,
+        AuditGuard::new(
+            self.state.mcp_audit_service.clone(),
+            self.transport,
             tool,
-            session_id: session_id.map(ToOwned::to_owned),
-            started: Instant::now(),
-            succeeded: false,
+            session_id.map(ToOwned::to_owned),
             input,
-        }
+        )
     }
 
     fn operation_lock(
@@ -1454,12 +1413,7 @@ mod tests {
 
     #[test]
     fn 写文件审计输入隐藏正文并记录长度和摘要() {
-        let input = write_file_audit_input(&WriteFileArgs {
-            session_id: "session-a".to_owned(),
-            path: "/tmp/file".to_owned(),
-            content: "secret".to_owned(),
-            base64: false,
-        });
+        let input = write_file_audit_input("session-a", "/tmp/file", "secret", false);
 
         assert_eq!(input["contentOmitted"], true);
         assert_eq!(input["contentBytes"], 6);

@@ -33,6 +33,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
 import { resolveApiError } from "../../shared/api/errors";
+import { createLatestRequestGuard } from "../../shared/async/latestRequest";
 import { Button } from "../../shared/ui/Button";
 import type { TransferProgress } from "./useSessionConnections";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
@@ -60,6 +61,11 @@ import {
 } from "./workspacePreferences";
 
 type ResizableFileColumn = "name" | "size" | "modified";
+const RESIZABLE_FILE_COLUMNS: readonly ResizableFileColumn[] = [
+  "name",
+  "size",
+  "modified",
+];
 
 const FILE_COLUMN_KEYBOARD_STEP = 8;
 const REMOTE_ENTRY_DRAG_THRESHOLD = 5;
@@ -167,7 +173,7 @@ export function FilesPane({
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
   const inlineRenameRef = useRef<InlineRenameState | null>(null);
   const inlineRenameInputRef = useRef<HTMLInputElement>(null);
-  const inlineRenameOperationIdRef = useRef(0);
+  const inlineRenameOperationRef = useRef(createLatestRequestGuard());
   const inlineRenameSubmittingRef = useRef(false);
   const fileNameClickRef = useRef<FileNameClick | null>(null);
   const filePointerIntentRef = useRef<FilePointerIntent | null>(null);
@@ -176,7 +182,7 @@ export function FilesPane({
   const [remoteDrag, setRemoteDrag] = useState<RemoteEntryDrag | null>(null);
   const remotePointerDragRef = useRef<RemoteEntryPointerDrag | null>(null);
   const suppressRemoteClickRef = useRef(false);
-  const moveOperationIdRef = useRef(0);
+  const moveOperationRef = useRef(createLatestRequestGuard());
   const moveSuccessTimerRef = useRef<number | null>(null);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
   const [moveRequestPending, setMoveRequestPending] = useState(false);
@@ -194,7 +200,7 @@ export function FilesPane({
   dragUploadRef.current = { enabled: !operationBlocked, onUploadFiles };
 
   const clearMoveFeedback = useCallback(() => {
-    moveOperationIdRef.current += 1;
+    moveOperationRef.current.invalidate();
     if (moveSuccessTimerRef.current !== null) {
       window.clearTimeout(moveSuccessTimerRef.current);
       moveSuccessTimerRef.current = null;
@@ -205,7 +211,7 @@ export function FilesPane({
   const cancelInlineRename = useCallback(() => {
     fileNameClickRef.current = null;
     filePointerIntentRef.current = null;
-    inlineRenameOperationIdRef.current += 1;
+    inlineRenameOperationRef.current.invalidate();
     inlineRenameRef.current = null;
     setInlineRename(null);
   }, []);
@@ -222,12 +228,8 @@ export function FilesPane({
 
   useLayoutEffect(() => {
     fileColumnsRef.current = fileColumns;
-    for (const [column, value] of Object.entries(fileColumns)) {
-      applyFileColumnWidth(
-        tableRef.current,
-        column as keyof FileColumnPreferences,
-        value,
-      );
+    for (const column of RESIZABLE_FILE_COLUMNS) {
+      applyFileColumnWidth(tableRef.current, column, fileColumns[column]);
     }
   }, [fileColumns]);
 
@@ -282,6 +284,8 @@ export function FilesPane({
     let disposed = false;
     let removeDragDropListener: () => void = () => undefined;
     let removeScaleListener: () => void = () => undefined;
+    const inlineRenameOperation = inlineRenameOperationRef.current;
+    const moveOperation = moveOperationRef.current;
     const handleWindowBlur = () => {
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
@@ -344,9 +348,9 @@ export function FilesPane({
       suppressRemoteClickRef.current = false;
       fileNameClickRef.current = null;
       filePointerIntentRef.current = null;
-      inlineRenameOperationIdRef.current += 1;
+      inlineRenameOperation.invalidate();
       inlineRenameRef.current = null;
-      moveOperationIdRef.current += 1;
+      moveOperation.invalidate();
       if (moveSuccessTimerRef.current !== null) {
         window.clearTimeout(moveSuccessTimerRef.current);
         moveSuccessTimerRef.current = null;
@@ -484,8 +488,7 @@ export function FilesPane({
       return;
     }
 
-    const operationId = inlineRenameOperationIdRef.current + 1;
-    inlineRenameOperationIdRef.current = operationId;
+    const operationId = inlineRenameOperationRef.current.begin();
     inlineRenameSubmittingRef.current = true;
     setOperationPending(true);
     const pending = { ...current, value: newName, error: null };
@@ -493,12 +496,12 @@ export function FilesPane({
     setInlineRename(pending);
     try {
       await onRenameEntry(current.file.path, newName);
-      if (inlineRenameOperationIdRef.current === operationId) {
+      if (inlineRenameOperationRef.current.isCurrent(operationId)) {
         inlineRenameRef.current = null;
         setInlineRename(null);
       }
     } catch (error) {
-      if (inlineRenameOperationIdRef.current === operationId) {
+      if (inlineRenameOperationRef.current.isCurrent(operationId)) {
         const failed = {
           ...pending,
           error: resolveApiError(error, t("errors.unknown")),
@@ -604,8 +607,7 @@ export function FilesPane({
       return;
     }
 
-    const operationId = moveOperationIdRef.current + 1;
-    moveOperationIdRef.current = operationId;
+    const operationId = moveOperationRef.current.begin();
     setMoveRequestPending(true);
     setMoveStatus({
       kind: "moving",
@@ -614,7 +616,7 @@ export function FilesPane({
     });
     void onMoveEntry(source.path, targetDirectory)
       .then(() => {
-        if (moveOperationIdRef.current !== operationId) {
+        if (!moveOperationRef.current.isCurrent(operationId)) {
           return;
         }
         setMoveStatus({
@@ -623,14 +625,14 @@ export function FilesPane({
           targetDirectory,
         });
         moveSuccessTimerRef.current = window.setTimeout(() => {
-          if (moveOperationIdRef.current === operationId) {
+          if (moveOperationRef.current.isCurrent(operationId)) {
             setMoveStatus(null);
           }
           moveSuccessTimerRef.current = null;
         }, 2500);
       })
       .catch((error) => {
-        if (moveOperationIdRef.current === operationId) {
+        if (moveOperationRef.current.isCurrent(operationId)) {
           setMoveStatus({
             kind: "error",
             message: resolveApiError(error, t("sessions.moveRemoteEntryFailed")),

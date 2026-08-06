@@ -21,6 +21,7 @@ import type {
   McpPermissionCatalogEntry,
   SessionGroup,
 } from "../../shared/api/types";
+import { createLatestRequestGuard } from "../../shared/async/latestRequest";
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
@@ -95,7 +96,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [mcpPermissionTooltip, setMcpPermissionTooltip] =
     useState<McpPermissionTooltipState | null>(null);
   const [mcpConfigDialog, setMcpConfigDialog] = useState<McpConfigDialogState | null>(null);
-  const mcpConfigRequestRef = useRef(0);
+  const mcpConfigRequestRef = useRef(createLatestRequestGuard());
   const [localAgentDialogOpen, setLocalAgentDialogOpen] = useState(false);
   const [localAgentCapabilities, setLocalAgentCapabilities] = useState<
     LocalAgentCapability[]
@@ -112,6 +113,12 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   } = useMcpPromptCopy(setMcpPermissionTooltip);
 
   useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
+  useEffect(
+    () => () => {
+      mcpConfigRequestRef.current.invalidate();
+    },
+    [],
+  );
   useEffect(() => {
     const previousSaved = savedMcpPermissionsRef.current;
     setMcpPermissions((current) =>
@@ -237,7 +244,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   }
 
   async function loadMcpConfig(transport: McpTransport, target: McpClientTarget) {
-    const requestId = ++mcpConfigRequestRef.current;
+    const requestId = mcpConfigRequestRef.current.begin();
     setMcpConfigDialog((current) =>
       current
         ? { ...current, config: "", error: null, loading: true, target }
@@ -248,14 +255,14 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
         transport === "http"
           ? await api.getMcpHttpClientConfig(target)
           : await api.getMcpStdioClientConfig(target);
-      if (requestId !== mcpConfigRequestRef.current) {
+      if (!mcpConfigRequestRef.current.isCurrent(requestId)) {
         return;
       }
       setMcpConfigDialog((current) =>
         current ? { ...current, config, loading: false } : null,
       );
     } catch (nextError) {
-      if (requestId !== mcpConfigRequestRef.current) {
+      if (!mcpConfigRequestRef.current.isCurrent(requestId)) {
         return;
       }
       setMcpConfigDialog((current) =>
@@ -283,7 +290,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   }
 
   const closeMcpConfigDialog = useCallback(() => {
-    mcpConfigRequestRef.current += 1;
+    mcpConfigRequestRef.current.invalidate();
     setMcpConfigDialog(null);
   }, []);
 

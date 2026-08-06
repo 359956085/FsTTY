@@ -9,6 +9,10 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked.map((config) => ({
+    ...config,
+    files: ["src/**/*.{ts,tsx}"],
+  })),
   {
     files: ["scripts/**/*.mjs"],
     languageOptions: {
@@ -19,12 +23,19 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       globals: globals.browser,
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     plugins: {
       "react-hooks": reactHooks,
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
     },
   },
 );

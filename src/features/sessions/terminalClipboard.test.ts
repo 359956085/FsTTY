@@ -331,7 +331,7 @@ describe("TauriClipboardProvider", () => {
 
     expect(writer).toHaveBeenCalledOnce();
     expect(writer).toHaveBeenCalledWith("tmux copy");
-    expect(await provider.readText()).toBe("");
+    expect(provider.readText()).toBe("");
   });
 
   it("将 tmux 的空选择目标写入系统剪贴板", async () => {

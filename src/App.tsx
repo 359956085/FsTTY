@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
-import { SettingsPage } from "./features/settings/SettingsPage";
 import { UpdateDialog } from "./features/settings/UpdateDialog";
 import { useAppUpdater } from "./features/settings/useAppUpdater";
 import { api } from "./shared/api/client";
@@ -14,6 +13,13 @@ import { DEFAULT_SHORTCUTS } from "./shared/shortcuts";
 import appIcon from "./assets/brand-icon.png";
 
 type AppView = "sessions" | "settings";
+
+// 设置页不是启动必需路径，延迟加载可减少会话主界面的首包体积。
+const SettingsPage = lazy(() =>
+  import("./features/settings/SettingsPage").then((module) => ({
+    default: module.SettingsPage,
+  })),
+);
 
 export function App() {
   const { t, i18n } = useTranslation();
@@ -170,14 +176,16 @@ export function App() {
           />
         </div>
         {view === "settings" ? (
-          <SettingsPage
-            settings={settings}
-            updater={updater}
-            onChange={(nextSettings) => {
-              setSettings(nextSettings);
-              void i18n.changeLanguage(nextSettings.language);
-            }}
-          />
+          <Suspense fallback={<div className="loading-banner">{t("common.loading")}</div>}>
+            <SettingsPage
+              settings={settings}
+              updater={updater}
+              onChange={(nextSettings) => {
+                setSettings(nextSettings);
+                void i18n.changeLanguage(nextSettings.language);
+              }}
+            />
+          </Suspense>
         ) : null}
       </main>
       <UpdateDialog updater={updater} />
