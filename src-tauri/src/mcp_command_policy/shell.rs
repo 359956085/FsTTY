@@ -1,4 +1,4 @@
-const MAX_COMMAND_SEGMENTS: usize = 256;
+pub(super) const MAX_COMMAND_SEGMENTS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnsupportedShellSyntaxKind {

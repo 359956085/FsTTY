@@ -2,6 +2,7 @@ use crate::models::{
     AppError, McpCommandMatchType, McpCommandPolicy, McpCommandPolicyMode, McpCommandRule,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -119,6 +120,51 @@ pub(crate) fn evaluate_command_policy(
     } else {
         CommandPolicyDecision::Denied
     }
+}
+
+pub(crate) fn shell_syntax_capabilities(enforced: bool) -> Value {
+    json!({
+        "enforced": enforced,
+        "maxSegments": shell::MAX_COMMAND_SEGMENTS,
+        "supportedSyntax": supported_shell_syntax(),
+        "rejectedSyntax": rejected_shell_syntax(),
+        "interpreterArgumentsParsed": false,
+        "suggestedAction": "splitIntoSeparateExecuteCommandCalls"
+    })
+}
+
+pub(crate) fn unsupported_shell_syntax_data(kind: UnsupportedShellSyntaxKind) -> Value {
+    json!({
+        "reason": "unsupportedShellSyntax",
+        "detectedKind": kind.as_str(),
+        "supportedSyntax": supported_shell_syntax(),
+        "rejectedSyntax": rejected_shell_syntax(),
+        "suggestedAction": "splitIntoSeparateExecuteCommandCalls"
+    })
+}
+
+fn supported_shell_syntax() -> Value {
+    json!({
+        "commandType": "posixSimpleCommandChain",
+        "operators": [";", "&&", "||", "|", "|&", "&", "newline"],
+        "quoting": ["singleQuote", "doubleQuote", "ansiCQuote", "backslashEscape"],
+        "redirections": ["input", "output", "append", "fileDescriptor"]
+    })
+}
+
+fn rejected_shell_syntax() -> Value {
+    json!([
+        { "kind": "commandSubstitution", "forms": ["$(...)", "`...`"] },
+        { "kind": "processSubstitution", "forms": ["<(...)", ">(...)"] },
+        { "kind": "arithmeticExpansion", "forms": ["$((...))", "((...))"] },
+        { "kind": "subshell", "forms": ["(...)"] },
+        { "kind": "commandGroup", "forms": ["{ ...; }"] },
+        { "kind": "functionDefinition", "forms": ["name() { ...; }", "function name { ...; }"] },
+        { "kind": "compoundCommand", "forms": ["if", "for", "while", "until", "case", "select"] },
+        { "kind": "hereDocument", "forms": ["<<WORD", "<<<word"] },
+        { "kind": "malformedSyntax", "forms": ["unclosedQuote", "trailingEscape", "missingOperand", "invalidOperator"] },
+        { "kind": "segmentLimit", "forms": ["moreThan256Segments"] }
+    ])
 }
 
 pub fn import_policy(path: &Path) -> Result<McpCommandPolicy, AppError> {

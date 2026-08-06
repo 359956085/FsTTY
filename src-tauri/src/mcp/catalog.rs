@@ -46,7 +46,7 @@ pub(super) const GUIDE_PERMISSIONS: &[GuidePermission] = &[
         key: "commandExecute",
         zh_name: "命令执行",
         en_name: "Command execution",
-        tools: &["execute_command"],
+        tools: &["get_command_policy", "execute_command"],
         zh_warning: Some("命令执行属于高风险权限，可绕过文件编辑和删除限制。"),
         en_warning: Some(
             "Command execution is high risk and can bypass file editing and deletion restrictions.",
@@ -173,10 +173,7 @@ pub(crate) fn mcp_agent_prompt() -> String {
 Use FsTTY MCP:
 - Call list_sessions first to discover available sessions.
 - Use get_device_status for status; list_remote_files, read_remote_file, and search_remote_file for files and logs.
-- execute_command runs remote shell commands when commandExecute permission is enabled.
-- Advanced command policies support POSIX/Bash simple command chains separated by ;, &&, ||, |, |&, &, or newlines; every segment is authorized independently.
-- Nested and compound shell syntax is rejected. Split complex operations into separate execute_command calls.
-- Avoid broad sh -c, bash -c, or eval rules because interpreter arguments are not parsed recursively.
+- Before execute_command, call get_command_policy for the session; obey its active rules and shellSyntax. Chains are checked per segment; split unsupported syntax. sh -c, bash -c, and eval arguments are not recursively checked.
 - get_permission_guide returns FsTTY permission setup steps for a tool.
 - stdio local transfers require MCP client Roots. HTTP transfers use create_remote_file_upload_link or create_remote_file_download_link; links expire after five minutes.
 - Host-key and credential issues are handled in FsTTY.
@@ -295,6 +292,7 @@ mod tests {
 
         assert_eq!(tools.len(), total);
         assert!(tools.contains(&"search_remote_file"));
+        assert!(tools.contains(&"get_command_policy"));
         assert_eq!(permission_catalog().len(), GUIDE_PERMISSIONS.len());
     }
 }

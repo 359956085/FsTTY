@@ -31,6 +31,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const CONNECTION_IDLE: Duration = Duration::from_secs(300);
+const MAX_COMMAND_BYTES: usize = 64 * 1024;
 mod catalog;
 mod http;
 mod result;
@@ -543,7 +544,29 @@ impl McpService {
     }
 
     #[tool(
-        description = "执行非交互式远程 Shell 命令。高级策略支持 POSIX/Bash 简单命令及 ;、&&、||、|、|&、&、换行拼接，并逐段授权；嵌套或复合语法会被拒绝并返回完整能力范围",
+        description = "查询会话当前生效的命令规则和 Shell 语法限制；不连接 SSH",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
+    )]
+    async fn get_command_policy(
+        &self,
+        Parameters(args): Parameters<SessionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let audit = self.audit("get_command_policy", Some(&args.session_id), &args);
+        let (_, access, _) =
+            authorized_session_context(&self.state, &args.session_id, Permission::Command)
+                .await
+                .map_err(mcp_access_error)?;
+        let response = command_policy_response(&args.session_id, &access);
+        audit.succeed();
+        Ok(structured_json_result(&response))
+    }
+
+    #[tool(
+        description = "执行非交互式远程 Shell 命令；执行前调用 get_command_policy 查询限制",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -555,7 +578,7 @@ impl McpService {
         Parameters(args): Parameters<CommandArgs>,
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("execute_command", Some(&args.session_id), &args);
-        if args.command.trim().is_empty() || args.command.len() > 64 * 1024 {
+        if args.command.trim().is_empty() || args.command.len() > MAX_COMMAND_BYTES {
             return Ok(tool_error("命令为空或过长"));
         }
         let connection = self
@@ -1124,6 +1147,48 @@ async fn authorized_session_context(
     Ok((session, access, settings.language))
 }
 
+fn command_policy_response(session_id: &str, access: &McpGroupPermission) -> Value {
+    let policy = &access.command_policy;
+    let empty_rules: &[crate::models::McpCommandRule] = &[];
+    let (effective_mode, rules, match_decision, no_match_decision) = if !policy.enabled {
+        ("unrestricted", empty_rules, "allow", "allow")
+    } else {
+        match policy.mode {
+            crate::models::McpCommandPolicyMode::Allow => {
+                ("allow", policy.allow_rules.as_slice(), "allow", "deny")
+            }
+            crate::models::McpCommandPolicyMode::Exclude => {
+                ("exclude", policy.exclude_rules.as_slice(), "deny", "allow")
+            }
+        }
+    };
+    json!({
+        "sessionId": session_id,
+        "groupName": access.group_name,
+        "scope": "mcpCommandPolicyOnly",
+        "executionRechecksPolicy": true,
+        "advancedPolicy": {
+            "enabled": policy.enabled,
+            "effectiveMode": effective_mode,
+            "rules": rules,
+            "matchDecision": match_decision,
+            "noMatchDecision": no_match_decision,
+            "matching": {
+                "target": "eachCommandSegment",
+                "caseSensitive": true,
+                "trimOuterWhitespace": true,
+                "globWildcards": ["*", "?"],
+                "globEscapes": ["\\*", "\\?", "\\\\"]
+            }
+        },
+        "shellSyntax": crate::mcp_command_policy::shell_syntax_capabilities(policy.enabled),
+        "commandInput": {
+            "emptyAllowed": false,
+            "maxBytes": MAX_COMMAND_BYTES
+        }
+    })
+}
+
 fn permission<'a>(
     permissions: &'a [McpGroupPermission],
     group: &str,
@@ -1158,7 +1223,13 @@ fn localized_access_error(language: &Language, issue: AccessIssue) -> String {
             "The command was denied by the advanced command policy."
         }
     };
-    let hint = if matches!(language, Language::EnUs) {
+    let hint = if matches!(issue, AccessIssue::CommandPolicyDenied) {
+        if matches!(language, Language::EnUs) {
+            "Call get_command_policy to inspect the current rules."
+        } else {
+            "请调用 get_command_policy 查询当前规则。"
+        }
+    } else if matches!(language, Language::EnUs) {
         "Call get_permission_guide with the current tool name for setup instructions."
     } else {
         "请使用当前工具名调用 get_permission_guide 获取设置步骤。"
@@ -1176,43 +1247,15 @@ fn localized_unsupported_syntax_error(
 ) -> String {
     if matches!(language, Language::EnUs) {
         format!(
-            "The command uses POSIX/Bash syntax unsupported by the advanced command policy ({}). Split it into separate simple execute_command calls.",
+            "The advanced policy does not support this Shell syntax ({}); split the command using error.data.",
             kind.as_str()
         )
     } else {
         format!(
-            "命令包含高级策略不支持的 POSIX/Bash 语法（{}）。请拆分为多次简单的 execute_command 调用。",
+            "高级策略不支持此 Shell 语法（{}）；请按 error.data 拆分命令。",
             kind.as_str()
         )
     }
-}
-
-fn unsupported_shell_syntax_data(
-    kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind,
-) -> Value {
-    json!({
-        "reason": "unsupportedShellSyntax",
-        "detectedKind": kind.as_str(),
-        "supportedSyntax": {
-            "commandType": "posixSimpleCommandChain",
-            "operators": [";", "&&", "||", "|", "|&", "&", "newline"],
-            "quoting": ["singleQuote", "doubleQuote", "ansiCQuote", "backslashEscape"],
-            "redirections": ["input", "output", "append", "fileDescriptor"]
-        },
-        "rejectedSyntax": [
-            { "kind": "commandSubstitution", "forms": ["$(...)", "`...`"] },
-            { "kind": "processSubstitution", "forms": ["<(...)", ">(...)"] },
-            { "kind": "arithmeticExpansion", "forms": ["$((...))", "((...))"] },
-            { "kind": "subshell", "forms": ["(...)"] },
-            { "kind": "commandGroup", "forms": ["{ ...; }"] },
-            { "kind": "functionDefinition", "forms": ["name() { ...; }", "function name { ...; }"] },
-            { "kind": "compoundCommand", "forms": ["if", "for", "while", "until", "case", "select"] },
-            { "kind": "hereDocument", "forms": ["<<WORD", "<<<word"] },
-            { "kind": "malformedSyntax", "forms": ["unclosedQuote", "trailingEscape", "missingOperand", "invalidOperator"] },
-            { "kind": "segmentLimit", "forms": ["moreThan256Segments"] }
-        ],
-        "suggestedAction": "splitIntoSeparateExecuteCommandCalls"
-    })
 }
 
 fn mcp_error(error: AppError) -> McpError {
@@ -1225,9 +1268,12 @@ fn mcp_access_error(error: McpAccessError) -> McpError {
         McpAccessError::NotFound(message) | McpAccessError::Forbidden(message) => {
             McpError::invalid_request(message, None)
         }
-        McpAccessError::UnsupportedSyntax { message, kind } => {
-            McpError::invalid_request(message, Some(unsupported_shell_syntax_data(kind)))
-        }
+        McpAccessError::UnsupportedSyntax { message, kind } => McpError::invalid_request(
+            message,
+            Some(crate::mcp_command_policy::unsupported_shell_syntax_data(
+                kind,
+            )),
+        ),
     }
 }
 
@@ -1345,6 +1391,65 @@ mod tests {
         assert!(data.get("range").is_none());
         assert!(data.get("source").is_none());
         assert!(data.get("snippet").is_none());
+    }
+
+    #[test]
+    fn 命令策略查询只返回生效名单并复用语法能力() {
+        let mut access = mcp_permission(true);
+        access.command_policy = crate::models::McpCommandPolicy {
+            enabled: true,
+            mode: crate::models::McpCommandPolicyMode::Allow,
+            allow_rules: vec![crate::models::McpCommandRule {
+                match_type: crate::models::McpCommandMatchType::Exact,
+                pattern: "pwd".to_owned(),
+            }],
+            exclude_rules: vec![crate::models::McpCommandRule {
+                match_type: crate::models::McpCommandMatchType::Glob,
+                pattern: "rm *".to_owned(),
+            }],
+        };
+
+        let allow = command_policy_response("session-a", &access);
+        assert_eq!(allow["scope"], "mcpCommandPolicyOnly");
+        assert_eq!(allow["executionRechecksPolicy"], true);
+        assert_eq!(allow["advancedPolicy"]["effectiveMode"], "allow");
+        assert_eq!(allow["advancedPolicy"]["matchDecision"], "allow");
+        assert_eq!(allow["advancedPolicy"]["noMatchDecision"], "deny");
+        assert_eq!(allow["advancedPolicy"]["rules"][0]["pattern"], "pwd");
+        assert!(!allow.to_string().contains("rm *"));
+        assert_eq!(allow["shellSyntax"]["enforced"], true);
+        assert_eq!(allow["shellSyntax"]["maxSegments"], 256);
+        assert_eq!(allow["shellSyntax"]["interpreterArgumentsParsed"], false);
+        assert_eq!(allow["commandInput"]["maxBytes"], MAX_COMMAND_BYTES);
+
+        let syntax_error = crate::mcp_command_policy::unsupported_shell_syntax_data(
+            crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
+        );
+        assert_eq!(
+            allow["shellSyntax"]["supportedSyntax"],
+            syntax_error["supportedSyntax"]
+        );
+        assert_eq!(
+            allow["shellSyntax"]["rejectedSyntax"],
+            syntax_error["rejectedSyntax"]
+        );
+
+        access.command_policy.mode = crate::models::McpCommandPolicyMode::Exclude;
+        let exclude = command_policy_response("session-a", &access);
+        assert_eq!(exclude["advancedPolicy"]["effectiveMode"], "exclude");
+        assert_eq!(exclude["advancedPolicy"]["matchDecision"], "deny");
+        assert_eq!(exclude["advancedPolicy"]["noMatchDecision"], "allow");
+        assert_eq!(exclude["advancedPolicy"]["rules"][0]["pattern"], "rm *");
+        assert!(!exclude.to_string().contains("pwd"));
+
+        access.command_policy.enabled = false;
+        let unrestricted = command_policy_response("session-a", &access);
+        assert_eq!(
+            unrestricted["advancedPolicy"]["effectiveMode"],
+            "unrestricted"
+        );
+        assert_eq!(unrestricted["advancedPolicy"]["rules"], json!([]));
+        assert_eq!(unrestricted["shellSyntax"]["enforced"], false);
     }
 
     #[test]
@@ -1737,12 +1842,15 @@ mod tests {
         assert!(prompt.contains("get_permission_guide"));
         assert!(prompt.contains("Call list_sessions first"));
         assert!(prompt.contains("discover available sessions"));
-        assert!(prompt.contains("execute_command runs remote shell commands"));
-        assert!(prompt.contains("commandExecute permission"));
-        assert!(prompt.contains("every segment is authorized independently"));
-        assert!(prompt.contains("Nested and compound shell syntax is rejected"));
-        assert!(prompt.contains("separate execute_command calls"));
-        assert!(prompt.contains("sh -c, bash -c, or eval"));
+        assert!(prompt.contains(
+            "Before execute_command, call get_command_policy for the session; obey its active rules and shellSyntax."
+        ));
+        assert!(prompt.contains("Chains are checked per segment; split unsupported syntax."));
+        assert!(prompt.contains("sh -c, bash -c, and eval arguments are not recursively checked."));
+        assert!(prompt
+            .contains("Command execution (commandExecute): get_command_policy, execute_command"));
+        assert!(!prompt.contains("Advanced command policies support"));
+        assert!(!prompt.contains("Nested and compound shell syntax"));
         assert!(prompt.contains("MCP client Roots"));
         assert!(prompt.contains("links expire after five minutes"));
         assert!(prompt.contains("Host-key and credential issues are handled in FsTTY"));
@@ -1790,6 +1898,17 @@ mod tests {
         let english = localized_access_error(&Language::EnUs, AccessIssue::PermissionDenied);
         assert!(english.contains("get_permission_guide"));
         assert!(english.contains("not authorized"));
+
+        let policy = localized_access_error(&Language::ZhCn, AccessIssue::CommandPolicyDenied);
+        assert!(policy.contains("get_command_policy"));
+        assert!(!policy.contains("get_permission_guide"));
+
+        let syntax = localized_unsupported_syntax_error(
+            &Language::ZhCn,
+            crate::mcp_command_policy::UnsupportedShellSyntaxKind::Subshell,
+        );
+        assert!(syntax.contains("error.data"));
+        assert!(syntax.contains("subshell"));
     }
 
     #[test]
@@ -1887,6 +2006,12 @@ mod tests {
             authorized_session(&http.state, &session_id, Permission::Command).await,
             Err(McpAccessError::Forbidden(_))
         ));
+        assert!(stdio
+            .get_command_policy(Parameters(SessionArgs {
+                session_id: session_id.clone(),
+            }))
+            .await
+            .is_err());
 
         stdio
             .state
@@ -1954,6 +2079,19 @@ mod tests {
         let transfers = McpTransferRuntime::new(state.clone(), 37_653, CancellationToken::new());
         let http = McpService::new_http(state, transfers);
         for service in [&stdio, &http] {
+            let policy_result = service
+                .get_command_policy(Parameters(SessionArgs {
+                    session_id: session_id.clone(),
+                }))
+                .await
+                .expect("查询命令策略应成功");
+            assert_eq!(
+                policy_result
+                    .structured_content
+                    .as_ref()
+                    .expect("应返回结构化策略")["advancedPolicy"]["effectiveMode"],
+                "allow"
+            );
             assert!(
                 authorized_command_session(&service.state, &session_id, "git status --short")
                     .await
@@ -1997,6 +2135,19 @@ mod tests {
             .expect("策略服务应可锁定")
             .replace_all(vec![permission])
             .expect("切换排除模式失败");
+        let refreshed = stdio
+            .get_command_policy(Parameters(SessionArgs {
+                session_id: session_id.clone(),
+            }))
+            .await
+            .expect("应热加载黑名单");
+        assert_eq!(
+            refreshed
+                .structured_content
+                .as_ref()
+                .expect("应返回结构化策略")["advancedPolicy"]["effectiveMode"],
+            "exclude"
+        );
         assert!(matches!(
             authorized_command_session(&stdio.state, &session_id, "rm -rf /tmp/demo").await,
             Err(McpAccessError::Forbidden(_))
@@ -2114,6 +2265,7 @@ mod tests {
         let state = AppState::new(directory.clone());
         let stdio = McpService::new(state.clone(), "stdio");
         assert!(stdio.tool_router.has_route("get_permission_guide"));
+        assert!(stdio.tool_router.has_route("get_command_policy"));
         assert!(stdio.tool_router.has_route("search_remote_file"));
         assert!(stdio.tool_router.has_route("upload_local_file"));
         assert!(stdio.tool_router.has_route("download_remote_file"));
@@ -2128,6 +2280,7 @@ mod tests {
         let transfers = McpTransferRuntime::new(state.clone(), 37_653, cancellation);
         let http = McpService::new_http(state, transfers);
         assert!(http.tool_router.has_route("get_permission_guide"));
+        assert!(http.tool_router.has_route("get_command_policy"));
         assert!(http.tool_router.has_route("search_remote_file"));
         assert!(!http.tool_router.has_route("upload_local_file"));
         assert!(!http.tool_router.has_route("download_remote_file"));
