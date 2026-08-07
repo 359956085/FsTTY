@@ -207,7 +207,6 @@ textarea:focus-visible,
 .sessions-page {
   --workspace-left-width: 260px;
   --workspace-right-width: 460px;
-  --workspace-files-ratio: 75%;
   --workspace-collapsed-pane-width: 72px;
   display: grid;
   grid-template-columns: var(--workspace-left-width) 4px minmax(0, 1fr);

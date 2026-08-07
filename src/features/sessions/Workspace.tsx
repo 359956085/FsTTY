@@ -27,7 +27,6 @@ interface WorkspaceProps {
   rightResizeHandle: ReactNode;
   shortcuts: ShortcutSettings;
   runtimes: Readonly<Record<string, SessionRuntime>>;
-  verticalResizeHandle: ReactNode;
   visible: boolean;
   onCancelTransfer: (tabId: string) => void;
   onDismissTransfer: (tabId: string) => void;
@@ -89,7 +88,6 @@ export function Workspace({
   rightResizeHandle,
   shortcuts,
   runtimes,
-  verticalResizeHandle,
   visible,
 }: WorkspaceProps) {
   const { t } = useTranslation();
@@ -289,7 +287,6 @@ export function Workspace({
             sftpAvailable={Boolean(activeRuntime.connection?.sftpAvailable)}
             transfer={activeRuntime.transfer}
           />
-          {verticalResizeHandle}
           <DeviceStatusPanel
             connected={activeRuntime.connectionState === "connected"}
             history={activeRuntime.deviceHistory}

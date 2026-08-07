@@ -197,17 +197,6 @@ export function SessionsPage({ allowRemoteClipboardWrite, shortcuts, visible }: 
         }
         shortcuts={shortcuts}
         runtimes={connections.runtimes}
-        verticalResizeHandle={
-          <ResizeHandle
-            ariaLabel={t("sessions.resizeFiles")}
-            onKeyboardResize={(direction) => adjustResize("files", direction)}
-            onPointerDown={(event) => beginResize("files", event)}
-            orientation="horizontal"
-            valueMax={WORKSPACE_LAYOUT_LIMITS.fileRatio.max}
-            valueMin={WORKSPACE_LAYOUT_LIMITS.fileRatio.min}
-            valueNow={layout.fileRatio}
-          />
-        }
         visible={visible}
       />
 

@@ -467,7 +467,7 @@
 .right-rail {
   grid-area: side;
   display: grid;
-  grid-template-rows: minmax(0, var(--workspace-files-ratio)) 4px minmax(230px, 1fr);
+  grid-template-rows: minmax(0, 1fr) 230px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -908,9 +908,9 @@
 .status-panel {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 0;
-  min-height: 230px;
+  min-height: 0;
   overflow: auto;
 }
 

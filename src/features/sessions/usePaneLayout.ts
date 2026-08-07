@@ -15,7 +15,7 @@ import {
   type WorkspaceLayoutPreferences,
 } from "./workspacePreferences";
 
-export type PaneResizeTarget = "left" | "right" | "files";
+export type PaneResizeTarget = "left" | "right";
 export type ResizeDirection = -1 | 1;
 
 export const WORKSPACE_COLLAPSED_PANE_WIDTH = 72;
@@ -41,16 +41,11 @@ interface ActiveDrag {
   handle: HTMLDivElement;
   startCoordinate: number;
   startValue: number;
-  trackSize: number;
   rootWidth: number;
 }
 
 const KEYBOARD_WIDTH_STEP = 8;
-const KEYBOARD_RATIO_STEP = 2;
 const VERTICAL_HANDLES_WIDTH = 8;
-const WORKSPACE_TAB_BAR_HEIGHT = 48;
-const HORIZONTAL_HANDLE_HEIGHT = 4;
-const DEVICE_STATUS_MIN_HEIGHT = 230;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -62,8 +57,6 @@ function getCssVariable(target: PaneResizeTarget) {
       return "--workspace-left-width";
     case "right":
       return "--workspace-right-width";
-    case "files":
-      return "--workspace-files-ratio";
   }
 }
 
@@ -74,7 +67,7 @@ function applyCssValue(
 ) {
   root?.style.setProperty(
     getCssVariable(target),
-    target === "files" ? `${value}%` : `${value}px`,
+    `${value}px`,
   );
 }
 
@@ -83,25 +76,7 @@ function getBoundedValue(
   value: number,
   layout: WorkspaceLayoutPreferences,
   rootWidth: number,
-  filesTrackHeight = 0,
 ) {
-  if (target === "files") {
-    const heightLimitedMax =
-      filesTrackHeight > 0
-        ? ((filesTrackHeight - HORIZONTAL_HANDLE_HEIGHT - DEVICE_STATUS_MIN_HEIGHT) /
-            filesTrackHeight) *
-          100
-        : WORKSPACE_LAYOUT_LIMITS.fileRatio.max;
-    const max = clamp(
-      heightLimitedMax,
-      0,
-      WORKSPACE_LAYOUT_LIMITS.fileRatio.max,
-    );
-    // 窗口较矮时优先保留设备状态五行，文件区通过自身滚动继续使用。
-    const min = Math.min(WORKSPACE_LAYOUT_LIMITS.fileRatio.min, max);
-    return clamp(value, min, max);
-  }
-
   const limits =
     target === "left"
       ? WORKSPACE_LAYOUT_LIMITS.leftWidth
@@ -134,44 +109,32 @@ function calculateDragValue(
   event: PointerEvent,
   layout: WorkspaceLayoutPreferences,
 ) {
-  const coordinate = drag.target === "files" ? event.clientY : event.clientX;
+  const coordinate = event.clientX;
   const offset = coordinate - drag.startCoordinate;
   const rawValue =
-    drag.target === "files"
-      ? drag.startValue + (offset / drag.trackSize) * 100
-      : drag.target === "right"
-        ? drag.startValue - offset
-        : drag.startValue + offset;
+    drag.target === "right"
+      ? drag.startValue - offset
+      : drag.startValue + offset;
 
   return getBoundedValue(
     drag.target,
     rawValue,
     layout,
     drag.rootWidth,
-    drag.trackSize,
   );
 }
 
 function fitLayoutToRoot(
   layout: WorkspaceLayoutPreferences,
   rootWidth: number,
-  rootHeight: number,
   resizeFirst: "left" | "right",
 ) {
-  if (rootWidth <= 0 && rootHeight <= 0) {
+  if (rootWidth <= 0) {
     return layout;
   }
 
   let leftWidth = layout.leftWidth;
   let rightWidth = layout.rightWidth;
-  const filesTrackHeight = Math.max(rootHeight - WORKSPACE_TAB_BAR_HEIGHT, 0);
-  const fileRatio = getBoundedValue(
-    "files",
-    layout.fileRatio,
-    layout,
-    rootWidth,
-    filesTrackHeight,
-  );
   const effectiveLeft = layout.leftCollapsed
     ? WORKSPACE_COLLAPSED_PANE_WIDTH
     : leftWidth;
@@ -186,7 +149,7 @@ function fitLayoutToRoot(
     rootWidth;
 
   if (overflow <= 0) {
-    return fileRatio === layout.fileRatio ? layout : { ...layout, fileRatio };
+    return layout;
   }
 
   const shrink = (target: "left" | "right") => {
@@ -215,11 +178,9 @@ function fitLayoutToRoot(
   shrink(resizeFirst);
   shrink(resizeFirst === "left" ? "right" : "left");
 
-  return leftWidth === layout.leftWidth &&
-    rightWidth === layout.rightWidth &&
-    fileRatio === layout.fileRatio
+  return leftWidth === layout.leftWidth && rightWidth === layout.rightWidth
     ? layout
-    : { ...layout, leftWidth, rightWidth, fileRatio };
+    : { ...layout, leftWidth, rightWidth };
 }
 
 export function usePaneLayout(): UsePaneLayoutResult {
@@ -238,13 +199,12 @@ export function usePaneLayout(): UsePaneLayoutResult {
 
   useLayoutEffect(() => {
     const root = rootRef.current;
-    applyCssValue(root, "left", layout.leftWidth);
-    applyCssValue(root, "right", layout.rightWidth);
-    applyCssValue(root, "files", layout.fileRatio);
     root?.style.setProperty(
       "--workspace-collapsed-pane-width",
       `${WORKSPACE_COLLAPSED_PANE_WIDTH}px`,
     );
+    applyCssValue(root, "left", layout.leftWidth);
+    applyCssValue(root, "right", layout.rightWidth);
   }, [layout]);
 
   useEffect(
@@ -266,7 +226,6 @@ export function usePaneLayout(): UsePaneLayoutResult {
       const next = fitLayoutToRoot(
         current,
         entry.contentRect.width,
-        entry.contentRect.height,
         "right",
       );
       if (next !== current) {
@@ -298,22 +257,15 @@ export function usePaneLayout(): UsePaneLayoutResult {
       const current = layoutRef.current;
       const rootBounds = root.getBoundingClientRect();
       const handle = event.currentTarget;
-      const filesTrackHeight =
-        target === "files"
-          ? (handle.parentElement?.getBoundingClientRect().height ?? rootBounds.height)
-          : rootBounds.height;
       const drag: ActiveDrag = {
         pointerId: event.pointerId,
         target,
         handle,
-        startCoordinate: target === "files" ? event.clientY : event.clientX,
+        startCoordinate: event.clientX,
         startValue:
           target === "left"
             ? current.leftWidth
-            : target === "right"
-              ? current.rightWidth
-              : current.fileRatio,
-        trackSize: Math.max(filesTrackHeight, 1),
+            : current.rightWidth,
         rootWidth: rootBounds.width,
       };
 
@@ -356,9 +308,7 @@ export function usePaneLayout(): UsePaneLayoutResult {
           ...currentLayout,
           ...(target === "left"
             ? { leftWidth: nextValue }
-            : target === "right"
-              ? { rightWidth: nextValue }
-              : { fileRatio: nextValue }),
+            : { rightWidth: nextValue }),
         };
         cleanup();
         commitLayout(nextLayout);
@@ -371,9 +321,7 @@ export function usePaneLayout(): UsePaneLayoutResult {
           target,
           target === "left"
             ? currentLayout.leftWidth
-            : target === "right"
-              ? currentLayout.rightWidth
-              : currentLayout.fileRatio,
+            : currentLayout.rightWidth,
         );
         cleanup();
       };
@@ -392,34 +340,22 @@ export function usePaneLayout(): UsePaneLayoutResult {
       const current = layoutRef.current;
       const rootBounds = rootRef.current?.getBoundingClientRect();
       const rootWidth = rootBounds?.width ?? 0;
-      const filesTrackHeight = Math.max(
-        (rootBounds?.height ?? 0) - WORKSPACE_TAB_BAR_HEIGHT,
-        0,
-      );
-      const movement =
-        target === "files"
-          ? direction * KEYBOARD_RATIO_STEP
-          : direction * KEYBOARD_WIDTH_STEP;
+      const movement = direction * KEYBOARD_WIDTH_STEP;
       const rawValue =
         target === "left"
           ? current.leftWidth + movement
-          : target === "right"
-            ? current.rightWidth - movement
-            : current.fileRatio + movement;
+          : current.rightWidth - movement;
       const nextValue = getBoundedValue(
         target,
         rawValue,
         current,
         rootWidth,
-        filesTrackHeight,
       );
       const nextLayout = {
         ...current,
         ...(target === "left"
           ? { leftWidth: nextValue }
-          : target === "right"
-            ? { rightWidth: nextValue }
-            : { fileRatio: nextValue }),
+          : { rightWidth: nextValue }),
       };
 
       commitLayout(nextLayout);
@@ -435,7 +371,6 @@ export function usePaneLayout(): UsePaneLayoutResult {
       fitLayoutToRoot(
         toggled,
         rootBounds?.width ?? 0,
-        rootBounds?.height ?? 0,
         "left",
       ),
     );
@@ -449,7 +384,6 @@ export function usePaneLayout(): UsePaneLayoutResult {
       fitLayoutToRoot(
         toggled,
         rootBounds?.width ?? 0,
-        rootBounds?.height ?? 0,
         "right",
       ),
     );
