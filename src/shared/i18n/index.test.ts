@@ -43,6 +43,11 @@ describe("i18n 资源", () => {
     expect(english.get("sessions.ungrouped")).toBe("Ungrouped");
   });
 
+  it("通用加载提示具有双语显示文案", () => {
+    expect(chinese.get("common.loading")).toBe("加载中...");
+    expect(english.get("common.loading")).toBe("Loading...");
+  });
+
   it("高级命令管理使用白名单黑名单和完成文案", () => {
     expect(chinese.get("settings.mcpCommandPolicyAllow")).toBe("白名单");
     expect(chinese.get("settings.mcpCommandPolicyExclude")).toBe("黑名单");

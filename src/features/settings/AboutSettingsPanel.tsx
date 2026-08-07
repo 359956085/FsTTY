@@ -1,15 +1,22 @@
-import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, History, RefreshCw } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
-import type { AppSettings } from "../../shared/api/types";
+import type { AppSettings, UpdateSourcePreference } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
+import { Select } from "../../shared/ui/Select";
 import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 const PROJECT_URL = "https://github.com/359956085/FsTTY";
 const CONTACT_EMAIL = "359956085@163.com";
+
+const UpdateHistoryDialog = lazy(() =>
+  import("./UpdateHistoryDialog").then((module) => ({
+    default: module.UpdateHistoryDialog,
+  })),
+);
 
 interface AboutSettingsPanelProps {
   error: string | null;
@@ -17,6 +24,7 @@ interface AboutSettingsPanelProps {
   onCheckUpdates: () => void;
   onProxyChange: (value: string) => void;
   onProxyCommit: () => void;
+  onUpdateSourceChange: (source: UpdateSourcePreference) => void;
   proxy: string;
   savingUpdateSettings: boolean;
   settings: AppSettings;
@@ -30,6 +38,7 @@ export function AboutSettingsPanel({
   onCheckUpdates,
   onProxyChange,
   onProxyCommit,
+  onUpdateSourceChange,
   proxy,
   savingUpdateSettings,
   settings,
@@ -38,6 +47,7 @@ export function AboutSettingsPanel({
 }: AboutSettingsPanelProps) {
   const { t } = useTranslation();
   const [emailCopied, setEmailCopied] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
   async function openProject() {
@@ -131,6 +141,37 @@ export function AboutSettingsPanel({
         </div>
         <div className="settings-row">
           <div className="settings-row-copy">
+            <span className="settings-row-label">{t("settings.updateSource")}</span>
+            <small>{t("settings.updateSourceHint")}</small>
+          </div>
+          <Select<UpdateSourcePreference>
+            ariaLabel={t("settings.updateSource")}
+            className="settings-update-source-select"
+            disabled={savingUpdateSettings || updater.busy}
+            onChange={onUpdateSourceChange}
+            options={[
+              { value: "auto", label: t("settings.updateSourceAuto") },
+              { value: "github", label: "GitHub" },
+              { value: "cnb", label: "CNB" },
+            ]}
+            value={settings.updateSource}
+          />
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <span className="settings-row-label">{t("settings.updateHistory")}</span>
+            <small>{t("settings.updateHistoryHint")}</small>
+          </div>
+          <Button
+            icon={<History aria-hidden="true" size={16} />}
+            onClick={() => setHistoryOpen(true)}
+            variant="ghost"
+          >
+            {t("settings.viewUpdateHistory")}
+          </Button>
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-copy">
             <label className="settings-row-label" htmlFor="auto-update">
               {t("settings.autoUpdate")}
             </label>
@@ -171,6 +212,17 @@ export function AboutSettingsPanel({
         </div>
         {error ? <div className="form-error settings-error">{error}</div> : null}
       </section>
+      {historyOpen ? (
+        <Suspense
+          fallback={
+            <div className="dialog-backdrop update-dialog-backdrop">
+              <div className="loading-banner">{t("common.loading")}</div>
+            </div>
+          }
+        >
+          <UpdateHistoryDialog onClose={() => setHistoryOpen(false)} open />
+        </Suspense>
+      ) : null}
     </>
   );
 }

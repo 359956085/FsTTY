@@ -3,6 +3,7 @@ import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
+import { settingsPageLoader } from "./features/settings/settingsPageLoader";
 import { UpdateDialog } from "./features/settings/UpdateDialog";
 import { useAppUpdater } from "./features/settings/useAppUpdater";
 import { api } from "./shared/api/client";
@@ -15,11 +16,7 @@ import appIcon from "./assets/brand-icon.png";
 type AppView = "sessions" | "settings";
 
 // 设置页不是启动必需路径，延迟加载可减少会话主界面的首包体积。
-const SettingsPage = lazy(() =>
-  import("./features/settings/SettingsPage").then((module) => ({
-    default: module.SettingsPage,
-  })),
-);
+const SettingsPage = lazy(settingsPageLoader.load);
 
 export function App() {
   const { t, i18n } = useTranslation();
@@ -27,6 +24,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-CN",
     autoUpdate: true,
+    updateSource: "auto",
     updateProxy: "",
     allowRemoteClipboardWrite: true,
     ignoredUpdateVersion: null,
@@ -44,8 +42,14 @@ export function App() {
     ignoredUpdateVersion: settings.ignoredUpdateVersion,
     onSettingsChange: setSettings,
     proxy: settings.updateProxy,
+    updateSource: settings.updateSource,
     startupReady: settingsLoaded,
   });
+
+  useEffect(() => {
+    // 首屏提交后立即准备独立设置分包，减少首次进入设置页时的等待。
+    settingsPageLoader.preload();
+  }, []);
 
   useEffect(() => {
     let active = true;

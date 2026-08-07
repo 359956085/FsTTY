@@ -11,6 +11,9 @@ void i18n.use(initReactI18next).init({
   resources: {
     "zh-CN": {
       translation: {
+        common: {
+          loading: "加载中...",
+        },
         nav: {
           main: "主导航",
           sessions: "会话",
@@ -399,8 +402,14 @@ void i18n.use(initReactI18next).init({
           newVersion: "新版本",
           autoUpdate: "自动更新",
           autoUpdateHint: "应用启动后进行一次更新检查",
+          updateSource: "下载源",
+          updateSourceHint: "自动模式使用最快返回的可用更新源",
+          updateSourceAuto: "自动",
           updateProxy: "本地代理",
           updateProxyHint: "仅影响应用更新",
+          updateHistory: "更新日志",
+          updateHistoryHint: "查看全部正式版本的更新记录",
+          viewUpdateHistory: "查看",
           releaseDate: "发布日期",
           releaseNotes: "更新说明",
           noReleaseNotes: "暂无更新说明",
@@ -422,6 +431,9 @@ void i18n.use(initReactI18next).init({
     },
     "en-US": {
       translation: {
+        common: {
+          loading: "Loading...",
+        },
         nav: {
           main: "Main navigation",
           sessions: "Sessions",
@@ -833,8 +845,14 @@ void i18n.use(initReactI18next).init({
           newVersion: "New",
           autoUpdate: "Automatic updates",
           autoUpdateHint: "Check for updates once after the application starts.",
+          updateSource: "Download source",
+          updateSourceHint: "Automatic mode uses the fastest available update source.",
+          updateSourceAuto: "Automatic",
           updateProxy: "Local proxy",
           updateProxyHint: "Only affects application updates.",
+          updateHistory: "Update history",
+          updateHistoryHint: "View release notes for every published version.",
+          viewUpdateHistory: "View",
           releaseDate: "Release date",
           releaseNotes: "Release notes",
           noReleaseNotes: "No release notes",

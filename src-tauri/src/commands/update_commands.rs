@@ -1,4 +1,4 @@
-use crate::models::{AppError, AppUpdateInfo, AppUpdateProgress};
+use crate::models::{AppError, AppUpdateInfo, AppUpdateProgress, UpdateSourcePreference};
 use crate::services::AppState;
 use tauri::{ipc::Channel, AppHandle, State};
 
@@ -7,8 +7,9 @@ pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
     proxy: String,
+    source: UpdateSourcePreference,
 ) -> Result<Option<AppUpdateInfo>, AppError> {
-    state.app_update_service.check(&app, &proxy).await
+    state.app_update_service.check(&app, &proxy, source).await
 }
 
 #[tauri::command]

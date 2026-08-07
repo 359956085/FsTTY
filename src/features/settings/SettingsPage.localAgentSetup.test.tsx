@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   openProjectLink: vi.fn(),
   updateMcpSettings: vi.fn(),
   updateLogSettings: vi.fn(),
+  updateAppSettings: vi.fn(),
   updateShortcutSettings: vi.fn(),
   updateCommandHistoryDeduplication: vi.fn(),
   open: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("../../shared/api/client", () => ({
     updateMcpSettings: mocks.updateMcpSettings,
     updateCommandHistoryDeduplication: mocks.updateCommandHistoryDeduplication,
     updateLogSettings: mocks.updateLogSettings,
+    updateAppSettings: mocks.updateAppSettings,
     updateShortcutSettings: mocks.updateShortcutSettings,
   },
 }));
@@ -84,6 +86,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
   updateProxy: "",
+  updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };
 
@@ -177,6 +180,28 @@ describe("SettingsPage 本地 Agent 配置", () => {
 
     await waitFor(() => expect(mocks.openProjectLink).toHaveBeenCalledTimes(1));
     expect(mocks.writeText).toHaveBeenCalledWith("359956085@163.com");
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.viewUpdateHistory" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("v1.2.1")).toBeTruthy();
+  });
+
+  it("关于页保存 GitHub 更新源", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    const nextSettings = { ...settings, updateSource: "github" as const };
+    mocks.updateAppSettings.mockResolvedValue(nextSettings);
+    const onChange = vi.fn();
+    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    fireEvent.click(screen.getByRole("button", { name: "settings.about" }));
+
+    fireEvent.click(screen.getByRole("combobox", { name: "settings.updateSource" }));
+    fireEvent.click(screen.getByRole("option", { name: "GitHub" }));
+
+    await waitFor(() =>
+      expect(mocks.updateAppSettings).toHaveBeenCalledWith(false, "", false, "github"),
+    );
+    expect(onChange).toHaveBeenCalledWith(nextSettings);
   });
 
   it("日志设置保存失败后恢复开关并显示错误", async () => {

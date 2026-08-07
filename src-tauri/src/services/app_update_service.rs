@@ -1,6 +1,8 @@
-use crate::models::{AppError, AppUpdateInfo, AppUpdateProgress, AppUpdateSource};
+use crate::models::{
+    AppError, AppUpdateInfo, AppUpdateProgress, AppUpdateSource, UpdateSourcePreference,
+};
 use semver::Version;
-use std::cmp::Ordering;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{ipc::Channel, AppHandle};
@@ -31,27 +33,43 @@ impl AppUpdateService {
         &self,
         app: &AppHandle,
         proxy: &str,
+        preference: UpdateSourcePreference,
     ) -> Result<Option<AppUpdateInfo>, AppError> {
         let proxy = parse_proxy(proxy)?;
         self.close().await;
 
-        let cnb = check_source(
-            app,
-            AppUpdateSource::Cnb,
-            CNB_UPDATE_ENDPOINT,
-            proxy.clone(),
-        );
-        let github = check_source(app, AppUpdateSource::GitHub, GITHUB_UPDATE_ENDPOINT, proxy);
-        // 两个源必须同时进入 settled 状态，避免较快但陈旧的源抢先决定版本。
-        let (cnb, github) = tokio::join!(cnb, github);
-        let selected = select_update([
-            (AppUpdateSource::Cnb, cnb),
-            (AppUpdateSource::GitHub, github),
-        ])?;
+        let (source, update) = match preference {
+            UpdateSourcePreference::Auto => {
+                // 自动模式优先响应速度；首个有效成功结果立即决定，失败才等待备用源。
+                first_successful_source(
+                    check_source(
+                        app,
+                        AppUpdateSource::Cnb,
+                        CNB_UPDATE_ENDPOINT,
+                        proxy.clone(),
+                    ),
+                    check_source(app, AppUpdateSource::GitHub, GITHUB_UPDATE_ENDPOINT, proxy),
+                )
+                .await?
+            }
+            UpdateSourcePreference::GitHub => (
+                AppUpdateSource::GitHub,
+                check_source(app, AppUpdateSource::GitHub, GITHUB_UPDATE_ENDPOINT, proxy)
+                    .await
+                    .map_err(AppError::Connection)?,
+            ),
+            UpdateSourcePreference::Cnb => (
+                AppUpdateSource::Cnb,
+                check_source(app, AppUpdateSource::Cnb, CNB_UPDATE_ENDPOINT, proxy)
+                    .await
+                    .map_err(AppError::Connection)?,
+            ),
+        };
 
-        let Some(selected) = selected else {
+        let Some(update) = update else {
             return Ok(None);
         };
+        let selected = PendingAppUpdate { source, update };
         let info = update_info(&selected);
         *self.pending.lock().await = Some(selected);
         Ok(Some(info))
@@ -110,77 +128,52 @@ async fn check_source(
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
     }
-    builder
+    let update = builder
         .build()
         .map_err(|error| format!("{source:?} 更新器创建失败：{error}"))?
         .check()
         .await
-        .map_err(|error| format!("{source:?} 更新检查失败：{error}"))
+        .map_err(|error| format!("{source:?} 更新检查失败：{error}"))?;
+    if let Some(update) = &update {
+        Version::parse(update.version.trim_start_matches('v'))
+            .map_err(|error| format!("{source:?} 更新版本 {} 无效：{error}", update.version))?;
+    }
+    Ok(update)
 }
 
-fn select_update<const N: usize>(
-    results: [(AppUpdateSource, Result<Option<Update>, String>); N],
-) -> Result<Option<PendingAppUpdate>, AppError> {
-    let mut candidates = Vec::new();
-    let mut errors = Vec::new();
-    let mut successful_source_count = 0;
-
-    for (source, result) in results {
-        match result {
-            Ok(update) => {
-                if let Some(update) = update {
-                    match Version::parse(update.version.trim_start_matches('v')) {
-                        Ok(version) => {
-                            successful_source_count += 1;
-                            candidates.push((version, source, update));
-                        }
-                        Err(error) => {
-                            let error =
-                                format!("{source:?} 更新版本 {} 无效：{error}", update.version);
-                            log::warn!("应用更新源检查失败：{error}");
-                            errors.push(error);
-                        }
-                    }
-                } else {
-                    successful_source_count += 1;
+async fn first_successful_source<T, CnbFuture, GitHubFuture>(
+    cnb: CnbFuture,
+    github: GitHubFuture,
+) -> Result<(AppUpdateSource, T), AppError>
+where
+    CnbFuture: Future<Output = Result<T, String>>,
+    GitHubFuture: Future<Output = Result<T, String>>,
+{
+    tokio::pin!(cnb);
+    tokio::pin!(github);
+    let (first_source, first_result) = tokio::select! {
+        result = &mut cnb => (AppUpdateSource::Cnb, result),
+        result = &mut github => (AppUpdateSource::GitHub, result),
+    };
+    match first_result {
+        Ok(value) => Ok((first_source, value)),
+        Err(first_error) => {
+            log::warn!("应用更新源检查失败：{first_error}");
+            let (second_source, second_result) = match first_source {
+                AppUpdateSource::Cnb => (AppUpdateSource::GitHub, github.await),
+                AppUpdateSource::GitHub => (AppUpdateSource::Cnb, cnb.await),
+            };
+            match second_result {
+                Ok(value) => Ok((second_source, value)),
+                Err(second_error) => {
+                    log::warn!("应用更新源检查失败：{second_error}");
+                    Err(AppError::Connection(format!(
+                        "所有应用更新源均不可用：{first_error}；{second_error}"
+                    )))
                 }
-            }
-            Err(error) => {
-                log::warn!("应用更新源检查失败：{error}");
-                errors.push(error);
             }
         }
     }
-
-    if successful_source_count == 0 {
-        return Err(AppError::Connection(format!(
-            "所有应用更新源均不可用：{}",
-            errors.join("；")
-        )));
-    }
-
-    candidates.sort_by(|left, right| compare_candidate(&left.0, left.1, &right.0, right.1));
-    Ok(candidates
-        .pop()
-        .map(|(_, source, update)| PendingAppUpdate { source, update }))
-}
-
-fn source_priority(source: AppUpdateSource) -> u8 {
-    match source {
-        AppUpdateSource::Cnb => 1,
-        AppUpdateSource::GitHub => 0,
-    }
-}
-
-fn compare_candidate(
-    left_version: &Version,
-    left_source: AppUpdateSource,
-    right_version: &Version,
-    right_source: AppUpdateSource,
-) -> Ordering {
-    left_version
-        .cmp(right_version)
-        .then_with(|| source_priority(left_source).cmp(&source_priority(right_source)))
 }
 
 fn update_info(pending: &PendingAppUpdate) -> AppUpdateInfo {
@@ -215,33 +208,43 @@ fn parse_proxy(proxy: &str) -> Result<Option<Url>, AppError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn 高版本优先于来源优先级() {
-        let older = Version::parse("1.2.0").expect("旧版本应有效");
-        let newer = Version::parse("1.3.0").expect("新版本应有效");
-        assert_eq!(
-            compare_candidate(
-                &older,
-                AppUpdateSource::Cnb,
-                &newer,
-                AppUpdateSource::GitHub,
+    #[tokio::test]
+    async fn 自动模式采用首个成功结果且不等待另一源() {
+        let result = tokio::time::timeout(
+            Duration::from_millis(50),
+            first_successful_source(
+                std::future::ready(Ok::<Option<u8>, String>(None)),
+                std::future::pending::<Result<Option<u8>, String>>(),
             ),
-            Ordering::Less
-        );
+        )
+        .await
+        .expect("最快成功源应立即返回")
+        .expect("成功结果应保留");
+        assert_eq!(result, (AppUpdateSource::Cnb, None));
     }
 
-    #[test]
-    fn 同版本优先选择_cnb() {
-        let version = Version::parse("1.2.0").expect("版本应有效");
-        assert_eq!(
-            compare_candidate(
-                &version,
-                AppUpdateSource::Cnb,
-                &version,
-                AppUpdateSource::GitHub,
-            ),
-            Ordering::Greater
-        );
+    #[tokio::test]
+    async fn 自动模式首源失败后采用备用源() {
+        let result = first_successful_source(
+            std::future::ready(Err::<Option<u8>, String>("CNB 失败".to_owned())),
+            std::future::ready(Ok::<Option<u8>, String>(Some(7))),
+        )
+        .await
+        .expect("备用源成功时检查应成功");
+        assert_eq!(result, (AppUpdateSource::GitHub, Some(7)));
+    }
+
+    #[tokio::test]
+    async fn 自动模式双源失败返回合并错误() {
+        let error = first_successful_source(
+            std::future::ready(Err::<Option<u8>, String>("CNB 失败".to_owned())),
+            std::future::ready(Err::<Option<u8>, String>("GitHub 失败".to_owned())),
+        )
+        .await
+        .expect_err("双源失败必须报错");
+        let message = error.to_string();
+        assert!(message.contains("CNB 失败"));
+        assert!(message.contains("GitHub 失败"));
     }
 
     #[test]

@@ -5,6 +5,8 @@ use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 pub struct AppSettings {
     pub language: Language,
     pub auto_update: bool,
+    #[serde(default)]
+    pub update_source: UpdateSourcePreference,
     pub update_proxy: String,
     #[serde(default = "default_allow_remote_clipboard_write")]
     pub allow_remote_clipboard_write: bool,
@@ -22,6 +24,17 @@ pub struct AppSettings {
     pub mcp_group_permissions: Vec<McpGroupPermission>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum UpdateSourcePreference {
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "cnb")]
+    Cnb,
 }
 
 fn default_allow_remote_clipboard_write() -> bool {

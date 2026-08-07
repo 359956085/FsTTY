@@ -1,6 +1,7 @@
 use crate::mcp_command_policy::normalize_policy;
 use crate::models::{
     AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
+    UpdateSourcePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -108,12 +109,14 @@ impl SettingsService {
         auto_update: bool,
         update_proxy: String,
         allow_remote_clipboard_write: bool,
+        update_source: UpdateSourcePreference,
     ) -> Result<AppSettings, AppError> {
         validate_update_proxy(&update_proxy)?;
         let mut next = self.settings.clone();
         next.auto_update = auto_update;
         next.update_proxy = update_proxy;
         next.allow_remote_clipboard_write = allow_remote_clipboard_write;
+        next.update_source = update_source;
         self.replace(next)
     }
 
@@ -243,6 +246,7 @@ fn default_settings() -> AppSettings {
     AppSettings {
         language: Language::ZhCn,
         auto_update: true,
+        update_source: UpdateSourcePreference::Auto,
         update_proxy: String::new(),
         allow_remote_clipboard_write: true,
         record_mcp_tool_inputs: false,
@@ -438,7 +442,12 @@ mod tests {
         assert_eq!(service.get(), default_settings());
 
         service
-            .update(false, "http://127.0.0.1:7890".to_owned(), false)
+            .update(
+                false,
+                "http://127.0.0.1:7890".to_owned(),
+                false,
+                UpdateSourcePreference::GitHub,
+            )
             .expect("保存更新设置失败");
         service.set_language(Language::EnUs).expect("保存语言失败");
         service
@@ -450,6 +459,7 @@ mod tests {
         assert!(!restored.auto_update);
         assert_eq!(restored.update_proxy, "http://127.0.0.1:7890");
         assert!(!restored.allow_remote_clipboard_write);
+        assert_eq!(restored.update_source, UpdateSourcePreference::GitHub);
         assert_eq!(restored.ignored_update_version.as_deref(), Some("0.5.0"));
         let _ = fs::remove_dir_all(directory);
     }
@@ -730,6 +740,7 @@ mod tests {
         assert!(restored.allow_remote_clipboard_write);
         assert!(!restored.record_mcp_tool_inputs);
         assert_eq!(restored.ignored_update_version, None);
+        assert_eq!(restored.update_source, UpdateSourcePreference::Auto);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -741,7 +752,7 @@ mod tests {
             .set_language(Language::EnUs)
             .expect("保存第一版设置失败");
         service
-            .update(false, String::new(), true)
+            .update(false, String::new(), true, UpdateSourcePreference::Auto)
             .expect("保存第二版设置失败");
         fs::write(directory.join(STORE_FILE), b"damaged").expect("无法损坏主设置文件");
 
@@ -749,7 +760,12 @@ mod tests {
         assert_eq!(recovered.get().language, Language::EnUs);
         assert!(recovered.get().auto_update);
         recovered
-            .update(false, "socks5://127.0.0.1:7890".to_owned(), true)
+            .update(
+                false,
+                "socks5://127.0.0.1:7890".to_owned(),
+                true,
+                UpdateSourcePreference::Cnb,
+            )
             .expect("无法替换损坏的设置文件");
         assert_eq!(
             SettingsService::load(&directory).get().update_proxy,
@@ -782,7 +798,12 @@ mod tests {
         let mut service = SettingsService::load(&directory);
 
         assert!(service
-            .update(true, "ftp://127.0.0.1".to_owned(), true)
+            .update(
+                true,
+                "ftp://127.0.0.1".to_owned(),
+                true,
+                UpdateSourcePreference::Auto,
+            )
             .is_err());
         assert_eq!(service.get(), default_settings());
         let _ = fs::remove_dir_all(directory);

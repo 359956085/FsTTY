@@ -217,6 +217,14 @@
   width: 160px;
 }
 
+.settings-update-source-select {
+  width: 120px;
+}
+
+.settings-update-source-select .form-select-trigger {
+  height: 32px;
+}
+
 .settings-language-select .form-select-trigger {
   width: 100%;
   height: 32px;
@@ -932,6 +940,48 @@
   overflow: auto;
 }
 
+.update-history-dialog {
+  width: min(760px, calc(100vw - 40px));
+}
+
+.update-history-list {
+  gap: 20px;
+}
+
+.update-history-entry {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.update-history-entry:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.update-history-entry > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.update-history-entry h3 {
+  margin: 0;
+  color: #f3f6f9;
+  font-size: 17px;
+}
+
+.update-history-entry time {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.update-history-entry .update-release-markdown {
+  max-height: none;
+}
+
 .update-version-summary {
   display: flex;
   align-items: center;
@@ -1196,6 +1246,7 @@
   }
 
   .settings-language-select,
+  .settings-update-source-select,
   .settings-proxy-input {
     width: 100%;
   }

@@ -1,9 +1,11 @@
 export type Language = "zh-CN" | "en-US";
+export type UpdateSourcePreference = "auto" | "github" | "cnb";
 export type ClipboardContentKind = "empty" | "text" | "nonText";
 
 export interface AppSettings {
   language: Language;
   autoUpdate: boolean;
+  updateSource: UpdateSourcePreference;
   updateProxy: string;
   allowRemoteClipboardWrite: boolean;
   recordMcpToolInputs: boolean;

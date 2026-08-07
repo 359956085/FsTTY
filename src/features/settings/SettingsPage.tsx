@@ -208,6 +208,14 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             onCheckUpdates={() => void handleCheckForUpdates()}
             onProxyChange={setProxy}
             onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
+            onUpdateSourceChange={(source) =>
+              void saveUpdateSettings(
+                settings.autoUpdate,
+                proxy,
+                settings.allowRemoteClipboardWrite,
+                source,
+              )
+            }
             proxy={proxy}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
-import type { AppSettings, Language } from "../../shared/api/types";
+import type {
+  AppSettings,
+  Language,
+  UpdateSourcePreference,
+} from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 interface UseGeneralSettingsOptions {
@@ -124,6 +128,7 @@ export function useGeneralSettings({
       autoUpdate: boolean,
       updateProxy = proxy,
       allowRemoteClipboardWrite = settings.allowRemoteClipboardWrite,
+      updateSource: UpdateSourcePreference = settings.updateSource,
     ) => {
       if (mountedRef.current) {
         setSavingUpdateSettings(true);
@@ -137,6 +142,7 @@ export function useGeneralSettings({
             autoUpdate,
             updateProxy.trim(),
             allowRemoteClipboardWrite,
+            updateSource,
           );
           if (mountedRef.current) {
             setProxy(nextSettings.updateProxy);
@@ -164,13 +170,13 @@ export function useGeneralSettings({
         }
       }
     },
-    [onChange, proxy, settings.allowRemoteClipboardWrite, translate],
+    [onChange, proxy, settings.allowRemoteClipboardWrite, settings.updateSource, translate],
   );
 
   const checkForUpdates = useCallback(async () => {
     const saved = await saveUpdateSettings(settings.autoUpdate);
     if (mountedRef.current && saved) {
-      await updater.checkForUpdates("manual", saved.updateProxy);
+      await updater.checkForUpdates("manual", saved.updateProxy, saved.updateSource);
     }
   }, [saveUpdateSettings, settings.autoUpdate, updater]);
 

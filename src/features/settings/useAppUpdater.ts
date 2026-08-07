@@ -2,7 +2,11 @@ import { getVersion } from "@tauri-apps/api/app";
 import { Channel } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
-import type { AppSettings, AppUpdateProgress } from "../../shared/api/types";
+import type {
+  AppSettings,
+  AppUpdateProgress,
+  UpdateSourcePreference,
+} from "../../shared/api/types";
 import { normalizeReleaseVersion, shouldSuppressUpdate } from "./updateVersion";
 
 export type UpdatePhase =
@@ -36,7 +40,11 @@ interface AppUpdaterState {
 
 export interface AppUpdaterController extends AppUpdaterState {
   busy: boolean;
-  checkForUpdates: (source?: "manual" | "automatic", proxyOverride?: string) => Promise<void>;
+  checkForUpdates: (
+    trigger?: "manual" | "automatic",
+    proxyOverride?: string,
+    updateSourceOverride?: UpdateSourcePreference,
+  ) => Promise<void>;
   dismissUpdate: () => Promise<void>;
   ignoreUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
@@ -47,6 +55,7 @@ interface UseAppUpdaterOptions {
   ignoredUpdateVersion: string | null;
   onSettingsChange: (settings: AppSettings) => void;
   proxy: string;
+  updateSource: UpdateSourcePreference;
   startupReady: boolean;
 }
 
@@ -83,6 +92,7 @@ export function useAppUpdater({
   ignoredUpdateVersion,
   onSettingsChange,
   proxy,
+  updateSource,
   startupReady,
 }: UseAppUpdaterOptions): AppUpdaterController {
   const [state, setState] = useState(INITIAL_STATE);
@@ -101,7 +111,11 @@ export function useAppUpdater({
   }, []);
 
   const checkForUpdates = useCallback(
-    async (source: "manual" | "automatic" = "manual", proxyOverride = proxy) => {
+    async (
+      trigger: "manual" | "automatic" = "manual",
+      proxyOverride = proxy,
+      updateSourceOverride = updateSource,
+    ) => {
       if (checkingRef.current || ignoringRef.current || installingRef.current) {
         return;
       }
@@ -122,7 +136,7 @@ export function useAppUpdater({
 
       try {
         const normalizedProxy = proxyOverride.trim();
-        const update = await api.checkAppUpdate(normalizedProxy);
+        const update = await api.checkAppUpdate(normalizedProxy, updateSourceOverride);
         if (!mountedRef.current) {
           if (update) {
             await api.closeAppUpdate().catch(() => undefined);
@@ -132,12 +146,12 @@ export function useAppUpdater({
         if (!update) {
           setState((current) => ({
             ...current,
-            phase: source === "manual" ? "upToDate" : "idle",
+            phase: trigger === "manual" ? "upToDate" : "idle",
           }));
           return;
         }
         const version = normalizeReleaseVersion(update.version);
-        if (shouldSuppressUpdate(source, version, ignoredUpdateVersion)) {
+        if (shouldSuppressUpdate(trigger, version, ignoredUpdateVersion)) {
           await api.closeAppUpdate().catch(() => undefined);
           setState((current) => ({ ...current, phase: "idle" }));
           return;
@@ -166,7 +180,7 @@ export function useAppUpdater({
         checkingRef.current = false;
       }
     },
-    [ignoredUpdateVersion, proxy, releaseUpdate],
+    [ignoredUpdateVersion, proxy, releaseUpdate, updateSource],
   );
 
   const dismissUpdate = useCallback(async () => {
@@ -334,9 +348,9 @@ export function useAppUpdater({
     }
     startupCheckStartedRef.current = true;
     if (autoUpdate) {
-      void checkForUpdates("automatic", proxy);
+      void checkForUpdates("automatic", proxy, updateSource);
     }
-  }, [autoUpdate, checkForUpdates, proxy, startupReady]);
+  }, [autoUpdate, checkForUpdates, proxy, startupReady, updateSource]);
 
   useEffect(() => {
     mountedRef.current = true;

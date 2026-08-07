@@ -1,5 +1,6 @@
 use crate::models::{
     AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
+    UpdateSourcePreference,
 };
 use crate::services::AppState;
 use serde::Serialize;
@@ -69,12 +70,18 @@ pub fn update_app_settings(
     auto_update: bool,
     update_proxy: String,
     allow_remote_clipboard_write: bool,
+    update_source: UpdateSourcePreference,
 ) -> Result<AppSettings, AppError> {
     let mut service = state
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    let settings = service.update(auto_update, update_proxy, allow_remote_clipboard_write)?;
+    let settings = service.update(
+        auto_update,
+        update_proxy,
+        allow_remote_clipboard_write,
+        update_source,
+    )?;
     drop(service);
     hydrate_mcp_permissions(&state, settings)
 }

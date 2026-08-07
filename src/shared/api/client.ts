@@ -26,6 +26,7 @@ import type {
   ShortcutSettings,
   TerminalEvent,
   TransferEvent,
+  UpdateSourcePreference,
   UpdateSessionPayload,
 } from "./types";
 
@@ -153,8 +154,8 @@ export const api = {
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
   },
-  checkAppUpdate(proxy: string) {
-    return invoke<AppUpdateInfo | null>("check_app_update", { proxy });
+  checkAppUpdate(proxy: string, source: UpdateSourcePreference) {
+    return invoke<AppUpdateInfo | null>("check_app_update", { proxy, source });
   },
   installAppUpdate(onProgress: Channel<AppUpdateProgress>) {
     return invoke<void>("install_app_update", { onProgress });
@@ -202,11 +203,13 @@ export const api = {
     autoUpdate: boolean,
     updateProxy: string,
     allowRemoteClipboardWrite: boolean,
+    updateSource: UpdateSourcePreference,
   ) {
     return invoke<AppSettings>("update_app_settings", {
       autoUpdate,
       updateProxy,
       allowRemoteClipboardWrite,
+      updateSource,
     });
   },
   updateLogSettings(recordMcpToolInputs: boolean) {

@@ -26,6 +26,6 @@ pub use session::{
 };
 pub use settings::{
     AppSettings, Language, McpCommandMatchType, McpCommandPolicy, McpCommandPolicyMode,
-    McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings,
+    McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings, UpdateSourcePreference,
 };
 pub use update::{AppUpdateInfo, AppUpdateProgress, AppUpdateSource};

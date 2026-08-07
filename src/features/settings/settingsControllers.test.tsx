@@ -50,6 +50,7 @@ const settings: AppSettings = {
   recordMcpToolInputs: false,
   shortcuts,
   updateProxy: "",
+  updateSource: "auto",
 };
 
 function deferred<T>() {
@@ -132,6 +133,41 @@ describe("设置状态控制器", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("保存自动、GitHub 和 CNB 下载源", async () => {
+    apiMocks.updateAppSettings.mockImplementation(
+      async (
+        autoUpdate: boolean,
+        updateProxy: string,
+        allowRemoteClipboardWrite: boolean,
+        updateSource: AppSettings["updateSource"],
+      ) => ({
+        ...settings,
+        allowRemoteClipboardWrite,
+        autoUpdate,
+        updateProxy,
+        updateSource,
+      }),
+    );
+    const { result } = renderHook(() =>
+      useGeneralSettings({
+        onChange: vi.fn(),
+        settings,
+        translate: (key) => key,
+        updater: {} as AppUpdaterController,
+      }),
+    );
+
+    for (const source of ["auto", "github", "cnb"] as const) {
+      await act(async () => {
+        await result.current.saveUpdateSettings(true, "", false, source);
+      });
+    }
+
+    expect(apiMocks.updateAppSettings.mock.calls[0]?.[3]).toBe("auto");
+    expect(apiMocks.updateAppSettings.mock.calls[1]?.[3]).toBe("github");
+    expect(apiMocks.updateAppSettings.mock.calls[2]?.[3]).toBe("cnb");
+  });
+
   it("StrictMode 重放后仍能手工检查更新", async () => {
     apiMocks.updateAppSettings.mockResolvedValue(settings);
     const checkForUpdates = vi.fn().mockResolvedValue(undefined);
@@ -150,7 +186,11 @@ describe("设置状态控制器", () => {
     await act(async () => result.current.checkForUpdates());
 
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
-    expect(checkForUpdates).toHaveBeenCalledWith("manual", settings.updateProxy);
+    expect(checkForUpdates).toHaveBeenCalledWith(
+      "manual",
+      settings.updateProxy,
+      settings.updateSource,
+    );
   });
 
   it("StrictMode 重放后仍能保存 MCP 设置", async () => {
