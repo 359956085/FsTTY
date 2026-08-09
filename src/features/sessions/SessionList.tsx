@@ -2,6 +2,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Filter,
   Link,
   Pencil,
@@ -12,6 +13,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -123,12 +125,14 @@ export function SessionList({
   const [filterActiveIndex, setFilterActiveIndex] = useState(0);
   const [filterOpen, setFilterOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
+  const [copyError, setCopyError] = useState(false);
   const [groupOperation, setGroupOperation] = useState<GroupOperation | null>(null);
   const [dragSource, setDragSource] = useState<SessionDragSource | null>(null);
   const [dropTarget, setDropTarget] = useState<SessionDropTarget | null>(null);
   const dragGestureRef = useRef<DragGesture | null>(null);
   const dropTargetRef = useRef<SessionDropTarget | null>(null);
   const suppressClickRef = useRef(false);
+  const copyErrorTimerRef = useRef<number | null>(null);
   const favoriteIds = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const collapsedGroups = useMemo(() => new Set(collapsedGroupNames), [collapsedGroupNames]);
   const filteredGroups = useMemo(() => {
@@ -238,6 +242,50 @@ export function SessionList({
       clearDrag();
     };
   }, [clearDrag]);
+
+  useEffect(
+    () => () => {
+      if (copyErrorTimerRef.current !== null) {
+        window.clearTimeout(copyErrorTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  function reportCopyError() {
+    setCopyError(true);
+    if (copyErrorTimerRef.current !== null) {
+      window.clearTimeout(copyErrorTimerRef.current);
+    }
+    copyErrorTimerRef.current = window.setTimeout(() => {
+      copyErrorTimerRef.current = null;
+      setCopyError(false);
+    }, 3000);
+  }
+
+  async function copySessionInfo(sessionId: string) {
+    const session = groups
+      .flatMap((group) => group.sessions)
+      .find((item) => item.id === sessionId);
+    if (!session) {
+      reportCopyError();
+      return;
+    }
+
+    const target = session.username
+      ? `${session.username}@${session.host}`
+      : session.host;
+    try {
+      await writeText(`${session.name} ${target}`);
+      setCopyError(false);
+      if (copyErrorTimerRef.current !== null) {
+        window.clearTimeout(copyErrorTimerRef.current);
+        copyErrorTimerRef.current = null;
+      }
+    } catch {
+      reportCopyError();
+    }
+  }
 
   function beginDrag(
     event: ReactPointerEvent<HTMLElement>,
@@ -465,6 +513,11 @@ export function SessionList({
         </div>
       </div>
 
+      {copyError ? (
+        <div className="session-list-copy-error error-banner" role="alert">
+          {t("sessions.copySessionInfoFailed")}
+        </div>
+      ) : null}
       <div className="session-group-list">
         {filteredGroups.length === 0 ? (
           <p className="empty-message">{t("sessions.noMatches")}</p>
@@ -615,6 +668,7 @@ export function SessionList({
         <ContextMenu
           items={[
             { id: "connect", label: t("sessions.contextConnect"), icon: <Link size={15} />, onSelect: () => onOpen(contextMenu.sessionId) },
+            { id: "copy-session-info", label: t("sessions.contextCopySessionInfo"), icon: <Copy size={15} />, onSelect: () => void copySessionInfo(contextMenu.sessionId) },
             { id: "edit", label: t("sessions.edit"), icon: <Pencil size={15} />, disabled: mutationPending, onSelect: () => onEdit(contextMenu.sessionId) },
             { id: "favorite", label: t(favoriteIds.has(contextMenu.sessionId) ? "sessions.unfavorite" : "sessions.favorite"), icon: <Star size={15} />, onSelect: () => onToggleFavorite(contextMenu.sessionId) },
             { id: "refresh", label: t("sessions.refresh"), icon: <RefreshCcw size={15} />, disabled: mutationPending, onSelect: onRefresh },

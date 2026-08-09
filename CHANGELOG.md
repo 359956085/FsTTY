@@ -16,6 +16,36 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 <!-- release-notes:en-US:end -->
 
+## [1.2.2] - 2026-08-09
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### 修复
+
+- 修复 MCP 一键配置检测读取异常配置文件时可能导致程序崩溃的问题。
+- 修复设置页未随首包加载导致的显示异常。
+
+#### 设置与更新
+
+- 设置页新增下载源选择和更新日志。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### Fixes
+
+- Fixed an issue where reading an invalid configuration file during MCP one-click setup detection could crash the application.
+- Fixed a display issue caused by the Settings page not being included in the initial bundle.
+
+#### Settings and Updates
+
+- Added download source selection and update history to Settings.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.2.1] - 2026-08-06
 
 <!-- release-notes:zh-CN:start -->

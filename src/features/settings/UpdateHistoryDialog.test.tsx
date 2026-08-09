@@ -19,6 +19,18 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("v1.2.2")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "修复 MCP 一键配置检测读取异常配置文件时可能导致程序崩溃的问题。",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("修复设置页未随首包加载导致的显示异常。"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("设置页新增下载源选择和更新日志。"),
+    ).toBeTruthy();
     expect(screen.getByText("v1.2.1")).toBeTruthy();
     expect(screen.getByText("修复部分按钮点击无响应的问题。")).toBeTruthy();
     expect(screen.queryByText("Unreleased")).toBeNull();

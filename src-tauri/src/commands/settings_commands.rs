@@ -357,9 +357,12 @@ pub fn get_mcp_agent_prompt() -> String {
 }
 
 #[tauri::command]
-pub fn inspect_local_agent_setup(
+pub async fn inspect_local_agent_setup(
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentCapability>, AppError> {
-    crate::local_agent_setup::inspect_local_agent_setup().map_err(AppError::Internal)
+    tauri::async_runtime::spawn_blocking(crate::local_agent_setup::inspect_local_agent_setup)
+        .await
+        .map_err(|_| AppError::Internal("本地 Agent 检测任务异常终止".to_owned()))?
+        .map_err(AppError::Internal)
 }
 
 #[tauri::command]

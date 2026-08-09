@@ -546,24 +546,24 @@ fn inspect_codex_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
     let Ok(document) = content.parse::<DocumentMut>() else {
         return LocalAgentSetupState::Invalid;
     };
-    if document
-        .get("mcp_servers")
-        .is_some_and(|servers| !servers.is_table())
-        || document["mcp_servers"]
-            .as_table()
-            .and_then(|servers| servers.get("fstty"))
-            .is_some_and(|server| !server.is_table())
-    {
+    let Some(servers) = document.get("mcp_servers") else {
+        return LocalAgentSetupState::Missing;
+    };
+    let Some(servers) = servers.as_table() else {
         return LocalAgentSetupState::Invalid;
-    }
-    let command = document["mcp_servers"]["fstty"]["command"].as_str();
-    let args = document["mcp_servers"]["fstty"]["args"].as_array();
+    };
+    let Some(server) = servers.get("fstty") else {
+        return LocalAgentSetupState::Missing;
+    };
+    let Some(server) = server.as_table() else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let command = server.get("command").and_then(Item::as_str);
+    let args = server.get("args").and_then(Item::as_array);
     if command == Some(executable.to_string_lossy().as_ref())
         && args.is_some_and(|args| args.iter().any(|item| item.as_str() == Some("--mcp-stdio")))
     {
         LocalAgentSetupState::Current
-    } else if document["mcp_servers"]["fstty"].is_none() {
-        LocalAgentSetupState::Missing
     } else {
         LocalAgentSetupState::Outdated
     }
@@ -926,6 +926,53 @@ mod tests {
         assert!(content.contains("[mcp_servers.other]"));
         assert!(content.contains("[mcp_servers.fstty]"));
         assert!(!configure_codex_mcp(&root, &executable).unwrap());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex检测安全处理缺失损坏和完整配置() {
+        let root = test_directory("codex-inspect");
+        let codex = root.join(".codex");
+        let path = codex.join("config.toml");
+        fs::create_dir_all(&codex).unwrap();
+        let executable = root.join("fstty.exe");
+
+        for (content, expected) in [
+            ("", LocalAgentSetupState::Missing),
+            ("theme = \"dark\"\n", LocalAgentSetupState::Missing),
+            (
+                "[mcp_servers.other]\ncommand = \"other\"\n",
+                LocalAgentSetupState::Missing,
+            ),
+            (
+                "[mcp_servers.fstty]\ncommand = \"other\"\n",
+                LocalAgentSetupState::Outdated,
+            ),
+            ("mcp_servers = \"broken\"\n", LocalAgentSetupState::Invalid),
+            (
+                "[mcp_servers]\nfstty = \"broken\"\n",
+                LocalAgentSetupState::Invalid,
+            ),
+            ("{ broken", LocalAgentSetupState::Invalid),
+        ] {
+            fs::write(&path, content).unwrap();
+            let before = fs::read(&path).unwrap();
+            assert_eq!(inspect_codex_state(&root, &executable), expected);
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+
+        fs::write(
+            &path,
+            format!(
+                "[mcp_servers.fstty]\ncommand = {:?}\nargs = [\"--mcp-stdio\"]\n",
+                executable.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_codex_state(&root, &executable),
+            LocalAgentSetupState::Current
+        );
         let _ = fs::remove_dir_all(root);
     }
 
