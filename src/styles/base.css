@@ -52,6 +52,8 @@
   --switch-knob: #dce1e6;
   --metric-track: var(--surface-strong);
   --metric-line: var(--text-secondary);
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: rgba(137, 153, 169, 0.36);
 }
 
 :root[data-theme="light"] {
@@ -152,9 +154,29 @@ textarea:focus-visible,
   outline-offset: -2px;
 }
 
-* {
-  scrollbar-color: rgba(137, 153, 169, 0.36) transparent;
-  scrollbar-width: thin;
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 .app-shell {

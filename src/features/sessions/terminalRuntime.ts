@@ -20,6 +20,8 @@ export interface InstalledTerminalRuntime {
   terminal: XTerm;
 }
 
+export const TERMINAL_SCROLLBAR_SIZE = 8;
+
 const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
   dark: {
     background: "#080d11",
@@ -36,6 +38,7 @@ const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
     white: "#d5d9dd",
     brightBlack: "#6f7780",
     brightWhite: "#f4f6f8",
+    overviewRulerBorder: "#00000000",
     selectionBackground: "#5b6b7c66",
   },
   light: {
@@ -53,6 +56,7 @@ const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
     white: "#e7ebef",
     brightBlack: "#66717d",
     brightWhite: "#ffffff",
+    overviewRulerBorder: "#00000000",
     selectionBackground: "#2588f533",
   },
 };
@@ -85,6 +89,8 @@ export async function installTerminalRuntime({
     fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
     fontSize: 13,
     lineHeight: 1.38,
+    // xterm 6 使用独立滚动条，必须通过 overviewRuler 覆盖默认的 14px 宽度。
+    overviewRuler: { width: TERMINAL_SCROLLBAR_SIZE },
     scrollback: 10_000,
     theme: getTerminalTheme(theme),
   });
