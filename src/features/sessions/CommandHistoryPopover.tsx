@@ -24,6 +24,7 @@ import {
 
 interface CommandHistoryPopoverProps {
   disabled: boolean;
+  onTriggerClose?: () => void;
   onSelect: (command: string) => void;
   shortcuts?: ShortcutSettings;
 }
@@ -44,7 +45,7 @@ export const CommandHistoryPopover = forwardRef<
   CommandHistoryPopoverHandle,
   CommandHistoryPopoverProps
 >(function CommandHistoryPopover(
-  { disabled, onSelect, shortcuts = DEFAULT_SHORTCUTS },
+  { disabled, onSelect, onTriggerClose, shortcuts = DEFAULT_SHORTCUTS },
   forwardedRef,
 ) {
   const { i18n, t } = useTranslation();
@@ -493,8 +494,12 @@ export const CommandHistoryPopover = forwardRef<
         disabled={disabled}
         title={`${t("sessions.commandHistory")} (${formatShortcut(shortcuts.commandHistory)})`}
         onClick={() => {
-          if (open) close();
-          else openPopover();
+          if (open) {
+            close();
+            onTriggerClose?.();
+          } else {
+            openPopover();
+          }
         }}
         type="button"
       >

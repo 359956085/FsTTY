@@ -165,6 +165,29 @@ describe("CommandHistoryPopover", () => {
     expect(container.querySelector(".command-history-caret")).toBeNull();
   });
 
+  it("仅按钮关闭时请求恢复终端焦点", async () => {
+    mocks.listCommandHistory.mockResolvedValue({ ...latestPage, hasMore: false });
+    const onTriggerClose = vi.fn();
+    render(
+      <CommandHistoryPopover
+        disabled={false}
+        onSelect={vi.fn()}
+        onTriggerClose={onTriggerClose}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: /历史/ });
+
+    fireEvent.click(trigger);
+    await screen.findAllByRole("option");
+    fireEvent.click(trigger);
+    expect(onTriggerClose).toHaveBeenCalledOnce();
+
+    fireEvent.click(trigger);
+    await screen.findAllByRole("option");
+    fireEvent.pointerDown(document.body);
+    expect(onTriggerClose).toHaveBeenCalledOnce();
+  });
+
   it("顶部、右侧和右上角分别调整尺寸并永久保存", async () => {
     mocks.listCommandHistory.mockResolvedValue({ ...latestPage, hasMore: false });
     const { container } = render(

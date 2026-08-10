@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
 
 const runtimeMocks = vi.hoisted(() => ({
   dispose: vi.fn(),
+  focus: vi.fn(),
   getTheme: vi.fn((theme: string) => ({ name: theme })),
   install: vi.fn(),
   options: { theme: undefined as unknown },
@@ -40,7 +41,11 @@ vi.mock("react-i18next", () => ({
 vi.mock("../../shared/api/client", () => ({ api: apiMocks }));
 
 vi.mock("./CommandHistoryPopover", () => ({
-  CommandHistoryPopover: () => null,
+  CommandHistoryPopover: ({ onTriggerClose }: { onTriggerClose?: () => void }) => (
+    <button onClick={onTriggerClose} type="button">
+      sessions.commandHistory
+    </button>
+  ),
 }));
 
 vi.mock("./terminalRuntime", () => ({
@@ -98,7 +103,7 @@ describe("终端面板连接", () => {
       blur: vi.fn(),
       cols: 80,
       element: null,
-      focus: vi.fn(),
+      focus: runtimeMocks.focus,
       modes: { mouseTrackingMode: "none" },
       onData: vi.fn(),
       options: runtimeMocks.options,
@@ -176,6 +181,36 @@ describe("终端面板连接", () => {
     rerender(<TerminalPane {...commonProps} theme="light" />);
     await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light" }));
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击历史按钮关闭弹窗后恢复终端焦点", async () => {
+    const getClientRects = vi
+      .spyOn(HTMLElement.prototype, "getClientRects")
+      .mockReturnValue([{} as DOMRect] as unknown as DOMRectList);
+    render(
+      <TerminalPane
+        active
+        allowRemoteClipboardWrite={false}
+        autoConnect={false}
+        connectionState="connected"
+        onConnected={vi.fn()}
+        onCredentialSaved={vi.fn()}
+        onDirectoryChange={vi.fn()}
+        onStateChange={vi.fn()}
+        runtimeId="runtime-history-focus"
+        session={session}
+        shortcuts={shortcuts}
+        theme="dark"
+        visible
+      />,
+    );
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    const trigger = screen.getByRole("button", { name: /sessions.commandHistory/ });
+    runtimeMocks.focus.mockClear();
+
+    fireEvent.click(trigger);
+    expect(runtimeMocks.focus).toHaveBeenCalledOnce();
+    getClientRects.mockRestore();
   });
 
   it("注册标准和私有协议，Bash 无原生能力时注入一次", async () => {

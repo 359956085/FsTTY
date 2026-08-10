@@ -1388,6 +1388,7 @@ export const TerminalPane = memo(function TerminalPane({
       <div className="terminal-toolbar">
         <CommandHistoryPopover
           disabled={connectionState !== "connected"}
+          onTriggerClose={restoreTerminalFocus}
           ref={commandHistoryRef}
           shortcuts={shortcuts}
           onSelect={(command) => {
