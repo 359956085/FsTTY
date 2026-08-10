@@ -1,6 +1,10 @@
 import { FolderOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { AppSettings, Language } from "../../shared/api/types";
+import type {
+  AppSettings,
+  Language,
+  ThemePreference,
+} from "../../shared/api/types";
 import { Select } from "../../shared/ui/Select";
 import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
@@ -13,12 +17,14 @@ interface GeneralSettingsPanelProps {
   onClipboardChange: (enabled: boolean) => void;
   onHideTooltip: () => void;
   onLanguageChange: (language: Language) => void;
+  onThemeChange: (theme: ThemePreference) => void;
   onOpenLogDirectory: () => void;
   onRecordMcpToolInputsChange: (enabled: boolean) => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
   onSettingsChange: (settings: AppSettings) => void;
   openingLogDirectory: boolean;
   savingLanguage: boolean;
+  savingTheme: boolean;
   savingLogSettings: boolean;
   savingUpdateSettings: boolean;
   settings: AppSettings;
@@ -31,12 +37,14 @@ export function GeneralSettingsPanel({
   onClipboardChange,
   onHideTooltip,
   onLanguageChange,
+  onThemeChange,
   onOpenLogDirectory,
   onRecordMcpToolInputsChange,
   onShowTooltip,
   onSettingsChange,
   openingLogDirectory,
   savingLanguage,
+  savingTheme,
   savingLogSettings,
   savingUpdateSettings,
   settings,
@@ -61,6 +69,21 @@ export function GeneralSettingsPanel({
               { value: "en-US", label: t("settings.english") },
             ]}
             value={settings.language}
+          />
+        </div>
+        <div className="settings-row settings-language-row">
+          <span className="settings-row-label">{t("settings.theme")}</span>
+          <Select<ThemePreference>
+            ariaLabel={t("settings.theme")}
+            className="settings-language-select"
+            disabled={savingTheme}
+            onChange={onThemeChange}
+            options={[
+              { value: "system", label: t("settings.themeSystem") },
+              { value: "light", label: t("settings.themeLight") },
+              { value: "dark", label: t("settings.themeDark") },
+            ]}
+            value={settings.theme}
           />
         </div>
         <div className="settings-row settings-clipboard-row">

@@ -1,5 +1,6 @@
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
-import type { Terminal as XTerm } from "@xterm/xterm";
+import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
+import type { ResolvedTheme } from "../../shared/theme";
 import { StrictClipboardBase64, TauriClipboardProvider } from "./terminalClipboard";
 import { installTerminalMouseSelectionCopy } from "./terminalMouseSelection";
 
@@ -10,12 +11,54 @@ interface InstallTerminalRuntimeOptions {
   isRemoteClipboardAllowed: () => boolean;
   isVisible: () => boolean;
   onClipboardWriteError: () => void;
+  theme: ResolvedTheme;
 }
 
 export interface InstalledTerminalRuntime {
   dispose(): void;
   fitAddon: XTermFitAddon;
   terminal: XTerm;
+}
+
+const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
+  dark: {
+    background: "#080d11",
+    foreground: "#d5d9dd",
+    cursor: "#f1f3f5",
+    cursorAccent: "#080d11",
+    black: "#111416",
+    red: "#f06b72",
+    green: "#56cf63",
+    yellow: "#e5aa4b",
+    blue: "#aeb6bd",
+    magenta: "#c792ea",
+    cyan: "#2dd4bf",
+    white: "#d5d9dd",
+    brightBlack: "#6f7780",
+    brightWhite: "#f4f6f8",
+    selectionBackground: "#5b6b7c66",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#1f2933",
+    cursor: "#1f2933",
+    cursorAccent: "#ffffff",
+    black: "#1f2933",
+    red: "#c43c49",
+    green: "#257a3e",
+    yellow: "#946200",
+    blue: "#1668c7",
+    magenta: "#7b4ab5",
+    cyan: "#087f8c",
+    white: "#e7ebef",
+    brightBlack: "#66717d",
+    brightWhite: "#ffffff",
+    selectionBackground: "#2588f533",
+  },
+};
+
+export function getTerminalTheme(theme: ResolvedTheme): ITheme {
+  return TERMINAL_THEMES[theme];
 }
 
 export async function installTerminalRuntime({
@@ -25,6 +68,7 @@ export async function installTerminalRuntime({
   isRemoteClipboardAllowed,
   isVisible,
   onClipboardWriteError,
+  theme,
 }: InstallTerminalRuntimeOptions): Promise<InstalledTerminalRuntime | null> {
   const [{ Terminal }, { FitAddon }, { ClipboardAddon }] = await Promise.all([
     import("@xterm/xterm"),
@@ -42,17 +86,7 @@ export async function installTerminalRuntime({
     fontSize: 13,
     lineHeight: 1.38,
     scrollback: 10_000,
-    theme: {
-      background: "#080d11",
-      foreground: "#d5d9dd",
-      cursor: "#f1f3f5",
-      black: "#111416",
-      blue: "#aeb6bd",
-      cyan: "#2dd4bf",
-      green: "#56cf63",
-      red: "#f06b72",
-      yellow: "#e5aa4b",
-    },
+    theme: getTerminalTheme(theme),
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);

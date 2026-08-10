@@ -4,6 +4,8 @@ use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub language: Language,
+    #[serde(default)]
+    pub theme: ThemePreference,
     pub auto_update: bool,
     #[serde(default)]
     pub update_source: UpdateSourcePreference,
@@ -24,6 +26,15 @@ pub struct AppSettings {
     pub mcp_group_permissions: Vec<McpGroupPermission>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

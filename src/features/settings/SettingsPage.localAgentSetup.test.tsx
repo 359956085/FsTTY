@@ -80,6 +80,7 @@ const settings: AppSettings = {
   autoUpdate: false,
   ignoredUpdateVersion: null,
   language: "zh-CN",
+  theme: "system",
   mcpEnabled: false,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,

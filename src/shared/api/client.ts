@@ -25,6 +25,7 @@ import type {
   SessionGroup,
   ShortcutSettings,
   TerminalEvent,
+  ThemePreference,
   TransferEvent,
   UpdateSourcePreference,
   UpdateSessionPayload,
@@ -195,6 +196,9 @@ export const api = {
   },
   setLanguage(language: Language) {
     return invoke<AppSettings>("set_language", { language });
+  },
+  setTheme(theme: ThemePreference) {
+    return invoke<AppSettings>("set_theme", { theme });
   },
   setIgnoredUpdateVersion(version: string) {
     return invoke<AppSettings>("set_ignored_update_version", { version });

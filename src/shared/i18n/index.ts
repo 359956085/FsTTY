@@ -232,6 +232,10 @@ void i18n.use(initReactI18next).init({
           language: "语言",
           chinese: "中文",
           english: "English",
+          theme: "主题",
+          themeSystem: "跟随系统",
+          themeLight: "亮色",
+          themeDark: "暗色",
           remoteClipboardWrite: "远程剪贴板写入",
           remoteClipboardWriteHint:
             "允许 tmux 和远程程序通过 OSC 52 写入 Windows 剪贴板",
@@ -664,6 +668,10 @@ void i18n.use(initReactI18next).init({
           language: "Language",
           chinese: "中文",
           english: "English",
+          theme: "Theme",
+          themeSystem: "System",
+          themeLight: "Light",
+          themeDark: "Dark",
           remoteClipboardWrite: "Remote clipboard writes",
           remoteClipboardWriteHint:
             "Allow tmux and remote programs to write to the Windows clipboard through OSC 52.",

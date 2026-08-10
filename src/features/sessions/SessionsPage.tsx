@@ -13,14 +13,21 @@ import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
 import type { ShortcutSettings } from "../../shared/api/types";
+import type { ResolvedTheme } from "../../shared/theme";
 
 interface SessionsPageProps {
   allowRemoteClipboardWrite: boolean;
   shortcuts: ShortcutSettings;
+  theme: ResolvedTheme;
   visible: boolean;
 }
 
-export function SessionsPage({ allowRemoteClipboardWrite, shortcuts, visible }: SessionsPageProps) {
+export function SessionsPage({
+  allowRemoteClipboardWrite,
+  shortcuts,
+  theme,
+  visible,
+}: SessionsPageProps) {
   const { t } = useTranslation();
   const sessionsState = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
@@ -196,6 +203,7 @@ export function SessionsPage({ allowRemoteClipboardWrite, shortcuts, visible }: 
           />
         }
         shortcuts={shortcuts}
+        theme={theme}
         runtimes={connections.runtimes}
         visible={visible}
       />

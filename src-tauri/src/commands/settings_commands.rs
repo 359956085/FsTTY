@@ -1,6 +1,6 @@
 use crate::models::{
     AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
-    UpdateSourcePreference,
+    ThemePreference, UpdateSourcePreference,
 };
 use crate::services::AppState;
 use serde::Serialize;
@@ -60,6 +60,20 @@ pub fn set_language(
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
 
     let settings = service.set_language(language)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
+}
+
+#[tauri::command]
+pub fn set_theme(
+    state: State<'_, AppState>,
+    theme: ThemePreference,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    let settings = service.set_theme(theme)?;
     drop(service);
     hydrate_mcp_permissions(&state, settings)
 }

@@ -35,6 +35,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const {
     changeLanguage: handleLanguageChange,
+    changeTheme: handleThemeChange,
     checkForUpdates: handleCheckForUpdates,
     error,
     logDirectoryError,
@@ -45,6 +46,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     saveLogSettings,
     saveUpdateSettings,
     savingLanguage,
+    savingTheme,
     savingLogSettings,
     savingUpdateSettings,
     setProxy,
@@ -191,12 +193,14 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
             }
             onHideTooltip={() => setMcpPermissionTooltip(null)}
             onLanguageChange={(language) => void handleLanguageChange(language)}
+            onThemeChange={(theme) => void handleThemeChange(theme)}
             onOpenLogDirectory={() => void openLogDirectory()}
             onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
             onShowTooltip={showMcpPermissionTooltip}
             onSettingsChange={onChange}
             openingLogDirectory={openingLogDirectory}
             savingLanguage={savingLanguage}
+            savingTheme={savingTheme}
             savingLogSettings={savingLogSettings}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}

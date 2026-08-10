@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
   getMcpStdioClientConfig: vi.fn(),
   listSessions: vi.fn(),
   rotateMcpHttpToken: vi.fn(),
+  setTheme: vi.fn(),
   updateAppSettings: vi.fn(),
   updateMcpSettings: vi.fn(),
 }));
@@ -43,6 +44,7 @@ const settings: AppSettings = {
   autoUpdate: true,
   ignoredUpdateVersion: null,
   language: "zh-CN",
+  theme: "system",
   mcpEnabled: true,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,
@@ -166,6 +168,41 @@ describe("设置状态控制器", () => {
     expect(apiMocks.updateAppSettings.mock.calls[0]?.[3]).toBe("auto");
     expect(apiMocks.updateAppSettings.mock.calls[1]?.[3]).toBe("github");
     expect(apiMocks.updateAppSettings.mock.calls[2]?.[3]).toBe("cnb");
+  });
+
+  it("主题保存成功、失败和重复点击均保持一致状态", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.setTheme.mockReturnValueOnce(request.promise);
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useGeneralSettings({
+        onChange,
+        settings,
+        translate: (key) => key,
+        updater: {} as AppUpdaterController,
+      }),
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.changeTheme("light");
+      void result.current.changeTheme("dark");
+    });
+    expect(apiMocks.setTheme).toHaveBeenCalledTimes(1);
+    expect(result.current.savingTheme).toBe(true);
+
+    const lightSettings = { ...settings, theme: "light" as const };
+    await act(async () => {
+      request.resolve(lightSettings);
+      await first;
+    });
+    expect(onChange).toHaveBeenCalledWith(lightSettings);
+    expect(result.current.savingTheme).toBe(false);
+
+    apiMocks.setTheme.mockRejectedValueOnce(new Error("theme failed"));
+    await act(async () => result.current.changeTheme("dark"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe("theme failed");
   });
 
   it("StrictMode 重放后仍能手工检查更新", async () => {

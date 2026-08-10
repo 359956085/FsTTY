@@ -1,28 +1,28 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
-import { settingsPageLoader } from "./features/settings/settingsPageLoader";
+import { SettingsPage } from "./features/settings/SettingsPage";
 import { UpdateDialog } from "./features/settings/UpdateDialog";
 import { useAppUpdater } from "./features/settings/useAppUpdater";
 import { api } from "./shared/api/client";
 import { resolveApiError } from "./shared/api/errors";
 import type { AppSettings } from "./shared/api/types";
 import { DEFAULT_SHORTCUTS } from "./shared/shortcuts";
+import { readCachedThemePreference } from "./shared/theme";
+import { useAppTheme } from "./shared/useAppTheme";
 
 import appIcon from "./assets/brand-icon.png";
 
 type AppView = "sessions" | "settings";
-
-// 设置页不是启动必需路径，延迟加载可减少会话主界面的首包体积。
-const SettingsPage = lazy(settingsPageLoader.load);
 
 export function App() {
   const { t, i18n } = useTranslation();
   const [view, setView] = useState<AppView>("sessions");
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-CN",
+    theme: readCachedThemePreference(),
     autoUpdate: true,
     updateSource: "auto",
     updateProxy: "",
@@ -37,6 +37,7 @@ export function App() {
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const resolvedTheme = useAppTheme(settings.theme);
   const updater = useAppUpdater({
     autoUpdate: settings.autoUpdate,
     ignoredUpdateVersion: settings.ignoredUpdateVersion,
@@ -45,11 +46,6 @@ export function App() {
     updateSource: settings.updateSource,
     startupReady: settingsLoaded,
   });
-
-  useEffect(() => {
-    // 首屏提交后立即准备独立设置分包，减少首次进入设置页时的等待。
-    settingsPageLoader.preload();
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -175,21 +171,20 @@ export function App() {
         >
           <SessionsPage
             allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
+            theme={resolvedTheme}
             shortcuts={settings.shortcuts}
             visible={view === "sessions"}
           />
         </div>
         {view === "settings" ? (
-          <Suspense fallback={<div className="loading-banner">{t("common.loading")}</div>}>
-            <SettingsPage
-              settings={settings}
-              updater={updater}
-              onChange={(nextSettings) => {
-                setSettings(nextSettings);
-                void i18n.changeLanguage(nextSettings.language);
-              }}
-            />
-          </Suspense>
+          <SettingsPage
+            settings={settings}
+            updater={updater}
+            onChange={(nextSettings) => {
+              setSettings(nextSettings);
+              void i18n.changeLanguage(nextSettings.language);
+            }}
+          />
         ) : null}
       </main>
       <UpdateDialog updater={updater} />

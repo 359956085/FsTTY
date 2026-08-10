@@ -1,7 +1,7 @@
 use crate::mcp_command_policy::normalize_policy;
 use crate::models::{
     AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
-    UpdateSourcePreference,
+    ThemePreference, UpdateSourcePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -101,6 +101,12 @@ impl SettingsService {
     pub fn set_language(&mut self, language: Language) -> Result<AppSettings, AppError> {
         let mut next = self.settings.clone();
         next.language = language;
+        self.replace(next)
+    }
+
+    pub fn set_theme(&mut self, theme: ThemePreference) -> Result<AppSettings, AppError> {
+        let mut next = self.settings.clone();
+        next.theme = theme;
         self.replace(next)
     }
 
@@ -245,6 +251,7 @@ impl SettingsService {
 fn default_settings() -> AppSettings {
     AppSettings {
         language: Language::ZhCn,
+        theme: ThemePreference::System,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
         update_proxy: String::new(),
@@ -741,6 +748,23 @@ mod tests {
         assert!(!restored.record_mcp_tool_inputs);
         assert_eq!(restored.ignored_update_version, None);
         assert_eq!(restored.update_source, UpdateSourcePreference::Auto);
+        assert_eq!(restored.theme, ThemePreference::System);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 主题偏好可独立持久化() {
+        let directory = test_directory("settings-theme");
+        let mut service = SettingsService::load(&directory);
+
+        for theme in [
+            ThemePreference::Light,
+            ThemePreference::Dark,
+            ThemePreference::System,
+        ] {
+            service.set_theme(theme).expect("保存主题失败");
+            assert_eq!(SettingsService::load(&directory).get().theme, theme);
+        }
         let _ = fs::remove_dir_all(directory);
     }
 

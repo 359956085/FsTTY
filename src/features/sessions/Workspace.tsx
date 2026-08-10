@@ -14,6 +14,7 @@ import { FilesPane } from "./FilesPane";
 import { TerminalPane } from "./TerminalPane";
 import type { SessionRuntime } from "./useSessionConnections";
 import type { OpenSessionTab } from "./useSessionsPageState";
+import type { ResolvedTheme } from "../../shared/theme";
 
 interface WorkspaceProps {
   allowRemoteClipboardWrite: boolean;
@@ -26,6 +27,7 @@ interface WorkspaceProps {
   rightCollapsed: boolean;
   rightResizeHandle: ReactNode;
   shortcuts: ShortcutSettings;
+  theme: ResolvedTheme;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   visible: boolean;
   onCancelTransfer: (tabId: string) => void;
@@ -87,6 +89,7 @@ export function Workspace({
   rightCollapsed,
   rightResizeHandle,
   shortcuts,
+  theme,
   runtimes,
   visible,
 }: WorkspaceProps) {
@@ -219,6 +222,7 @@ export function Workspace({
                     runtimeId={tab.id}
                     session={tab.session}
                     shortcuts={shortcuts}
+                    theme={theme}
                     visible={visible}
                   />
                 ) : null}

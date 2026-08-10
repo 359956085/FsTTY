@@ -3,6 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        let cached = null;
+        try {
+          cached = localStorage.getItem("fstty.theme");
+        } catch {
+          // 本地缓存不可用时仍按系统主题启动。
+        }
+        const preference = ["system", "light", "dark"].includes(cached)
+          ? cached
+          : "system";
+        const resolved =
+          preference === "system"
+            ? typeof matchMedia === "function" &&
+              matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : preference;
+        document.documentElement.dataset.theme = resolved;
+        document.documentElement.style.colorScheme = resolved;
+      })();
+    </script>
     <title>FsTTY</title>
   </head>
   <body>
@@ -10,4 +32,3 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

@@ -4,6 +4,7 @@ import { resolveApiError } from "../../shared/api/errors";
 import type {
   AppSettings,
   Language,
+  ThemePreference,
   UpdateSourcePreference,
 } from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
@@ -27,11 +28,13 @@ export function useGeneralSettings({
   const [openingLogDirectory, setOpeningLogDirectory] = useState(false);
   const [proxy, setProxy] = useState(settings.updateProxy);
   const [savingLanguage, setSavingLanguage] = useState(false);
+  const [savingTheme, setSavingTheme] = useState(false);
   const [savingLogSettings, setSavingLogSettings] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const mountedRef = useRef(true);
   const openingLogDirectoryRef = useRef(false);
   const savingLanguageRef = useRef(false);
+  const savingThemeRef = useRef(false);
   const savingLogSettingsRef = useRef(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -65,6 +68,33 @@ export function useGeneralSettings({
         savingLanguageRef.current = false;
         if (mountedRef.current) {
           setSavingLanguage(false);
+        }
+      }
+    },
+    [onChange, translate],
+  );
+
+  const changeTheme = useCallback(
+    async (theme: ThemePreference) => {
+      if (savingThemeRef.current) {
+        return;
+      }
+      savingThemeRef.current = true;
+      setSavingTheme(true);
+      setError(null);
+      try {
+        const nextSettings = await api.setTheme(theme);
+        if (mountedRef.current) {
+          onChange(nextSettings);
+        }
+      } catch (nextError) {
+        if (mountedRef.current) {
+          setError(resolveApiError(nextError, translate("errors.unknown")));
+        }
+      } finally {
+        savingThemeRef.current = false;
+        if (mountedRef.current) {
+          setSavingTheme(false);
         }
       }
     },
@@ -182,6 +212,7 @@ export function useGeneralSettings({
 
   return {
     changeLanguage,
+    changeTheme,
     checkForUpdates,
     error,
     logDirectoryError,
@@ -192,6 +223,7 @@ export function useGeneralSettings({
     saveLogSettings,
     saveUpdateSettings,
     savingLanguage,
+    savingTheme,
     savingLogSettings,
     savingUpdateSettings,
     setProxy,

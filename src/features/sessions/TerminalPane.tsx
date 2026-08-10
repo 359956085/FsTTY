@@ -45,6 +45,7 @@ import {
   writeSystemClipboard,
 } from "./terminalClipboard";
 import {
+  getTerminalTheme,
   installTerminalRuntime,
   type InstalledTerminalRuntime,
 } from "./terminalRuntime";
@@ -56,6 +57,7 @@ import { createTerminalConnectionLifecycle } from "./terminalConnectionLifecycle
 import { CommandHistoryPopover } from "./CommandHistoryPopover";
 import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
 import { matchesShortcut } from "../../shared/shortcuts";
+import type { ResolvedTheme } from "../../shared/theme";
 import {
   createCommandHistoryInsertion,
   createShellIntegrationCommand,
@@ -104,6 +106,7 @@ interface TerminalPaneProps {
   runtimeId: string;
   session: Session;
   shortcuts: ShortcutSettings;
+  theme: ResolvedTheme;
   connectionState: ConnectionState;
   directoryRequest: TerminalDirectoryRequest | null;
   onConnected: (sessionId: string, connection: SshConnection) => void;
@@ -129,6 +132,7 @@ export const TerminalPane = memo(function TerminalPane({
   runtimeId,
   session,
   shortcuts,
+  theme,
   visible,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -178,7 +182,9 @@ export const TerminalPane = memo(function TerminalPane({
   const copyTerminalSelectionRef = useRef<() => Promise<void>>(async () => undefined);
   const pasteTerminalClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const shortcutsRef = useRef(shortcuts);
+  const themeRef = useRef(theme);
   shortcutsRef.current = shortcuts;
+  themeRef.current = theme;
   const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
   const [hostKeyChallenge, setHostKeyChallenge] =
     useState<HostKeyChallenge | null>(null);
@@ -220,6 +226,13 @@ export const TerminalPane = memo(function TerminalPane({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (terminal) {
+      terminal.options.theme = getTerminalTheme(theme);
+    }
+  }, [theme]);
 
   function reportState(state: ConnectionState, error: string | null = null) {
     if (mountedRef.current) {
@@ -632,12 +645,15 @@ export const TerminalPane = memo(function TerminalPane({
           visibleRef.current,
         isVisible: () => visibleRef.current,
         onClipboardWriteError: () => reportClipboardErrorRef.current(),
+        theme: themeRef.current,
       });
       if (!runtime) {
         return;
       }
       runtimeInstance = runtime;
       const { fitAddon, terminal } = runtime;
+      // 动态模块加载期间主题可能已变化，安装完成时再次对齐最新值。
+      terminal.options.theme = getTerminalTheme(themeRef.current);
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();
       const syntheticMouseReleases = new WeakSet<Event>();

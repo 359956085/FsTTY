@@ -49,21 +49,21 @@
 
 .button-ghost {
   border-color: var(--border);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--control-bg);
 }
 
 .button-ghost:hover:not(:disabled) {
-  border-color: rgba(210, 216, 222, 0.42);
-  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--border-strong);
+  background: var(--control-hover);
 }
 
 .button-ghost:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-strong);
   transform: translateY(1px);
 }
 
 .button-ghost:focus-visible {
-  outline: 2px solid rgba(210, 216, 222, 0.72);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

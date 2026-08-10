@@ -23,7 +23,7 @@ pub use settings_commands::{
     get_mcp_http_client_config, get_mcp_http_status, get_mcp_permission_catalog,
     get_mcp_stdio_client_config, import_mcp_command_policy, inspect_local_agent_setup,
     open_log_directory, open_project_link, rotate_mcp_http_token, set_ignored_update_version,
-    set_language, update_app_settings, update_log_settings, update_mcp_settings,
+    set_language, set_theme, update_app_settings, update_log_settings, update_mcp_settings,
     update_shortcut_settings,
 };
 pub use update_commands::{check_app_update, close_app_update, install_app_update};

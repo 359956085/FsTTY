@@ -13,7 +13,9 @@ const apiMocks = vi.hoisted(() => ({
 
 const runtimeMocks = vi.hoisted(() => ({
   dispose: vi.fn(),
+  getTheme: vi.fn((theme: string) => ({ name: theme })),
   install: vi.fn(),
+  options: { theme: undefined as unknown },
   reset: vi.fn(),
 }));
 
@@ -34,6 +36,7 @@ vi.mock("./CommandHistoryPopover", () => ({
 }));
 
 vi.mock("./terminalRuntime", () => ({
+  getTerminalTheme: runtimeMocks.getTheme,
   installTerminalRuntime: runtimeMocks.install,
 }));
 
@@ -61,6 +64,7 @@ const shortcuts: ShortcutSettings = {
 describe("终端面板连接", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeMocks.options.theme = undefined;
     apiMocks.connectSession.mockReturnValue(new Promise(() => undefined));
     apiMocks.disconnectSession.mockResolvedValue(undefined);
     vi.stubGlobal(
@@ -85,6 +89,7 @@ describe("终端面板连接", () => {
       focus: vi.fn(),
       modes: { mouseTrackingMode: "none" },
       onData: vi.fn(),
+      options: runtimeMocks.options,
       parser: { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) },
       reset: runtimeMocks.reset,
       rows: 24,
@@ -123,6 +128,7 @@ describe("终端面板连接", () => {
           runtimeId="runtime-1"
           session={session}
           shortcuts={shortcuts}
+          theme="dark"
           visible
         />
       </StrictMode>,
@@ -135,5 +141,30 @@ describe("终端面板连接", () => {
 
     await waitFor(() => expect(apiMocks.connectSession).toHaveBeenCalledTimes(1));
     expect(runtimeMocks.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("切换主题时更新现有终端而不重新安装", async () => {
+    const commonProps = {
+      active: true,
+      allowRemoteClipboardWrite: false,
+      autoConnect: false,
+      connectionState: "disconnected" as const,
+      directoryRequest: null,
+      onConnected: vi.fn(),
+      onCredentialSaved: vi.fn(),
+      onDirectoryChange: vi.fn(),
+      onStateChange: vi.fn(),
+      runtimeId: "runtime-theme",
+      session,
+      shortcuts,
+      visible: true,
+    };
+    const { rerender } = render(<TerminalPane {...commonProps} theme="dark" />);
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark" }));
+
+    rerender(<TerminalPane {...commonProps} theme="light" />);
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light" }));
+    expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
   });
 });

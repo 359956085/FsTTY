@@ -35,7 +35,7 @@
   min-width: 120px;
   max-width: 190px;
   border-right: 1px solid var(--border);
-  color: #d1d8df;
+  color: var(--text-secondary);
 }
 
 .session-tab::after {
@@ -76,11 +76,11 @@
   display: grid;
   place-items: center;
   background: transparent;
-  color: #97a3af;
+  color: var(--text-subtle);
 }
 
 .session-tab-close:hover {
-  color: #fff;
+  color: var(--text-strong);
 }
 
 .session-tab-add {
@@ -90,11 +90,11 @@
   place-items: center;
   border-right: 1px solid var(--border);
   background: transparent;
-  color: #d2d9e0;
+  color: var(--text-secondary);
 }
 
 .session-tab-add:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--control-hover);
 }
 
 .terminal-stage {
@@ -164,14 +164,14 @@
   padding: 0 11px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-subtle);
   color: var(--text);
   cursor: pointer;
 }
 
 .command-history-trigger:hover:not(:disabled) {
   border-color: var(--border-strong);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--control-hover);
 }
 
 .command-history-trigger:disabled {
@@ -200,7 +200,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--panel-2);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.44);
+  box-shadow: 0 16px 40px var(--shadow-color);
 }
 
 .command-history-resizer {
@@ -218,7 +218,7 @@
 
 .command-history-resizer:hover::after,
 .command-history-resizer:focus-visible::after {
-  background: rgba(210, 216, 222, 0.62);
+  background: var(--resize-highlight);
 }
 
 .command-history-resizer-top {
@@ -268,7 +268,7 @@
   background: repeating-linear-gradient(
     135deg,
     transparent 0 2px,
-    rgba(210, 216, 222, 0.62) 2px 3px,
+    var(--resize-highlight) 2px 3px,
     transparent 3px 5px
   );
   clip-path: polygon(0 0, 100% 0, 100% 100%);
@@ -279,7 +279,7 @@
   background: repeating-linear-gradient(
     135deg,
     transparent 0 2px,
-    rgba(225, 231, 237, 0.82) 2px 3px,
+    var(--resize-highlight-strong) 2px 3px,
     transparent 3px 5px
   );
 }
@@ -307,7 +307,7 @@
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--inset-bg);
   color: var(--muted);
 }
 
@@ -351,7 +351,7 @@
   gap: 12px;
   padding: 0 10px;
   border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -363,7 +363,7 @@
 }
 
 .command-history-item.active {
-  background: rgba(255, 255, 255, 0.085);
+  background: var(--surface-hover);
 }
 
 .command-history-command {
@@ -422,7 +422,7 @@
   justify-content: center;
   flex-direction: column;
   gap: 9px;
-  background: rgba(7, 15, 22, 0.78);
+  background: var(--terminal-overlay);
   color: var(--muted);
   text-align: center;
 }
@@ -548,8 +548,8 @@
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(3, 9, 14, 0.32);
-  color: #abb6c1;
+  background: var(--input-bg);
+  color: var(--text-secondary);
 }
 
 .breadcrumb-icon {
@@ -577,13 +577,13 @@
   padding: 0 5px;
   overflow: hidden;
   background: transparent;
-  color: #c6cfd8;
+  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .breadcrumb span:last-child button {
-  color: #fff;
+  color: var(--text-strong);
 }
 
 .breadcrumb button.breadcrumb-drop-target {
@@ -608,7 +608,7 @@
   padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(9, 19, 28, 0.92);
+  background: var(--notice-bg);
   color: var(--muted);
   font-size: 11px;
 }
@@ -673,7 +673,7 @@
   padding: 0 7px;
   border-radius: 4px;
   background: transparent;
-  color: #d5dce3;
+  color: var(--text-secondary);
   font-size: 12px;
   text-align: left;
 }
@@ -684,7 +684,7 @@
   z-index: 2;
   min-height: 29px;
   border: 1px solid var(--border);
-  background: #1b1d1f;
+  background: var(--panel-3);
   color: var(--muted);
 }
 
@@ -714,7 +714,7 @@
 }
 
 .file-row:not(.file-head):hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--control-bg);
 }
 
 .file-row:not(.file-head):focus-visible {
@@ -770,7 +770,7 @@
 
 .file-row > span:first-child svg {
   flex: 0 0 auto;
-  color: #bdc8d2;
+  color: var(--text-secondary);
 }
 
 .file-row > span:first-child svg.lucide-file-code-2 {
@@ -792,7 +792,7 @@
   border: 1px solid var(--accent);
   border-radius: 3px;
   outline: none;
-  background: #111820;
+  background: var(--input-bg);
   color: var(--text);
   font: inherit;
   box-shadow: 0 0 0 2px rgba(45, 139, 246, 0.18);
@@ -812,7 +812,7 @@
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: rgba(9, 19, 28, 0.92);
+  background: var(--notice-bg);
   font-size: 11px;
 }
 
@@ -885,7 +885,7 @@
   height: 5px;
   overflow: hidden;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-strong);
 }
 
 .transfer-track > span {
@@ -941,11 +941,11 @@
 }
 
 .device-row > svg {
-  color: #c4cdd6;
+  color: var(--text-secondary);
 }
 
 .device-row > strong {
-  color: #e0e6ec;
+  color: var(--text-secondary);
   font-weight: 500;
   text-align: right;
 }
@@ -973,7 +973,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-strong);
 }
 
 .metric-track > span {
@@ -993,7 +993,7 @@
 
 .metric-sparkline polyline {
   fill: none;
-  stroke: #d9e0e7;
+  stroke: var(--text-secondary);
   stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -1001,7 +1001,7 @@
 }
 
 .metric-sparkline circle {
-  fill: #d9e0e7;
+  fill: var(--text-secondary);
 }
 
 .device-network-row {
@@ -1013,7 +1013,7 @@
   align-items: center;
   gap: 20px;
   min-width: 0;
-  color: #d9e0e7;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1022,6 +1022,81 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+:root[data-theme="light"] .session-tab,
+:root[data-theme="light"] .session-tab-add,
+:root[data-theme="light"] .session-tab-close,
+:root[data-theme="light"] .breadcrumb button,
+:root[data-theme="light"] .file-row,
+:root[data-theme="light"] .device-row > svg,
+:root[data-theme="light"] .device-row > strong,
+:root[data-theme="light"] .network-rates {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .session-tab-close:hover,
+:root[data-theme="light"] .breadcrumb span:last-child button {
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .session-tab-add:hover,
+:root[data-theme="light"] .file-row:not(.file-head):hover,
+:root[data-theme="light"] .command-history-item.active {
+  background: var(--surface-hover);
+}
+
+:root[data-theme="light"] .command-history-search,
+:root[data-theme="light"] .file-toolbar,
+:root[data-theme="light"] .file-inline-rename,
+:root[data-theme="light"] .transfer-progress {
+  background: var(--input-bg);
+}
+
+:root[data-theme="light"] .terminal-clipboard-notice,
+:root[data-theme="light"] .file-move-notice {
+  background: var(--notice-bg);
+}
+
+:root[data-theme="light"] .file-drop-overlay {
+  background: rgba(232, 244, 255, 0.96);
+  color: #175a9b;
+}
+
+:root[data-theme="light"] .breadcrumb button.breadcrumb-drop-target,
+:root[data-theme="light"] .file-row-drop-target {
+  color: #175a9b;
+}
+
+:root[data-theme="light"] .file-move-error {
+  color: #b73540;
+}
+
+:root[data-theme="light"] .file-move-success,
+:root[data-theme="light"] .file-row.file-row-move-success {
+  background: rgba(41, 145, 68, 0.1) !important;
+  color: #216f36;
+}
+
+:root[data-theme="light"] .file-row-active {
+  outline-color: rgba(37, 136, 245, 0.55);
+  background: rgba(37, 136, 245, 0.1) !important;
+}
+
+:root[data-theme="light"] .metric-track {
+  background: var(--metric-track);
+}
+
+:root[data-theme="light"] .metric-track > span {
+  background: linear-gradient(90deg, #4b88c7, #78a9d8);
+}
+
+:root[data-theme="light"] .metric-sparkline polyline {
+  stroke: var(--metric-line);
+}
+
+:root[data-theme="light"] .metric-sparkline circle {
+  fill: var(--metric-line);
 }
 
 .network-rates svg {
