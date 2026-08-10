@@ -672,27 +672,6 @@ impl SessionService {
                 .push(session_id.to_owned());
         }
     }
-
-    fn ensure_readable(&self) -> Result<(), AppError> {
-        match &self.blocked_error {
-            Some(error) => Err(error.clone()),
-            None => Ok(()),
-        }
-    }
-
-    fn ensure_writable(&self) -> Result<(), AppError> {
-        self.ensure_readable()
-    }
-
-    fn persist(&mut self) -> Result<(), AppError> {
-        persist_store(
-            &self.store,
-            &self.store_path,
-            &self.backup_path,
-            &self.temp_path,
-            &mut self.primary_trusted,
-        )
-    }
 }
 
 async fn prepare_auth(

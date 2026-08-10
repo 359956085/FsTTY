@@ -53,7 +53,7 @@ use authentication::{
 };
 pub(crate) use remote_files::RemoteFileWindow;
 use remote_files::{file_entry_from_remote, file_kind_rank};
-use terminal_io::{run_terminal, wait_for_channel_success};
+use terminal_io::{run_terminal, validate_terminal_size, wait_for_channel_success};
 use transfer::{
     finalize_local_file, finalize_remote_file, send_progress, validate_download_target,
     validate_upload_source, ActiveTransfer,
@@ -641,78 +641,6 @@ impl ConnectionManager {
             .await
             .retain(|_, value| value.host != session.host || value.port != session.port);
         Ok(removed)
-    }
-
-    pub async fn write_terminal(&self, connection_id: &str, data: String) -> Result<(), AppError> {
-        if data.is_empty() || data.len() > MAX_TERMINAL_INPUT_BYTES {
-            return Err(AppError::Validation("终端输入大小无效".to_owned()));
-        }
-        let entry = self.entry(connection_id).await?;
-        entry
-            .terminal_tx
-            .as_ref()
-            .ok_or_else(|| AppError::Connection("当前连接没有终端".to_owned()))?
-            .send(TerminalControl::Data(data.into_bytes()))
-            .await
-            .map_err(|_| AppError::Connection("终端连接已关闭".to_owned()))
-    }
-
-    pub async fn resize_terminal(
-        &self,
-        connection_id: &str,
-        columns: u32,
-        rows: u32,
-    ) -> Result<(), AppError> {
-        validate_terminal_size(columns, rows)?;
-        let entry = self.entry(connection_id).await?;
-        entry
-            .terminal_tx
-            .as_ref()
-            .ok_or_else(|| AppError::Connection("当前连接没有终端".to_owned()))?
-            .send(TerminalControl::Resize { columns, rows })
-            .await
-            .map_err(|_| AppError::Connection("终端连接已关闭".to_owned()))
-    }
-
-    pub async fn disconnect(&self, connection_id: &str) -> Result<(), AppError> {
-        let entry = self.take_connection(connection_id).await;
-        let Some(entry) = entry else {
-            return Ok(());
-        };
-        self.cancel_connection_transfers(connection_id).await;
-        if let Some(terminal_tx) = &entry.terminal_tx {
-            let _ = terminal_tx.send(TerminalControl::Close).await;
-        }
-        let handle = entry.handle.lock().await;
-        let _ = handle
-            .disconnect(Disconnect::ByApplication, "", "zh-CN")
-            .await;
-        Ok(())
-    }
-
-    pub async fn disconnect_session(&self, session_id: &str) {
-        let cancellations = self
-            .inner
-            .connecting_sessions
-            .lock()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        for cancellation in cancellations {
-            cancellation.cancel();
-        }
-        let connection_ids = self
-            .inner
-            .session_connections
-            .read()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        for connection_id in connection_ids {
-            let _ = self.disconnect(&connection_id).await;
-        }
     }
 
     pub async fn list_files(
@@ -1534,106 +1462,6 @@ impl ConnectionManager {
         }
     }
 
-    pub async fn exec(
-        &self,
-        connection_id: &str,
-        command: &'static str,
-    ) -> Result<Vec<u8>, AppError> {
-        let entry = self.entry(connection_id).await?;
-        let mut channel = {
-            let handle = entry.handle.lock().await;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|_| AppError::Connection("无法创建设备信息通道".to_owned()))?
-        };
-        channel
-            .exec(true, command)
-            .await
-            .map_err(|_| AppError::Connection("无法执行设备信息命令".to_owned()))?;
-        let collect = async {
-            let mut output = Vec::new();
-            let mut exit_code = None;
-            while let Some(message) = channel.wait().await {
-                match message {
-                    ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                        if output.len() + data.len() > MAX_EXEC_OUTPUT_BYTES {
-                            return Err(AppError::Connection("设备信息输出过大".to_owned()));
-                        }
-                        output.extend_from_slice(&data);
-                    }
-                    ChannelMsg::ExitStatus { exit_status } => {
-                        exit_code = Some(exit_status);
-                        break;
-                    }
-                    ChannelMsg::Close => break,
-                    _ => {}
-                }
-            }
-            if exit_code.is_some_and(|code| code != 0) {
-                return Err(AppError::Connection("设备信息命令执行失败".to_owned()));
-            }
-            Ok(output)
-        };
-        time::timeout(EXEC_TIMEOUT, collect)
-            .await
-            .map_err(|_| AppError::Connection("设备信息命令超时".to_owned()))?
-    }
-
-    pub async fn exec_command(
-        &self,
-        connection_id: &str,
-        command: &str,
-        timeout: Duration,
-    ) -> Result<CommandOutput, AppError> {
-        let entry = self.entry(connection_id).await?;
-        let mut channel = {
-            let handle = entry.handle.lock().await;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|_| AppError::Connection("无法创建命令通道".to_owned()))?
-        };
-        channel
-            .exec(true, command)
-            .await
-            .map_err(|_| AppError::Connection("无法执行远程命令".to_owned()))?;
-        let collect = async {
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let mut exit_code = None;
-            let mut truncated = false;
-            while let Some(message) = channel.wait().await {
-                match message {
-                    ChannelMsg::Data { data } => append_limited(
-                        &mut stdout,
-                        data.as_ref(),
-                        MAX_MCP_EXEC_OUTPUT_BYTES,
-                        &mut truncated,
-                    ),
-                    ChannelMsg::ExtendedData { data, .. } => append_limited(
-                        &mut stderr,
-                        data.as_ref(),
-                        MAX_MCP_EXEC_OUTPUT_BYTES.saturating_sub(stdout.len()),
-                        &mut truncated,
-                    ),
-                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                    ChannelMsg::Close => break,
-                    _ => {}
-                }
-            }
-            Ok(CommandOutput {
-                stdout,
-                stderr,
-                exit_code,
-                truncated,
-            })
-        };
-        time::timeout(timeout, collect)
-            .await
-            .map_err(|_| AppError::Connection("远程命令执行超时".to_owned()))?
-    }
-
     pub async fn session_id(&self, connection_id: &str) -> Result<String, AppError> {
         Ok(self.entry(connection_id).await?.session_id.clone())
     }
@@ -1756,13 +1584,6 @@ async fn open_sftp_with_handle(
 async fn open_sftp(entry: &ConnectionEntry) -> Result<SftpSession, AppError> {
     let mut handle = entry.handle.lock().await;
     open_sftp_with_handle(&mut handle).await
-}
-
-fn validate_terminal_size(columns: u32, rows: u32) -> Result<(), AppError> {
-    if !(1..=1000).contains(&columns) || !(1..=1000).contains(&rows) {
-        return Err(AppError::Validation("终端行列数无效".to_owned()));
-    }
-    Ok(())
 }
 
 fn apply_one_time_username(

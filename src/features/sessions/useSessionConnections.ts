@@ -17,9 +17,9 @@ import {
   appendDeviceMetricSample,
   DEVICE_POLL_INTERVAL_MS,
   type DeviceMetricSample,
-  type DeviceNetworkCounterSample,
 } from "./deviceMetrics";
 import { createTransferSpeedTracker } from "./fileUtils";
+import { createSessionRuntimeController } from "./sessionRuntimeController";
 
 export interface TransferProgress {
   id: string;
@@ -59,13 +59,7 @@ interface UseSessionConnectionsOptions {
 export function useSessionConnections({ errorFallback }: UseSessionConnectionsOptions) {
   const [runtimes, setRuntimes] = useState<Record<string, SessionRuntime>>({});
   const runtimesRef = useRef(runtimes);
-  const fileRequestIds = useRef(new Map<string, number>());
-  const deviceRequestIds = useRef(new Map<string, number>());
-  const devicePollTimers = useRef(new Map<string, number>());
-  const devicePollIds = useRef(new Map<string, number>());
-  const deviceNetworkCounters = useRef(new Map<string, DeviceNetworkCounterSample>());
-  // 后端继续处理单文件；批次令牌只负责前端串行排队和整批取消。
-  const uploadBatchTokens = useRef(new Map<string, string>());
+  const runtimeControllerRef = useRef(createSessionRuntimeController());
   const terminalDirectoryRequestId = useRef(0);
 
   useEffect(() => {
@@ -92,38 +86,19 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const stopDevicePolling = useCallback((sessionId: string) => {
-    const timer = devicePollTimers.current.get(sessionId);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      devicePollTimers.current.delete(sessionId);
-    }
-    deviceRequestIds.current.set(
-      sessionId,
-      (deviceRequestIds.current.get(sessionId) ?? 0) + 1,
-    );
-    devicePollIds.current.set(sessionId, (devicePollIds.current.get(sessionId) ?? 0) + 1);
-    deviceNetworkCounters.current.delete(sessionId);
+    runtimeControllerRef.current.stopDevicePoll(sessionId);
   }, []);
 
   useEffect(
     () => () => {
-      for (const timer of devicePollTimers.current.values()) {
-        window.clearTimeout(timer);
-      }
-      devicePollTimers.current.clear();
-      devicePollIds.current.clear();
-      for (const [sessionId, requestId] of deviceRequestIds.current) {
-        deviceRequestIds.current.set(sessionId, requestId + 1);
-      }
-      deviceNetworkCounters.current.clear();
+      runtimeControllerRef.current.dispose();
     },
     [],
   );
 
   const loadFiles = useCallback(
     async (sessionId: string, connectionId: string, path: string) => {
-      const requestId = (fileRequestIds.current.get(sessionId) ?? 0) + 1;
-      fileRequestIds.current.set(sessionId, requestId);
+      const requestId = runtimeControllerRef.current.beginFileRequest(sessionId);
       updateRuntime(sessionId, (runtime) => ({
         ...runtime,
         currentPath: path,
@@ -133,7 +108,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       }));
       try {
         const files = await api.listRemoteFiles(connectionId, path);
-        if (fileRequestIds.current.get(sessionId) !== requestId) {
+        if (!runtimeControllerRef.current.isFileRequestCurrent(sessionId, requestId)) {
           return false;
         }
         updateRuntime(sessionId, (runtime) => ({
@@ -143,7 +118,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }));
         return true;
       } catch (error) {
-        if (fileRequestIds.current.get(sessionId) !== requestId) {
+        if (!runtimeControllerRef.current.isFileRequestCurrent(sessionId, requestId)) {
           return false;
         }
         updateRuntime(sessionId, (runtime) => ({
@@ -159,13 +134,12 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const loadDevice = useCallback(
     async (sessionId: string, connectionId: string) => {
-      const requestId = (deviceRequestIds.current.get(sessionId) ?? 0) + 1;
-      deviceRequestIds.current.set(sessionId, requestId);
+      const requestId = runtimeControllerRef.current.beginDeviceRequest(sessionId);
       try {
         const deviceStatus = await api.getDeviceStatus(connectionId);
         const runtime = runtimesRef.current[sessionId];
         if (
-          deviceRequestIds.current.get(sessionId) !== requestId ||
+          !runtimeControllerRef.current.isDeviceRequestCurrent(sessionId, requestId) ||
           runtime?.connection?.connectionId !== connectionId
         ) {
           return false;
@@ -174,12 +148,12 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           runtime.deviceHistory,
           deviceStatus,
           performance.now(),
-          deviceNetworkCounters.current.get(sessionId) ?? null,
+          runtimeControllerRef.current.getDeviceCounter(sessionId),
         );
         if (sample.networkCounter) {
-          deviceNetworkCounters.current.set(sessionId, sample.networkCounter);
+          runtimeControllerRef.current.setDeviceCounter(sessionId, sample.networkCounter);
         } else {
-          deviceNetworkCounters.current.delete(sessionId);
+          runtimeControllerRef.current.deleteDeviceCounter(sessionId);
         }
         updateRuntime(sessionId, (current) => ({
           ...current,
@@ -196,25 +170,24 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const startDevicePolling = useCallback(
     (sessionId: string, connectionId: string) => {
-      stopDevicePolling(sessionId);
-      const pollId = devicePollIds.current.get(sessionId) ?? 0;
+      const pollId = runtimeControllerRef.current.startDevicePoll(sessionId);
       const poll = async () => {
         await loadDevice(sessionId, connectionId);
         if (
-          devicePollIds.current.get(sessionId) !== pollId ||
+          !runtimeControllerRef.current.isDevicePollCurrent(sessionId, pollId) ||
           runtimesRef.current[sessionId]?.connection?.connectionId !== connectionId
         ) {
           return;
         }
         const timer = window.setTimeout(() => {
-          devicePollTimers.current.delete(sessionId);
+          runtimeControllerRef.current.clearDeviceTimer(sessionId);
           void poll();
         }, DEVICE_POLL_INTERVAL_MS);
-        devicePollTimers.current.set(sessionId, timer);
+        runtimeControllerRef.current.setDeviceTimer(sessionId, timer);
       };
       void poll();
     },
-    [loadDevice, stopDevicePolling],
+    [loadDevice],
   );
 
   const handleConnected = useCallback(
@@ -242,11 +215,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const handleTerminalState = useCallback(
     (sessionId: string, state: ConnectionState, error: string | null = null) => {
       if (state === "disconnected" || state === "error") {
-        uploadBatchTokens.current.delete(sessionId);
-        fileRequestIds.current.set(
-          sessionId,
-          (fileRequestIds.current.get(sessionId) ?? 0) + 1,
-        );
+        runtimeControllerRef.current.cancelUploadBatch(sessionId);
+        runtimeControllerRef.current.cancelFileRequest(sessionId);
         stopDevicePolling(sessionId);
       }
       updateRuntime(sessionId, (runtime) => ({
@@ -444,19 +414,14 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const removeRuntime = useCallback((sessionId: string) => {
-    stopDevicePolling(sessionId);
-    fileRequestIds.current.delete(sessionId);
-    deviceRequestIds.current.delete(sessionId);
-    devicePollIds.current.delete(sessionId);
-    deviceNetworkCounters.current.delete(sessionId);
-    uploadBatchTokens.current.delete(sessionId);
+    runtimeControllerRef.current.removeSession(sessionId);
     setRuntimes((current) => {
       const next = { ...current };
       delete next[sessionId];
       runtimesRef.current = next;
       return next;
     });
-  }, [stopDevicePolling]);
+  }, []);
 
   const pruneRuntimes = useCallback((validSessionIds: ReadonlySet<string>) => {
     const invalid = Object.entries(runtimesRef.current).filter(
@@ -466,12 +431,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (runtime.connection) {
         void api.disconnectSession(runtime.connection.connectionId);
       }
-      stopDevicePolling(sessionId);
-      fileRequestIds.current.delete(sessionId);
-      deviceRequestIds.current.delete(sessionId);
-      devicePollIds.current.delete(sessionId);
-      deviceNetworkCounters.current.delete(sessionId);
-      uploadBatchTokens.current.delete(sessionId);
+      runtimeControllerRef.current.removeSession(sessionId);
     }
     if (invalid.length > 0) {
       setRuntimes((current) => {
@@ -481,7 +441,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         return next;
       });
     }
-  }, [stopDevicePolling]);
+  }, []);
 
   const uploadFiles = useCallback(
     async (sessionId: string, localPaths: string[]) => {
@@ -491,7 +451,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         paths.length === 0 ||
         !runtime?.connection?.sftpAvailable ||
         runtime.transfer?.state === "running" ||
-        uploadBatchTokens.current.has(sessionId)
+        runtimeControllerRef.current.hasUploadBatch(sessionId)
       ) {
         return;
       }
@@ -499,14 +459,14 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       const connectionId = runtime.connection.connectionId;
       const remoteDirectory = runtime.currentPath;
       const batchToken = crypto.randomUUID();
-      uploadBatchTokens.current.set(sessionId, batchToken);
+      if (!runtimeControllerRef.current.startUploadBatch(sessionId, batchToken)) return;
       let uploaded = 0;
       let skipped = 0;
       let failed = 0;
       let cancelled = false;
 
       const batchIsActive = () =>
-        uploadBatchTokens.current.get(sessionId) === batchToken &&
+        runtimeControllerRef.current.isUploadBatchCurrent(sessionId, batchToken) &&
         runtimesRef.current[sessionId]?.connection?.connectionId === connectionId;
       const clearTransfer = (transferId: string) => {
         updateRuntime(sessionId, (current) => ({
@@ -588,10 +548,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           if (result === "failed") failed += 1;
         }
       } finally {
-        const ownsBatch = uploadBatchTokens.current.get(sessionId) === batchToken;
-        if (ownsBatch) {
-          uploadBatchTokens.current.delete(sessionId);
-        }
+        const ownsBatch = runtimeControllerRef.current.endUploadBatch(sessionId, batchToken);
         const latest = runtimesRef.current[sessionId];
         let refreshSucceeded = true;
         if (
@@ -623,7 +580,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         if (
           !runtime?.connection?.sftpAvailable ||
           runtime.transfer?.state === "running" ||
-          uploadBatchTokens.current.has(sessionId)
+          runtimeControllerRef.current.hasUploadBatch(sessionId)
         ) {
           return;
         }
@@ -726,7 +683,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const cancelTransfer = useCallback(
     async (sessionId: string) => {
-      uploadBatchTokens.current.delete(sessionId);
+      runtimeControllerRef.current.cancelUploadBatch(sessionId);
       const transfer = runtimesRef.current[sessionId]?.transfer;
       if (!transfer || transfer.state !== "running") {
         return;

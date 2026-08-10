@@ -1,0 +1,106 @@
+:root[data-theme="light"] .settings-sidebar {
+  background: var(--settings-sidebar-bg);
+}
+
+:root[data-theme="light"] .settings-sidebar-item:hover {
+  background: var(--surface-hover);
+}
+
+:root[data-theme="light"] .settings-sidebar-item[aria-current="page"] {
+  border-color: rgba(37, 136, 245, 0.12);
+  background: rgba(37, 136, 245, 0.08);
+  color: #1673d1;
+}
+
+:root[data-theme="light"] .settings-panel,
+:root[data-theme="light"] .settings-about-card,
+:root[data-theme="light"] .settings-shortcut-input,
+:root[data-theme="light"] .settings-local-agent-item {
+  background: var(--settings-panel-bg);
+}
+
+:root[data-theme="light"] .settings-current-version,
+:root[data-theme="light"] .update-dialog-title svg,
+:root[data-theme="light"] .update-release-notes,
+:root[data-theme="light"] .session-dialog .form-grid .form-field > span {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .settings-mcp-command-policy-open.active,
+:root[data-theme="light"] .settings-mcp-command-policy-open.active:hover:not(:disabled) {
+  color: #1673d1;
+}
+
+:root[data-theme="light"] .settings-about-link:hover {
+  color: #1668c7;
+}
+
+:root[data-theme="light"] .settings-mcp-command-dialog,
+:root[data-theme="light"] .settings-mcp-config-dialog,
+:root[data-theme="light"] .settings-local-agent-dialog,
+:root[data-theme="light"] .update-dialog,
+:root[data-theme="light"] .update-history-dialog,
+:root[data-theme="light"] .session-dialog {
+  background: var(--dialog-bg);
+  box-shadow: 0 22px 58px var(--shadow-color);
+}
+
+:root[data-theme="light"] .settings-mcp-config-preview,
+:root[data-theme="light"] .update-release-markdown pre {
+  background: var(--inset-bg);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .update-release-markdown h1,
+:root[data-theme="light"] .update-release-markdown h2,
+:root[data-theme="light"] .update-release-markdown h3,
+:root[data-theme="light"] .update-release-markdown th,
+:root[data-theme="light"] .update-dialog-title h2,
+:root[data-theme="light"] .update-version-summary strong {
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .update-release-markdown code,
+:root[data-theme="light"] .update-release-markdown th,
+:root[data-theme="light"] .update-progress-track,
+:root[data-theme="light"] .update-dialog-header,
+:root[data-theme="light"] .update-dialog-actions,
+:root[data-theme="light"] .session-dialog .dialog-header,
+:root[data-theme="light"] .session-dialog .dialog-actions {
+  background: var(--surface-subtle);
+}
+
+:root[data-theme="light"] .session-dialog .text-input,
+:root[data-theme="light"] .session-dialog select {
+  background: var(--input-bg);
+}
+
+:root[data-theme="light"] .settings-local-agent-message,
+:root[data-theme="light"] .settings-mcp-config-secret-hint,
+:root[data-theme="light"] .settings-mcp-command-policy-warning,
+:root[data-theme="light"] .settings-warning,
+:root[data-theme="light"] .security-dialog > p {
+  color: #8a5b00 !important;
+}
+
+:root[data-theme="light"] .form-success,
+:root[data-theme="light"] .settings-local-agent-result.succeeded {
+  color: #23773a;
+}
+
+:root[data-theme="light"] .settings-local-agent-result.failed {
+  color: #b73540;
+}
+
+:root[data-theme="light"] .form-error,
+:root[data-theme="light"] .error-banner {
+  border-color: rgba(183, 53, 64, 0.28);
+  background: rgba(207, 63, 75, 0.09);
+  color: #b73540;
+}
+
+:root[data-theme="light"] .loading-banner {
+  border-color: rgba(37, 136, 245, 0.22);
+  background: rgba(37, 136, 245, 0.08);
+  color: #175a9b;
+}

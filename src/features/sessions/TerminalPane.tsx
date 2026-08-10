@@ -54,6 +54,10 @@ import {
   type TerminalActivityController,
 } from "./terminalActivity";
 import { createTerminalConnectionLifecycle } from "./terminalConnectionLifecycle";
+import {
+  createTerminalInputController,
+  type TerminalInputController,
+} from "./terminalInputController";
 import { CommandHistoryPopover } from "./CommandHistoryPopover";
 import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
 import { matchesShortcut } from "../../shared/shortcuts";
@@ -68,7 +72,6 @@ import {
   decodeBase64,
   isValidRemotePath,
   quoteShellPath,
-  splitUtf8,
 } from "./terminalProtocol";
 
 const SHELL_OSC_IDENTIFIER = 777;
@@ -142,8 +145,7 @@ export const TerminalPane = memo(function TerminalPane({
   const connectionLifecycleRef = useRef(
     createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>(),
   );
-  const inputBufferRef = useRef("");
-  const inputTimerRef = useRef<number | null>(null);
+  const inputControllerRef = useRef<TerminalInputController | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
   const clipboardErrorTimerRef = useRef<number | null>(null);
   const imeCompositionFallbackRef = useRef<ReturnType<
@@ -152,7 +154,6 @@ export const TerminalPane = memo(function TerminalPane({
   const remoteRightDragStateRef = useRef(createRemoteRightDragState());
   const remoteMouseActivityRef = useRef<TerminalActivityController | null>(null);
   const resizeObserverActivityRef = useRef<TerminalActivityController | null>(null);
-  const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const historyWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const terminalLoginInputRef = useRef(createTerminalLoginInputController());
@@ -342,13 +343,26 @@ export const TerminalPane = memo(function TerminalPane({
     }, 3000);
   }
 
+  function createInputController() {
+    return createTerminalInputController({
+      getConnectionId: () =>
+        connectionLifecycleRef.current.connection()?.connectionId ?? null,
+      isConnecting: () => connectionLifecycleRef.current.isConnecting(),
+      onWriteError: (connectionId, error) => {
+        if (connectionLifecycleRef.current.connection()?.connectionId !== connectionId) return;
+        connectionLifecycleRef.current.reset();
+        void api.disconnectSession(connectionId).catch(() => undefined);
+        reportStateRef.current(
+          "error",
+          resolveApiError(error, translateRef.current("errors.unknown")),
+        );
+      },
+      write: (connectionId, data) => api.writeTerminal(connectionId, data),
+    });
+  }
+
   function clearPendingInput() {
-    if (inputTimerRef.current !== null) {
-      window.clearTimeout(inputTimerRef.current);
-      inputTimerRef.current = null;
-    }
-    inputBufferRef.current = "";
-    writeChainRef.current = Promise.resolve();
+    inputControllerRef.current?.clear();
   }
 
   function resetShellIntegration() {
@@ -423,64 +437,13 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   function flushInput() {
-    if (inputTimerRef.current !== null) {
-      window.clearTimeout(inputTimerRef.current);
-      inputTimerRef.current = null;
-    }
-    const connection = connectionLifecycleRef.current.connection();
-    const data = inputBufferRef.current;
-    inputBufferRef.current = "";
-    if (!connection || !data) {
-      return;
-    }
-    const connectionId = connection.connectionId;
-    for (const chunk of splitUtf8(data, 64 * 1024)) {
-      writeChainRef.current = writeChainRef.current
-        .then(() => {
-          if (connectionLifecycleRef.current.connection()?.connectionId !== connectionId) {
-            return;
-          }
-          return api.writeTerminal(connectionId, chunk);
-        })
-        .catch((error: unknown) => {
-          if (connectionLifecycleRef.current.connection()?.connectionId !== connectionId) {
-            return;
-          }
-          connectionLifecycleRef.current.reset();
-          clearPendingInput();
-          void api.disconnectSession(connectionId).catch(() => undefined);
-          reportState("error", resolveApiError(error, t("errors.unknown")));
-        });
-    }
+    inputControllerRef.current?.flush();
   }
 
   function sendImmediateInput(data: string) {
     sendInputRef.current(data);
     flushInput();
   }
-
-  sendInputRef.current = (data) => {
-    const connection = connectionLifecycleRef.current.connection();
-    if (!connection && !connectionLifecycleRef.current.isConnecting()) {
-      return;
-    }
-    const nextInput = inputBufferRef.current + data;
-    // Shell 首屏可能在连接命令返回前查询终端能力。先缓存 xterm 的自动响应，避免远端登录脚本永久等待。
-    if (!connection) {
-      if (new TextEncoder().encode(nextInput).byteLength <= 64 * 1024) {
-        inputBufferRef.current = nextInput;
-      }
-      return;
-    }
-    inputBufferRef.current = nextInput;
-    if (new TextEncoder().encode(inputBufferRef.current).byteLength >= 32 * 1024) {
-      flushInput();
-      return;
-    }
-    if (inputTimerRef.current === null) {
-      inputTimerRef.current = window.setTimeout(flushInput, 16);
-    }
-  };
 
   function fitAndResize() {
     const terminal = terminalRef.current;
@@ -622,6 +585,9 @@ export const TerminalPane = memo(function TerminalPane({
     const connectionLifecycle =
       createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>();
     connectionLifecycleRef.current = connectionLifecycle;
+    const inputController = createInputController();
+    inputControllerRef.current = inputController;
+    sendInputRef.current = inputController.enqueue;
     let observer: ResizeObserver | null = null;
     let oscHandler: { dispose(): void } | null = null;
     let runtimeInstance: InstalledTerminalRuntime | null = null;
@@ -1077,7 +1043,11 @@ export const TerminalPane = memo(function TerminalPane({
       resizeObserverActivityRef.current?.stop();
       resizeObserverActivityRef.current = null;
       oscHandler?.dispose();
-      clearPendingInput();
+      inputController.dispose();
+      if (inputControllerRef.current === inputController) {
+        inputControllerRef.current = null;
+        sendInputRef.current = () => undefined;
+      }
       resetShellIntegration();
       terminalLoginInput.reset();
       temporaryLoginRef.current = null;

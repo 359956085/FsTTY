@@ -1,4 +1,7 @@
-use super::validation::{validate_common, validate_id};
+use super::{
+    validation::{validate_common, validate_id},
+    SessionService,
+};
 use crate::models::{AppError, PrivateKeySource, SessionAuth, StoredSession};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -136,4 +139,27 @@ pub(super) fn validate_store(store: &SessionStore) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+impl SessionService {
+    pub(super) fn ensure_readable(&self) -> Result<(), AppError> {
+        match &self.blocked_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
+    pub(super) fn ensure_writable(&self) -> Result<(), AppError> {
+        self.ensure_readable()
+    }
+
+    pub(super) fn persist(&mut self) -> Result<(), AppError> {
+        persist_store(
+            &self.store,
+            &self.store_path,
+            &self.backup_path,
+            &self.temp_path,
+            &mut self.primary_trusted,
+        )
+    }
 }

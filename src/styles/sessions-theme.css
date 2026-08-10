@@ -1,0 +1,74 @@
+:root[data-theme="light"] .session-tab,
+:root[data-theme="light"] .session-tab-add,
+:root[data-theme="light"] .session-tab-close,
+:root[data-theme="light"] .breadcrumb button,
+:root[data-theme="light"] .file-row,
+:root[data-theme="light"] .device-row > svg,
+:root[data-theme="light"] .device-row > strong,
+:root[data-theme="light"] .network-rates {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .session-tab-close:hover,
+:root[data-theme="light"] .breadcrumb span:last-child button {
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .session-tab-add:hover,
+:root[data-theme="light"] .file-row:not(.file-head):hover,
+:root[data-theme="light"] .command-history-item.active {
+  background: var(--surface-hover);
+}
+
+:root[data-theme="light"] .command-history-search,
+:root[data-theme="light"] .file-toolbar,
+:root[data-theme="light"] .file-inline-rename,
+:root[data-theme="light"] .transfer-progress {
+  background: var(--input-bg);
+}
+
+:root[data-theme="light"] .terminal-clipboard-notice,
+:root[data-theme="light"] .file-move-notice {
+  background: var(--notice-bg);
+}
+
+:root[data-theme="light"] .file-drop-overlay {
+  background: rgba(232, 244, 255, 0.96);
+  color: #175a9b;
+}
+
+:root[data-theme="light"] .breadcrumb button.breadcrumb-drop-target,
+:root[data-theme="light"] .file-row-drop-target {
+  color: #175a9b;
+}
+
+:root[data-theme="light"] .file-move-error {
+  color: #b73540;
+}
+
+:root[data-theme="light"] .file-move-success,
+:root[data-theme="light"] .file-row.file-row-move-success {
+  background: rgba(41, 145, 68, 0.1) !important;
+  color: #216f36;
+}
+
+:root[data-theme="light"] .file-row-active {
+  outline-color: rgba(37, 136, 245, 0.55);
+  background: rgba(37, 136, 245, 0.1) !important;
+}
+
+:root[data-theme="light"] .metric-track {
+  background: var(--metric-track);
+}
+
+:root[data-theme="light"] .metric-track > span {
+  background: linear-gradient(90deg, #4b88c7, #78a9d8);
+}
+
+:root[data-theme="light"] .metric-sparkline polyline {
+  stroke: var(--metric-line);
+}
+
+:root[data-theme="light"] .metric-sparkline circle {
+  fill: var(--metric-line);
+}

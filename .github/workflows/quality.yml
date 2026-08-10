@@ -23,4 +23,8 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: npm ci
+      - name: 安装 Rust 依赖审计工具
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: 审计 Rust 依赖
+        run: cargo audit --file src-tauri/Cargo.lock
       - run: npm run verify:all
