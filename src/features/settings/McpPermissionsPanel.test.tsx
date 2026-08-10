@@ -65,9 +65,10 @@ describe("McpPermissionsPanel", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "prod commandExecute" }));
+    expect(screen.queryByRole("checkbox", { name: "prod sessionRead" })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "prod fileTransfer" }));
 
-    expect(onUpdate).toHaveBeenCalledWith("prod", { commandExecute: true });
+    expect(onUpdate).toHaveBeenCalledWith("prod", { fileTransfer: true });
   });
 
   it("命令未勾选时高级管理按钮仍可打开", () => {

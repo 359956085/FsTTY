@@ -19,6 +19,12 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("v1.3.0")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "新增亮色主题，并支持亮色、暗色和跟随系统三种模式；默认跟随系统。",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("v1.2.2")).toBeTruthy();
     expect(
       screen.getByText(

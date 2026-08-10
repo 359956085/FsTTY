@@ -14,16 +14,8 @@ pub(super) struct GuidePermission {
 pub(super) const GUIDE_PERMISSIONS: &[GuidePermission] = &[
     GuidePermission {
         key: "enabled",
-        zh_name: "分组访问",
-        en_name: "Group access",
-        tools: &[],
-        zh_warning: None,
-        en_warning: None,
-    },
-    GuidePermission {
-        key: "sessionRead",
-        zh_name: "会话与状态读取",
-        en_name: "Session and status read",
+        zh_name: "访问",
+        en_name: "Access",
         tools: &["list_sessions", "get_device_status"],
         zh_warning: None,
         en_warning: None,
@@ -36,21 +28,22 @@ pub(super) const GUIDE_PERMISSIONS: &[GuidePermission] = &[
             "list_remote_files",
             "read_remote_file",
             "search_remote_file",
-            "download_remote_file",
-            "create_remote_file_download_link",
         ],
         zh_warning: None,
         en_warning: None,
     },
     GuidePermission {
-        key: "commandExecute",
-        zh_name: "命令执行",
-        en_name: "Command execution",
-        tools: &["get_command_policy", "execute_command"],
-        zh_warning: Some("命令执行属于高风险权限，可绕过文件编辑和删除限制。"),
-        en_warning: Some(
-            "Command execution is high risk and can bypass file editing and deletion restrictions.",
-        ),
+        key: "fileTransfer",
+        zh_name: "文件传输",
+        en_name: "File transfer",
+        tools: &[
+            "upload_local_file",
+            "download_remote_file",
+            "create_remote_file_upload_link",
+            "create_remote_file_download_link",
+        ],
+        zh_warning: None,
+        en_warning: None,
     },
     GuidePermission {
         key: "fileWrite",
@@ -58,11 +51,9 @@ pub(super) const GUIDE_PERMISSIONS: &[GuidePermission] = &[
         en_name: "File editing",
         tools: &[
             "write_remote_file",
-            "upload_local_file",
             "create_remote_directory",
             "rename_remote_entry",
             "move_remote_entry",
-            "create_remote_file_upload_link",
         ],
         zh_warning: None,
         en_warning: None,
@@ -74,6 +65,16 @@ pub(super) const GUIDE_PERMISSIONS: &[GuidePermission] = &[
         tools: &["delete_remote_entry"],
         zh_warning: Some("文件删除属于破坏性操作，远程删除无法撤销。"),
         en_warning: Some("File deletion is destructive and cannot be undone remotely."),
+    },
+    GuidePermission {
+        key: "commandExecute",
+        zh_name: "命令执行",
+        en_name: "Command execution",
+        tools: &["get_command_policy", "execute_command"],
+        zh_warning: Some("命令执行属于高风险权限，可绕过文件编辑和删除限制。"),
+        en_warning: Some(
+            "Command execution is high risk and can bypass file editing and deletion restrictions.",
+        ),
     },
 ];
 
@@ -220,23 +221,24 @@ pub(super) fn permission_guide_response(
         vec![
             "Open Settings > MCP in FsTTY.".to_owned(),
             "Find the group that contains the target session.".to_owned(),
-            "Enable Group access.".to_owned(),
+            "Enable Access.".to_owned(),
         ]
     } else {
         vec![
             "打开 FsTTY 的“设置 > MCP”。".to_owned(),
             "找到目标会话所属分组。".to_owned(),
-            "开启“分组访问”。".to_owned(),
+            "开启“访问”。".to_owned(),
         ]
     };
     match target_permission {
-        Some(permission) => {
+        Some(permission) if permission.key != "enabled" => {
             steps.push(if english {
                 format!("Enable {}.", permission.name(language))
             } else {
                 format!("开启“{}”。", permission.name(language))
             });
         }
+        Some(_) => {}
         None => steps.push(if english {
             "Enable the permissions required by the task.".to_owned()
         } else {
@@ -249,6 +251,9 @@ pub(super) fn permission_guide_response(
         "点击“保存 MCP 设置”。".to_owned()
     });
     let permissions = match target_permission {
+        Some(permission) if permission.key == "enabled" => {
+            vec![permission_guide_entry(permission, language)]
+        }
         Some(permission) => vec![
             permission_guide_entry(&GUIDE_PERMISSIONS[0], language),
             permission_guide_entry(permission, language),
@@ -293,6 +298,14 @@ mod tests {
         assert_eq!(tools.len(), total);
         assert!(tools.contains(&"search_remote_file"));
         assert!(tools.contains(&"get_command_policy"));
+        assert_eq!(
+            guide_permission_for_tool("download_remote_file").map(|entry| entry.key),
+            Some("fileTransfer")
+        );
+        assert_eq!(
+            guide_permission_for_tool("get_device_status").map(|entry| entry.key),
+            Some("enabled")
+        );
         assert_eq!(permission_catalog().len(), GUIDE_PERMISSIONS.len());
     }
 }

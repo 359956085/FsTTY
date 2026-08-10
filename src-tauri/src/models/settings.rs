@@ -67,6 +67,8 @@ pub struct McpGroupPermission {
     #[serde(default = "default_enabled")]
     pub file_read: bool,
     #[serde(default)]
+    pub file_transfer: bool,
+    #[serde(default)]
     pub command_execute: bool,
     #[serde(default)]
     pub file_write: bool,

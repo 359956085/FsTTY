@@ -51,4 +51,30 @@ describe("主题样式契约", () => {
       "background: var\\(--switch-bg\\)",
     );
   });
+
+  it("全局滚动条固定为八像素且保持透明轨道", () => {
+    expect(baseCss).toContain("--scrollbar-size: 8px;");
+    expectRuleUses(
+      baseCss,
+      "*::-webkit-scrollbar",
+      "width: var\\(--scrollbar-size\\)",
+    );
+    expectRuleUses(
+      baseCss,
+      "*::-webkit-scrollbar",
+      "height: var\\(--scrollbar-size\\)",
+    );
+    expectRuleUses(baseCss, "*::-webkit-scrollbar-track", "background: transparent");
+    expectRuleUses(baseCss, "*::-webkit-scrollbar-corner", "background: transparent");
+    expectRuleUses(
+      baseCss,
+      "*::-webkit-scrollbar-thumb",
+      "background: var\\(--scrollbar-thumb\\)",
+    );
+    expect(baseCss).toMatch(
+      /@supports not selector\(::-webkit-scrollbar\)\s*\{[\s\S]*scrollbar-color: var\(--scrollbar-thumb\) transparent;[\s\S]*scrollbar-width: thin;/,
+    );
+    expect(sessionsCss).toContain(".session-tabs::-webkit-scrollbar");
+    expect(sessionsCss).toContain("display: none;");
+  });
 });

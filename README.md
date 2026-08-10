@@ -17,7 +17,7 @@
 
 FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor 等 Agent。Agent 不接触密码和私钥，只能在用户授权的会话分组中调用明确的工具。
 
-- **最小权限**：按会话分组分别控制访问、状态读取、文件读取、命令、编辑和删除。
+- **最小权限**：按会话分组分别控制访问、文件读取、文件传输、命令、编辑和删除。
 - **复用 SSH 能力**：终端、SFTP、主机密钥校验和系统凭据库由 FsTTY 统一处理。
 - **本地与远程接入**：支持本机 stdio，以及可信局域网或 VPN 内的 Streamable HTTP。
 - **一键配置 Agent**：自动检测本机 Agent，合并 MCP 配置和全局提示词，不覆盖无关设置。
@@ -26,24 +26,23 @@ FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor �
 
 ## MCP 工具
 
-FsTTY 目前提供 16 个 MCP 工具：
+FsTTY 目前提供 17 个 MCP 工具：
 
 | 权限 | 工具 | 能力 |
 | --- | --- | --- |
 | 无需会话权限 | `get_permission_guide` | 返回目标工具所需权限和当前界面的设置步骤 |
-| 状态读取 | `list_sessions`、`get_device_status` | 发现已授权会话；读取 CPU、内存、磁盘、网络、系统和运行时间 |
+| 访问 | `list_sessions`、`get_device_status` | 发现已授权会话；读取 CPU、内存、磁盘、网络、系统和运行时间；也是所有工具的前置权限 |
 | 文件读取 | `list_remote_files`、`read_remote_file`、`search_remote_file` | 浏览目录、分段读取文件、按关键词扫描远程日志 |
-| 命令 | `execute_command` | 在已授权会话中执行远程 Shell 命令 |
+| 文件传输 | `upload_local_file`、`download_remote_file`、`create_remote_file_upload_link`、`create_remote_file_download_link` | 通过 stdio Roots 或五分钟有效链接上传、下载文件 |
 | 编辑 | `write_remote_file`、`create_remote_directory`、`rename_remote_entry`、`move_remote_entry` | 原子写入文件；创建、重命名和移动远程条目 |
 | 删除 | `delete_remote_entry` | 递归删除远程文件或目录 |
-| stdio 传输 | `upload_local_file`、`download_remote_file` | 在 MCP 客户端声明的 Roots 与远程服务器之间传输文件 |
-| HTTP 传输 | `create_remote_file_upload_link`、`create_remote_file_download_link` | 签发 5 分钟有效的上传或下载链接 |
+| 命令 | `get_command_policy`、`execute_command` | 查询当前高级命令策略，并在已授权会话中执行远程 Shell 命令 |
 
 `search_remote_file` 单次最多扫描 `16 MiB`，响应限制为 `8 MiB`，可携带前后各 `0–50` 行上下文，并通过 `nextOffset` 继续扫描。适合搜索大日志，无需先读取完整文件。
 
 ## 权限与安全边界
 
-新会话分组默认未向 MCP 开放。启用分组访问后，状态读取和文件读取默认开启，命令、编辑和删除默认关闭。
+新会话分组默认未向 MCP 开放。启用分组访问后即可发现会话并读取设备状态；文件读取默认开启，文件传输、命令、编辑和删除默认关闭。
 
 - 权限保存后对下一次 stdio 或 HTTP 请求立即生效，无需重连。
 - 命令权限可能绕过编辑和删除限制，只应授予可信 Agent。

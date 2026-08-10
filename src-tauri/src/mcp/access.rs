@@ -16,8 +16,9 @@ pub(super) fn current_mcp_settings(state: &AppState) -> Result<AppSettings, AppE
 
 #[derive(Clone, Copy)]
 pub(crate) enum Permission {
-    SessionRead,
+    Access,
     FileRead,
+    FileTransfer,
     Command,
     FileWrite,
     FileDelete,
@@ -26,8 +27,10 @@ pub(crate) enum Permission {
 impl Permission {
     fn allowed(self, permission: &McpGroupPermission) -> bool {
         match self {
-            Self::SessionRead => permission.session_read,
+            // 分组已通过 enabled 过滤；访问权限直接包含会话发现和状态读取。
+            Self::Access => true,
             Self::FileRead => permission.file_read,
+            Self::FileTransfer => permission.file_transfer,
             Self::Command => permission.command_execute,
             Self::FileWrite => permission.file_write,
             Self::FileDelete => permission.file_delete,
@@ -263,5 +266,33 @@ pub(super) fn mcp_access_error(error: McpAccessError) -> McpError {
                 kind,
             )),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn permission() -> McpGroupPermission {
+        McpGroupPermission {
+            group_name: "生产".to_owned(),
+            enabled: true,
+            session_read: false,
+            file_read: true,
+            file_transfer: false,
+            command_execute: false,
+            file_write: true,
+            file_delete: false,
+            command_policy: Default::default(),
+        }
+    }
+
+    #[test]
+    fn 访问包含会话和状态且传输保持独立() {
+        let mut access = permission();
+        assert!(Permission::Access.allowed(&access));
+        assert!(!Permission::FileTransfer.allowed(&access));
+        access.file_transfer = true;
+        assert!(Permission::FileTransfer.allowed(&access));
     }
 }

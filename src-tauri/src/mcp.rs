@@ -351,10 +351,7 @@ impl McpService {
             .map_err(mcp_error)?;
         let sessions = groups
             .into_iter()
-            .filter(|group| {
-                permission(&permissions, &group.name)
-                    .is_some_and(|permission| permission.session_read)
-            })
+            .filter(|group| permission(&permissions, &group.name).is_some())
             .flat_map(|group| {
                 group.sessions.into_iter().map(move |session| SafeSession {
                     id: session.id,
@@ -389,7 +386,7 @@ impl McpService {
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("get_device_status", Some(&args.session_id), &args);
         let connection = self
-            .authorized_connection(&args.session_id, Permission::SessionRead)
+            .authorized_connection(&args.session_id, Permission::Access)
             .await?;
         let status = self
             .state
@@ -731,7 +728,7 @@ impl McpService {
         let base_url = http_base_url(&parts.headers, runtime.port())
             .map_err(|error| McpError::invalid_request(error.to_string(), None))?;
         let connection = self
-            .authorized_connection(&args.session_id, Permission::FileRead)
+            .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let (remote_path, size) = self
             .state
@@ -797,7 +794,7 @@ impl McpService {
         let base_url = http_base_url(&parts.headers, runtime.port())
             .map_err(|error| McpError::invalid_request(error.to_string(), None))?;
         let connection = self
-            .authorized_connection(&args.session_id, Permission::FileWrite)
+            .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let remote_directory = self
             .state
@@ -856,7 +853,7 @@ impl McpService {
         let audit = self.audit("upload_local_file", Some(&args.session_id), &args);
         let local_path = rooted_path(&context, &args.local_path, true).await?;
         let connection = self
-            .authorized_connection(&args.session_id, Permission::FileWrite)
+            .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let _operation_lock = self.operation_lock(&args.session_id)?;
         let bytes = self
@@ -885,7 +882,7 @@ impl McpService {
         let audit = self.audit("download_remote_file", Some(&args.session_id), &args);
         let local_path = rooted_path(&context, &args.local_path, false).await?;
         let connection = self
-            .authorized_connection(&args.session_id, Permission::FileRead)
+            .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let _operation_lock = self.operation_lock(&args.session_id)?;
         let bytes = self
@@ -1166,6 +1163,7 @@ mod tests {
             enabled: true,
             session_read: true,
             file_read: true,
+            file_transfer: false,
             command_execute,
             file_write: false,
             file_delete: false,
@@ -1460,6 +1458,7 @@ mod tests {
             enabled: false,
             session_read: true,
             file_read: true,
+            file_transfer: true,
             command_execute: true,
             file_write: true,
             file_delete: true,
@@ -1495,6 +1494,19 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.contains("Save MCP settings")));
+
+        let access =
+            permission_guide_response(&Language::ZhCn, Some("get_device_status".to_owned()))
+                .expect("访问权限引导应生成成功");
+        assert_eq!(access.permission_key, Some("enabled"));
+        assert_eq!(access.permission_name, Some("访问"));
+        assert_eq!(access.permissions.len(), 1);
+
+        let transfer =
+            permission_guide_response(&Language::EnUs, Some("download_remote_file".to_owned()))
+                .expect("文件传输权限引导应生成成功");
+        assert_eq!(transfer.permission_key, Some("fileTransfer"));
+        assert_eq!(transfer.permission_name, Some("File transfer"));
     }
 
     #[test]
@@ -1538,6 +1550,9 @@ mod tests {
         assert!(prompt.contains("sh -c, bash -c, and eval arguments are not recursively checked."));
         assert!(prompt
             .contains("Command execution (commandExecute): get_command_policy, execute_command"));
+        assert!(prompt.contains(
+            "File transfer (fileTransfer): upload_local_file, download_remote_file, create_remote_file_upload_link, create_remote_file_download_link"
+        ));
         assert!(!prompt.contains("Advanced command policies support"));
         assert!(!prompt.contains("Nested and compound shell syntax"));
         assert!(prompt.contains("MCP client Roots"));
@@ -1863,7 +1878,7 @@ mod tests {
         let connection = rusqlite::Connection::open(directory.join("mcp-command-policy.v1.db"))
             .expect("应创建策略数据库");
         connection
-            .pragma_update(None, "user_version", 2)
+            .pragma_update(None, "user_version", 3)
             .expect("应写入未来版本");
         drop(connection);
 

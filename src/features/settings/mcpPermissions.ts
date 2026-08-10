@@ -7,17 +7,17 @@ import type {
 
 export const MCP_PERMISSION_FIELDS = [
   "enabled",
-  "sessionRead",
   "fileRead",
-  "commandExecute",
+  "fileTransfer",
   "fileWrite",
   "fileDelete",
+  "commandExecute",
 ] as const satisfies readonly McpPermissionKey[];
 
 export const MCP_PERMISSION_LABEL_KEYS: Record<McpPermissionKey, string> = {
   enabled: "settings.mcpAccess",
-  sessionRead: "settings.mcpSessionRead",
   fileRead: "settings.mcpFileRead",
+  fileTransfer: "settings.mcpFileTransfer",
   commandExecute: "settings.mcpCommand",
   fileWrite: "settings.mcpFileWrite",
   fileDelete: "settings.mcpDelete",
@@ -29,6 +29,7 @@ export function defaultMcpPermission(groupName: string): McpGroupPermission {
     enabled: false,
     sessionRead: true,
     fileRead: true,
+    fileTransfer: false,
     commandExecute: false,
     fileWrite: false,
     fileDelete: false,

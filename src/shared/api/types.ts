@@ -52,6 +52,7 @@ export interface McpGroupPermission {
   enabled: boolean;
   sessionRead: boolean;
   fileRead: boolean;
+  fileTransfer: boolean;
   commandExecute: boolean;
   fileWrite: boolean;
   fileDelete: boolean;
@@ -99,8 +100,8 @@ export interface CommandHistoryImportResult {
 
 export type McpPermissionKey =
   | "enabled"
-  | "sessionRead"
   | "fileRead"
+  | "fileTransfer"
   | "commandExecute"
   | "fileWrite"
   | "fileDelete";

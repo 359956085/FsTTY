@@ -16,6 +16,48 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 <!-- release-notes:en-US:end -->
 
+## [1.3.0] - 2026-08-10
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### 主题
+
+- 新增亮色主题，并支持亮色、暗色和跟随系统三种模式；默认跟随系统。
+
+#### MCP 权限
+
+- 将会话列表与设备状态读取合并到“访问”权限。
+- 将文件上传、下载及传输链接独立为“文件传输”权限，可按会话分组单独配置。
+- 调整权限显示顺序，使访问范围和高风险操作更清晰。
+
+#### 终端与交互
+
+- 修复终端连接后 Shell Integration 注入命令可能残留在服务器命令历史中的问题。
+- 优化设置页首次打开、历史命令焦点恢复、文件管理布局等交互体验。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### Themes
+
+- Added a light theme with Light, Dark, and Follow System modes; Follow System is the default.
+
+#### MCP Permissions
+
+- Merged session discovery and device-status reads into the Access permission.
+- Added an independent File Transfer permission for uploads, downloads, and transfer links, configurable per session group.
+- Reordered permissions to make access scope and high-risk operations clearer.
+
+#### Terminal and Interaction
+
+- Fixed an issue where Shell Integration commands injected after connecting could remain in the server command history.
+- Improved first-open Settings behavior, terminal focus restoration after closing command history, and file-manager layout interactions.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.2.2] - 2026-08-09
 
 <!-- release-notes:zh-CN:start -->

@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 const DATABASE_FILE: &str = "mcp-command-policy.v1.db";
-const DATABASE_VERSION: i64 = 1;
+const DATABASE_VERSION: i64 = 2;
 const LEGACY_MIGRATION_KEY: &str = "legacySettingsMigrated";
 const MAX_GROUPS: usize = 100;
 
@@ -44,8 +44,8 @@ impl McpCommandPolicyService {
         let transaction = connection.unchecked_transaction().map_err(db_error)?;
         let mut statement = transaction
             .prepare(
-                "SELECT group_name, enabled, session_read, file_read, command_execute,
-                        file_write, file_delete, policy_enabled, policy_mode
+                "SELECT group_name, enabled, session_read, file_read, file_transfer,
+                        command_execute, file_write, file_delete, policy_enabled, policy_mode
                  FROM mcp_group_permissions ORDER BY rowid",
             )
             .map_err(db_error)?;
@@ -60,7 +60,8 @@ impl McpCommandPolicyService {
                     row.get::<_, bool>(5)?,
                     row.get::<_, bool>(6)?,
                     row.get::<_, bool>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, bool>(8)?,
+                    row.get::<_, String>(9)?,
                 ))
             })
             .map_err(db_error)?;
@@ -71,6 +72,7 @@ impl McpCommandPolicyService {
                 enabled,
                 session_read,
                 file_read,
+                file_transfer,
                 command_execute,
                 file_write,
                 file_delete,
@@ -96,6 +98,7 @@ impl McpCommandPolicyService {
                 enabled,
                 session_read,
                 file_read,
+                file_transfer,
                 command_execute,
                 file_write,
                 file_delete,
@@ -111,8 +114,8 @@ impl McpCommandPolicyService {
         let transaction = connection.unchecked_transaction().map_err(db_error)?;
         let row = transaction
             .query_row(
-                "SELECT enabled, session_read, file_read, command_execute, file_write,
-                        file_delete, policy_enabled, policy_mode
+                "SELECT enabled, session_read, file_read, file_transfer, command_execute,
+                        file_write, file_delete, policy_enabled, policy_mode
                  FROM mcp_group_permissions WHERE group_name = ?1",
                 [group_name],
                 |row| {
@@ -124,7 +127,8 @@ impl McpCommandPolicyService {
                         row.get::<_, bool>(4)?,
                         row.get::<_, bool>(5)?,
                         row.get::<_, bool>(6)?,
-                        row.get::<_, String>(7)?,
+                        row.get::<_, bool>(7)?,
+                        row.get::<_, String>(8)?,
                     ))
                 },
             )
@@ -134,6 +138,7 @@ impl McpCommandPolicyService {
             enabled,
             session_read,
             file_read,
+            file_transfer,
             command_execute,
             file_write,
             file_delete,
@@ -149,6 +154,7 @@ impl McpCommandPolicyService {
             enabled,
             session_read,
             file_read,
+            file_transfer,
             command_execute,
             file_write,
             file_delete,
@@ -218,7 +224,7 @@ impl McpCommandPolicyService {
 }
 
 fn open_database(path: &Path) -> Result<Connection, AppError> {
-    let connection = Connection::open(path).map_err(db_error)?;
+    let mut connection = Connection::open(path).map_err(db_error)?;
     connection
         .busy_timeout(Duration::from_secs(5))
         .map_err(db_error)?;
@@ -250,6 +256,7 @@ fn open_database(path: &Path) -> Result<Connection, AppError> {
                enabled INTEGER NOT NULL,
                session_read INTEGER NOT NULL,
                file_read INTEGER NOT NULL,
+               file_transfer INTEGER NOT NULL DEFAULT 0,
                command_execute INTEGER NOT NULL,
                file_write INTEGER NOT NULL,
                file_delete INTEGER NOT NULL,
@@ -271,11 +278,29 @@ fn open_database(path: &Path) -> Result<Connection, AppError> {
                ON mcp_command_rules(group_name, list_mode, position);",
         )
         .map_err(db_error)?;
-    if version == 0 {
-        connection
+    // GUI 与 stdio 可能并发启动；写事务保证只执行一次结构迁移。
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    let current_version = transaction
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+        .map_err(db_error)?;
+    if current_version == 1 {
+        // 新权限默认关闭，避免升级后扩大既有分组的上传或下载能力。
+        transaction
+            .execute(
+                "ALTER TABLE mcp_group_permissions
+                 ADD COLUMN file_transfer INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(db_error)?;
+    }
+    if current_version < DATABASE_VERSION {
+        transaction
             .pragma_update(None, "user_version", DATABASE_VERSION)
             .map_err(db_error)?;
     }
+    transaction.commit().map_err(db_error)?;
     Ok(connection)
 }
 
@@ -360,14 +385,15 @@ fn insert_permission(
     transaction
         .execute(
             "INSERT INTO mcp_group_permissions (
-               group_name, enabled, session_read, file_read, command_execute,
+               group_name, enabled, session_read, file_read, file_transfer, command_execute,
                file_write, file_delete, policy_enabled, policy_mode
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 permission.group_name,
                 permission.enabled,
                 permission.session_read,
                 permission.file_read,
+                permission.file_transfer,
                 permission.command_execute,
                 permission.file_write,
                 permission.file_delete,
@@ -504,6 +530,7 @@ mod tests {
             enabled: true,
             session_read: true,
             file_read: true,
+            file_transfer: false,
             command_execute: true,
             file_write: false,
             file_delete: false,
@@ -582,6 +609,61 @@ mod tests {
 
         let service = McpCommandPolicyService::load(&path, Vec::new());
         assert!(service.list_permissions().is_err());
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn v1数据库升级后传输默认关闭且保留规则() {
+        let path = directory("v1-transfer-migration");
+        let database_path = path.join(DATABASE_FILE);
+        let connection = Connection::open(&database_path).expect("应创建旧数据库");
+        connection
+            .execute_batch(
+                "PRAGMA user_version = 1;
+                 CREATE TABLE mcp_group_permissions (
+                   group_name TEXT PRIMARY KEY,
+                   enabled INTEGER NOT NULL,
+                   session_read INTEGER NOT NULL,
+                   file_read INTEGER NOT NULL,
+                   command_execute INTEGER NOT NULL,
+                   file_write INTEGER NOT NULL,
+                   file_delete INTEGER NOT NULL,
+                   policy_enabled INTEGER NOT NULL,
+                   policy_mode TEXT NOT NULL
+                 );
+                 CREATE TABLE mcp_command_rules (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   group_name TEXT NOT NULL,
+                   list_mode TEXT NOT NULL,
+                   position INTEGER NOT NULL,
+                   match_type TEXT NOT NULL,
+                   pattern TEXT NOT NULL
+                 );
+                 INSERT INTO mcp_group_permissions VALUES
+                   ('生产', 1, 0, 1, 1, 1, 0, 1, 'allow');
+                 INSERT INTO mcp_command_rules
+                   (group_name, list_mode, position, match_type, pattern)
+                   VALUES ('生产', 'allow', 0, 'exact', 'pwd');",
+            )
+            .expect("应写入 v1 数据库");
+        drop(connection);
+
+        let service = McpCommandPolicyService::load(&path, Vec::new());
+        let restored = service
+            .permission("生产")
+            .expect("升级后应可读取")
+            .expect("权限应保留");
+        assert!(!restored.session_read);
+        assert!(restored.file_read);
+        assert!(restored.file_write);
+        assert!(!restored.file_transfer);
+        assert_eq!(restored.command_policy.allow_rules, vec![rule("pwd")]);
+        let version = service
+            .connection()
+            .expect("数据库应可用")
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .expect("应读取版本");
+        assert_eq!(version, DATABASE_VERSION);
         let _ = fs::remove_dir_all(path);
     }
 

@@ -435,6 +435,7 @@ mod tests {
             enabled: true,
             session_read: true,
             file_read: true,
+            file_transfer: false,
             command_execute,
             file_write: false,
             file_delete: false,
@@ -582,6 +583,7 @@ mod tests {
             restored.mcp_group_permissions[0].command_policy,
             Default::default()
         );
+        assert!(!restored.mcp_group_permissions[0].file_transfer);
         let _ = fs::remove_dir_all(directory);
     }
 

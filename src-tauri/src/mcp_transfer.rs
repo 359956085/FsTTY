@@ -344,7 +344,7 @@ async fn download_response(
     let session = match authorized_session(
         &runtime.inner.state,
         &ticket.session_id,
-        Permission::FileRead,
+        Permission::FileTransfer,
     )
     .await
     {
@@ -614,7 +614,7 @@ async fn upload_file(
     let session = match authorized_session(
         &runtime.inner.state,
         &ticket.session_id,
-        Permission::FileWrite,
+        Permission::FileTransfer,
     )
     .await
     {
@@ -941,6 +941,7 @@ mod tests {
                     enabled: true,
                     session_read: true,
                     file_read: true,
+                    file_transfer: true,
                     command_execute: false,
                     file_write: true,
                     file_delete: false,
@@ -1110,9 +1111,10 @@ mod tests {
                 group_name: "生产".to_owned(),
                 enabled: true,
                 session_read: true,
-                file_read: false,
+                file_read: true,
+                file_transfer: false,
                 command_execute: false,
-                file_write: false,
+                file_write: true,
                 file_delete: false,
                 command_policy: Default::default(),
             }])

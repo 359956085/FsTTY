@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { McpGroupPermission, SessionGroup } from "../../shared/api/types";
 import {
+  MCP_PERMISSION_FIELDS,
   defaultMcpPermission,
   permissionFrom,
   permissionsChanged,
@@ -11,12 +12,24 @@ import {
 const groups: SessionGroup[] = [{ name: "生产", sessions: [] }];
 
 describe("MCP 权限表单纯函数", () => {
+  it("按访问、读取、传输、编辑、删除、命令排列", () => {
+    expect(MCP_PERMISSION_FIELDS).toEqual([
+      "enabled",
+      "fileRead",
+      "fileTransfer",
+      "fileWrite",
+      "fileDelete",
+      "commandExecute",
+    ]);
+  });
+
   it("为新分组提供安全默认值", () => {
     expect(defaultMcpPermission("生产")).toEqual({
       groupName: "生产",
       enabled: false,
       sessionRead: true,
       fileRead: true,
+      fileTransfer: false,
       commandExecute: false,
       fileWrite: false,
       fileDelete: false,
@@ -28,7 +41,7 @@ describe("MCP 权限表单纯函数", () => {
     const saved: McpGroupPermission[] = [defaultMcpPermission("生产")];
     expect(permissionsChanged(groups, saved, saved)).toBe(false);
     expect(
-      permissionsChanged(groups, [{ ...saved[0], fileWrite: true }], saved),
+      permissionsChanged(groups, [{ ...saved[0], fileTransfer: true }], saved),
     ).toBe(true);
     expect(permissionFrom([], "生产")).toEqual(saved[0]);
     expect(

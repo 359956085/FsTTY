@@ -17,7 +17,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 
 FsTTY securely exposes your saved SSH sessions to agents such as Codex, Claude, and Cursor. Agents never receive passwords or private keys and can call only explicitly authorized tools within selected session groups.
 
-- **Least privilege**: control access, status reads, file reads, commands, edits, and deletion per session group.
+- **Least privilege**: control access, file reads, file transfers, commands, edits, and deletion per session group.
 - **Reuse proven SSH capabilities**: FsTTY owns terminals, SFTP, host-key verification, and credential storage.
 - **Local and remote access**: use local stdio or Streamable HTTP on a trusted LAN or VPN.
 - **One-click agent setup**: detect local agents and merge MCP configuration and global instructions without overwriting unrelated settings.
@@ -26,24 +26,23 @@ FsTTY securely exposes your saved SSH sessions to agents such as Codex, Claude, 
 
 ## MCP Tools
 
-FsTTY currently exposes 16 MCP tools:
+FsTTY currently exposes 17 MCP tools:
 
 | Permission | Tools | Capability |
 | --- | --- | --- |
 | No session permission | `get_permission_guide` | Returns the permission required by a target tool and the matching UI setup steps |
-| Status read | `list_sessions`, `get_device_status` | Discovers authorized sessions and reads CPU, memory, disk, network, OS, and uptime |
+| Access | `list_sessions`, `get_device_status` | Discovers authorized sessions and reads CPU, memory, disk, network, OS, and uptime; also required by all tools |
 | File read | `list_remote_files`, `read_remote_file`, `search_remote_file` | Browses directories, reads file windows, and searches remote logs by keyword |
-| Command | `execute_command` | Executes a remote shell command in an authorized session |
+| File transfer | `upload_local_file`, `download_remote_file`, `create_remote_file_upload_link`, `create_remote_file_download_link` | Uploads and downloads through stdio Roots or five-minute links |
 | Edit | `write_remote_file`, `create_remote_directory`, `rename_remote_entry`, `move_remote_entry` | Writes files atomically and creates, renames, or moves remote entries |
 | Delete | `delete_remote_entry` | Recursively deletes a remote file or directory |
-| stdio transfer | `upload_local_file`, `download_remote_file` | Transfers files between MCP client Roots and a remote server |
-| HTTP transfer | `create_remote_file_upload_link`, `create_remote_file_download_link` | Issues upload or download links valid for five minutes |
+| Command | `get_command_policy`, `execute_command` | Inspects the active advanced command policy and executes a remote shell command in an authorized session |
 
 `search_remote_file` scans up to `16 MiB` per call, limits responses to `8 MiB`, supports `0–50` context lines on either side, and continues through `nextOffset`. It is designed for large log files that should not be downloaded or read in full.
 
 ## Permissions and Security Boundaries
 
-New session groups are not exposed to MCP. After group access is enabled, status and file reads default to on, while commands, edits, and deletion default to off.
+New session groups are not exposed to MCP. Enabling group access allows session discovery and device-status reads. File read defaults to on; file transfer, command, edit, and deletion default to off.
 
 - Saved permissions apply to the next stdio or HTTP request without reconnecting.
 - Command execution may bypass edit and deletion restrictions. Grant it only to trusted agents.
