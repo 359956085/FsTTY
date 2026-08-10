@@ -77,7 +77,7 @@ export function useFileColumnResizing() {
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
         window.removeEventListener("pointercancel", handlePointerCancel);
-        window.removeEventListener("blur", handlePointerCancel);
+        window.removeEventListener("blur", cancelDrag);
         if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
         removeDragListenersRef.current = () => undefined;
       };
@@ -94,16 +94,20 @@ export function useFileColumnResizing() {
         cleanup();
         commit(column, nextWidth);
       };
-      const handlePointerCancel = () => {
+      const cancelDrag = () => {
         applyFileColumnWidth(tableRef.current, column, fileColumnsRef.current[column]);
         cleanup();
+      };
+      const handlePointerCancel = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) return;
+        cancelDrag();
       };
 
       removeDragListenersRef.current = cleanup;
       window.addEventListener("pointermove", handlePointerMove, { passive: false });
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerCancel);
-      window.addEventListener("blur", handlePointerCancel);
+      window.addEventListener("blur", cancelDrag);
     },
     [commit],
   );

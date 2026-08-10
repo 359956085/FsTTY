@@ -1,5 +1,3 @@
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Ban,
   Clipboard,
@@ -47,23 +45,23 @@ import {
   formatSize,
   formatTransferSpeed,
   fileRowClassName,
-  isSlowRenameClick,
   isRemoteMoveCandidate,
   remoteParentPath,
-  type FileNameClick,
 } from "./fileUtils";
 import {
   FILE_COLUMN_LIMITS,
 } from "./workspacePreferences";
 import { createRemoteEntryDragController } from "./remoteEntryDrag";
-import {
-  createFileOperationController,
-  normalizeRemoteEntryName,
-} from "./fileOperationController";
+import { createFileOperationController, normalizeRemoteEntryName } from "./fileOperationController";
 import {
   RESIZABLE_FILE_COLUMNS,
   useFileColumnResizing,
 } from "./useFileColumnResizing";
+import { installFileDragDropRuntime } from "./fileDragDropRuntime";
+import {
+  createInlineRenameController,
+  type InlineRenameState,
+} from "./inlineRenameController";
 
 interface FilesPaneProps {
   currentPath: string;
@@ -97,12 +95,6 @@ type FileOperationDialog =
 interface RemoteEntryDrag {
   source: FileEntry;
   targetDirectory: string | null;
-}
-
-interface InlineRenameState {
-  error: string | null;
-  file: FileEntry;
-  value: string;
 }
 
 interface FilePointerIntent {
@@ -141,12 +133,13 @@ export function FilesPane({
   const [contextMenu, setContextMenu] = useState<FileContextMenu | null>(null);
   const [fileOperation, setFileOperation] = useState<FileOperationDialog | null>(null);
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
-  const inlineRenameRef = useRef<InlineRenameState | null>(null);
   const inlineRenameInputRef = useRef<HTMLInputElement>(null);
+  const inlineRenameControllerRef = useRef<ReturnType<
+    typeof createInlineRenameController
+  > | null>(null);
   const operationControllerRef = useRef<ReturnType<
     typeof createFileOperationController
   > | null>(null);
-  const fileNameClickRef = useRef<FileNameClick | null>(null);
   const filePointerIntentRef = useRef<FilePointerIntent | null>(null);
   const [operationPending, setOperationPending] = useState(false);
   const [dragUploadActive, setDragUploadActive] = useState(false);
@@ -181,11 +174,8 @@ export function FilesPane({
   }, []);
 
   const cancelInlineRename = useCallback(() => {
-    fileNameClickRef.current = null;
     filePointerIntentRef.current = null;
-    operationControllerRef.current?.cancel("inlineRename");
-    inlineRenameRef.current = null;
-    setInlineRename(null);
+    inlineRenameControllerRef.current?.cancel();
   }, []);
 
   const finishRemoteDrag = useCallback(() => {
@@ -195,7 +185,7 @@ export function FilesPane({
 
   useEffect(() => {
     if (operationBlocked) {
-      fileNameClickRef.current = null;
+      inlineRenameControllerRef.current?.resetClick();
       filePointerIntentRef.current = null;
       finishRemoteDrag();
     }
@@ -214,18 +204,11 @@ export function FilesPane({
   ]);
 
   useEffect(() => {
-    const current = inlineRenameRef.current;
-    if (
-      current &&
-      !loading &&
-      !files.some((file) => file.path === current.file.path)
-    ) {
-      cancelInlineRename();
-    }
-  }, [cancelInlineRename, files, loading]);
+    inlineRenameControllerRef.current?.reconcile(files, loading);
+  }, [files, loading]);
 
   useLayoutEffect(() => {
-    if (!inlineRenameRef.current) {
+    if (!inlineRename?.file.path) {
       return;
     }
     const input = inlineRenameInputRef.current;
@@ -234,82 +217,45 @@ export function FilesPane({
   }, [inlineRename?.file.path]);
 
   useEffect(() => {
-    let disposed = false;
-    let removeDragDropListener: () => void = () => undefined;
-    let removeScaleListener: () => void = () => undefined;
     // StrictMode 会重放 Effect；每次安装独占控制器，避免复用已销毁实例。
     const operationController = createFileOperationController();
     const remoteDragController = createRemoteEntryDragController({
       onChange: setRemoteDrag,
     });
+    const inlineRenameController = createInlineRenameController({
+      onChange: setInlineRename,
+      onFocusRequested: () => {
+        window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
+      },
+      onPendingChange: setOperationPending,
+    });
     operationControllerRef.current = operationController;
     remoteDragControllerRef.current = remoteDragController;
-    const handleWindowBlur = () => {
-      fileNameClickRef.current = null;
-      filePointerIntentRef.current = null;
-      finishRemoteDrag();
-    };
-    window.addEventListener("blur", handleWindowBlur);
-
-    void (async () => {
-      const appWindow = getCurrentWindow();
-      // Tauri 提供物理坐标，DOM 使用逻辑坐标；监听缩放变化避免跨屏后命中错误。
-      let scaleFactor = await appWindow.scaleFactor();
-      const stopScaleListener = await appWindow.onScaleChanged((event) => {
-        scaleFactor = event.payload.scaleFactor;
-      });
-      if (disposed) {
-        stopScaleListener();
-        return;
-      }
-      removeScaleListener = stopScaleListener;
-      const stopDragDropListener = await getCurrentWebview().onDragDropEvent((event) => {
-        const payload = event.payload;
-        if (payload.type === "leave") {
-          setDragUploadActive(false);
-          return;
-        }
-
-        const position = payload.position.toLogical(scaleFactor);
-        const bounds = panelRef.current?.getBoundingClientRect();
-        const inside = Boolean(
-          bounds &&
-            position.x >= bounds.left &&
-            position.x <= bounds.right &&
-            position.y >= bounds.top &&
-            position.y <= bounds.bottom,
-        );
-        const dragUpload = dragUploadRef.current;
-        if (payload.type === "drop") {
-          setDragUploadActive(false);
-          if (inside && dragUpload.enabled && payload.paths.length > 0) {
-            dragUpload.onUploadFiles(payload.paths);
-          }
-          return;
-        }
-        setDragUploadActive(inside && dragUpload.enabled);
-      });
-
-      if (disposed) {
-        stopDragDropListener();
-      } else {
-        removeDragDropListener = stopDragDropListener;
-      }
-    })().catch(() => undefined);
+    inlineRenameControllerRef.current = inlineRenameController;
+    const dragDropRuntime = installFileDragDropRuntime({
+      getDragUploadState: () => dragUploadRef.current,
+      getPanel: () => panelRef.current,
+      onActiveChange: setDragUploadActive,
+      onWindowBlur: () => {
+        inlineRenameControllerRef.current?.resetClick();
+        filePointerIntentRef.current = null;
+        finishRemoteDrag();
+      },
+    });
 
     return () => {
-      disposed = true;
-      removeDragDropListener();
-      removeScaleListener();
-      window.removeEventListener("blur", handleWindowBlur);
+      dragDropRuntime.dispose();
       remoteDragController.dispose();
       if (remoteDragControllerRef.current === remoteDragController) {
         remoteDragControllerRef.current = null;
       }
       suppressRemoteClickRef.current = false;
-      fileNameClickRef.current = null;
+      inlineRenameController.resetClick();
       filePointerIntentRef.current = null;
-      inlineRenameRef.current = null;
+      inlineRenameController.dispose();
+      if (inlineRenameControllerRef.current === inlineRenameController) {
+        inlineRenameControllerRef.current = null;
+      }
       operationController.dispose();
       if (operationControllerRef.current === operationController) {
         operationControllerRef.current = null;
@@ -376,17 +322,15 @@ export function FilesPane({
   }
 
   function beginInlineRename(file: FileEntry) {
-    if (operationBlocked || inlineRenameRef.current) {
+    if (operationBlocked) {
       return;
     }
     clearMoveFeedback();
-    fileNameClickRef.current = null;
+    inlineRenameControllerRef.current?.resetClick();
     filePointerIntentRef.current = null;
     setContextMenu(null);
     setSelectedPath(file.path);
-    const next = { file, value: file.name, error: null };
-    inlineRenameRef.current = next;
-    setInlineRename(next);
+    inlineRenameControllerRef.current?.begin(file);
   }
 
   function handleFileRowClick(
@@ -405,17 +349,20 @@ export function FilesPane({
       pointerIntent.startedOnName &&
       isRemoteMoveCandidate(file);
     if (!startedOnName) {
-      fileNameClickRef.current = null;
+      inlineRenameControllerRef.current?.resetClick();
       setSelectedPath(file.path);
       return;
     }
 
     const currentClick = { path: file.path, timeMs: event.timeStamp };
     const shouldRename =
-      !operationBlocked &&
-      selectedPath === file.path &&
-      isSlowRenameClick(fileNameClickRef.current, currentClick, event.detail);
-    fileNameClickRef.current = shouldRename ? null : currentClick;
+      inlineRenameControllerRef.current?.registerNameClick(
+        file,
+        selectedPath,
+        currentClick,
+        event.detail,
+        operationBlocked,
+      ) ?? false;
     setSelectedPath(file.path);
     if (shouldRename) {
       beginInlineRename(file);
@@ -423,58 +370,15 @@ export function FilesPane({
   }
 
   function updateInlineRenameValue(value: string) {
-    const current = inlineRenameRef.current;
-    if (!current) {
-      return;
-    }
-    const next = { ...current, value, error: null };
-    inlineRenameRef.current = next;
-    setInlineRename(next);
+    inlineRenameControllerRef.current?.update(value);
   }
 
   async function submitInlineRename() {
-    const current = inlineRenameRef.current;
-    const operationController = operationControllerRef.current;
-    if (!current || !operationController || operationController.isPending("inlineRename")) {
-      return;
-    }
-
-    const newName = normalizeRemoteEntryName(current.value);
-    if (!newName) {
-      const next = { ...current, error: t("sessions.remoteNameRequired") };
-      inlineRenameRef.current = next;
-      setInlineRename(next);
-      window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
-      return;
-    }
-    if (newName === current.file.name) {
-      cancelInlineRename();
-      return;
-    }
-
-    const pending = { ...current, value: newName, error: null };
-    inlineRenameRef.current = pending;
-    setInlineRename(pending);
-    await operationController.run(
-      "inlineRename",
-      () => onRenameEntry(current.file.path, newName),
-      {
-        onPendingChange: setOperationPending,
-        onSuccess: () => {
-        inlineRenameRef.current = null;
-        setInlineRename(null);
-        },
-        onError: (error) => {
-          const failed = {
-            ...pending,
-            error: resolveApiError(error, t("errors.unknown")),
-          };
-          inlineRenameRef.current = failed;
-          setInlineRename(failed);
-          window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
-        },
-      },
-    );
+    await inlineRenameControllerRef.current?.submit({
+      formatError: (error) => resolveApiError(error, t("errors.unknown")),
+      rename: onRenameEntry,
+      requiredError: t("sessions.remoteNameRequired"),
+    });
   }
 
   function beginRemotePointerDrag(
@@ -529,7 +433,7 @@ export function FilesPane({
       return;
     }
     if (result.started) {
-      fileNameClickRef.current = null;
+      inlineRenameControllerRef.current?.resetClick();
       filePointerIntentRef.current = null;
       clearMoveFeedback();
     }
@@ -785,7 +689,7 @@ export function FilesPane({
               key={file.path}
               onClick={(event) => handleFileRowClick(file, event)}
               onDoubleClick={(event) => {
-                fileNameClickRef.current = null;
+                inlineRenameControllerRef.current?.resetClick();
                 filePointerIntentRef.current = null;
                 if (suppressRemoteClickRef.current) {
                   event.preventDefault();
@@ -802,14 +706,14 @@ export function FilesPane({
                   (event.key === "Enter" || event.key === " ")
                 ) {
                   event.preventDefault();
-                  fileNameClickRef.current = null;
+                  inlineRenameControllerRef.current?.resetClick();
                   filePointerIntentRef.current = null;
                   setSelectedPath(file.path);
                 }
               }}
               onLostPointerCapture={finishRemoteDrag}
               onPointerCancel={() => {
-                fileNameClickRef.current = null;
+                inlineRenameControllerRef.current?.resetClick();
                 filePointerIntentRef.current = null;
                 finishRemoteDrag();
               }}
@@ -819,7 +723,7 @@ export function FilesPane({
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                fileNameClickRef.current = null;
+                inlineRenameControllerRef.current?.resetClick();
                 filePointerIntentRef.current = null;
                 setSelectedPath(file.path);
                 setContextMenu({

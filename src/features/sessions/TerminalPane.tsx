@@ -17,8 +17,6 @@ import { api } from "../../shared/api/client";
 import { readApiError, resolveApiError } from "../../shared/api/errors";
 import type {
   ConnectionState,
-  HostKeyChallenge,
-  HostKeyChange,
   Session,
   SshConnection,
   ShortcutSettings,
@@ -62,29 +60,20 @@ import { CommandHistoryPopover } from "./CommandHistoryPopover";
 import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
 import { matchesShortcut } from "../../shared/shortcuts";
 import type { ResolvedTheme } from "../../shared/theme";
+import { createCommandHistoryInsertion } from "./terminalCommandHistory";
+import { decodeBase64 } from "./terminalProtocol";
 import {
-  createCommandHistoryInsertion,
-  createShellIntegrationCommand,
-  parseCommandHistoryOsc,
-  type ShellIntegrationDescriptor,
-} from "./terminalCommandHistory";
-import {
-  decodeBase64,
-  isValidRemotePath,
-  quoteShellPath,
-} from "./terminalProtocol";
+  createTerminalShellIntegration,
+  SHELL_OSC_IDENTIFIER,
+} from "./terminalShellIntegration";
+import { useTerminalAuthDialogs } from "./useTerminalAuthDialogs";
 
-const SHELL_OSC_IDENTIFIER = 777;
 const CLIPBOARD_MESSAGE_KEYS = {
   nonText: "sessions.clipboardNonText",
   read: "sessions.clipboardReadFailed",
   write: "sessions.clipboardWriteFailed",
 } as const;
 type ClipboardMessageKind = keyof typeof CLIPBOARD_MESSAGE_KEYS;
-
-interface ShellIntegration extends ShellIntegrationDescriptor {
-  stage: "detecting" | "installing" | "active" | "unsupported";
-}
 
 interface ConnectTerminalOptions {
   fromCredentialPrompt?: boolean;
@@ -98,8 +87,6 @@ interface TemporaryLogin {
   usedUsername: boolean;
   username?: string;
 }
-
-type LoginSavePromptKind = "username" | "password" | "both";
 
 interface TerminalPaneProps {
   active: boolean;
@@ -154,18 +141,17 @@ export const TerminalPane = memo(function TerminalPane({
   const remoteRightDragStateRef = useRef(createRemoteRightDragState());
   const remoteMouseActivityRef = useRef<TerminalActivityController | null>(null);
   const resizeObserverActivityRef = useRef<TerminalActivityController | null>(null);
-  const historyWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const sendInputRef = useRef<(data: string) => void>(() => undefined);
   const terminalLoginInputRef = useRef(createTerminalLoginInputController());
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
   const consumedDirectoryRequestRef = useRef(0);
-  const lastReportedDirectoryRef = useRef<string | null>(null);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
   const onCredentialSavedRef = useRef(onCredentialSaved);
-  const shellAtPromptRef = useRef(false);
-  const shellIntegrationRef = useRef<ShellIntegration | null>(null);
+  const shellIntegrationRef = useRef<ReturnType<
+    typeof createTerminalShellIntegration
+  > | null>(null);
   const autoConnectRef = useRef(autoConnect);
   const connectTerminalRef = useRef<(options?: ConnectTerminalOptions) => Promise<void>>(
     async () => undefined,
@@ -187,22 +173,42 @@ export const TerminalPane = memo(function TerminalPane({
   shortcutsRef.current = shortcuts;
   themeRef.current = theme;
   const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
-  const [hostKeyChallenge, setHostKeyChallenge] =
-    useState<HostKeyChallenge | null>(null);
-  const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
-  const [dialogError, setDialogError] = useState<string | null>(null);
-  const [credentialPrompt, setCredentialPrompt] =
-    useState<"privateKeyPassphrase" | null>(null);
-  const [credentialValue, setCredentialValue] = useState("");
-  const [rememberCredential, setRememberCredential] = useState(true);
-  const [credentialSubmitting, setCredentialSubmitting] = useState(false);
-  const [terminalLoginPrompt, setTerminalLoginPrompt] =
-    useState<TerminalLoginPromptKind | null>(null);
-  const [loginSavePrompt, setLoginSavePrompt] = useState<LoginSavePromptKind | null>(null);
-  const [loginSaveSubmitting, setLoginSaveSubmitting] = useState(false);
-  const [loginSaveError, setLoginSaveError] = useState<string | null>(null);
+  const {
+    credentialPrompt,
+    credentialSubmitting,
+    credentialValue,
+    dialogError,
+    hostKeyChallenge,
+    hostKeyChange,
+    loginSaveError,
+    loginSavePrompt,
+    loginSaveSubmitting,
+    rememberCredential,
+    setCredentialPrompt,
+    setCredentialSubmitting,
+    setCredentialValue,
+    setDialogError,
+    setHostKeyChallenge,
+    setHostKeyChange,
+    setLoginSaveError,
+    setLoginSavePrompt,
+    setLoginSaveSubmitting,
+    setRememberCredential,
+    setTerminalLoginPrompt,
+    terminalLoginPrompt,
+  } = useTerminalAuthDialogs();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
+
+  shellIntegrationRef.current ??= createTerminalShellIntegration({
+    addHistory: (command) => api.addCommandHistory(command),
+    onDirectoryChange: (path) => onDirectoryChangeRef.current(runtimeId, path),
+    onHistoryError: (error) => {
+      // 历史库故障不能阻塞远程终端；后续命令仍可自动恢复写入。
+      console.error("历史命令保存失败", error);
+    },
+    send: (data) => sendImmediateInputRef.current(data),
+  });
 
   onDirectoryChangeRef.current = onDirectoryChange;
   onCredentialSavedRef.current = onCredentialSaved;
@@ -366,74 +372,15 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   function resetShellIntegration() {
-    lastReportedDirectoryRef.current = null;
-    shellAtPromptRef.current = false;
-    shellIntegrationRef.current = null;
+    shellIntegrationRef.current?.reset();
   }
 
   function startShellIntegration() {
-    // 每次连接使用独立令牌，避免远端普通程序输出相同 OSC 编号时误触发目录同步。
-    const token = crypto.randomUUID().replace(/-/g, "");
-    shellIntegrationRef.current = {
-      functionName: `__fstty_cwd_${token.slice(0, 12)}`,
-      historyFunctionName: `__fstty_history_${token.slice(0, 12)}`,
-      stage: "detecting",
-      token,
-    };
-    shellAtPromptRef.current = false;
-    lastReportedDirectoryRef.current = null;
-    sendImmediateInput(
-      ` printf '\\033]${SHELL_OSC_IDENTIFIER};fstty-shell:${token}:%s\\007' "$SHELL"\r`,
-    );
+    shellIntegrationRef.current?.start();
   }
 
   function handleShellOsc(data: string) {
-    const integration = shellIntegrationRef.current;
-    if (!integration) {
-      return true;
-    }
-    const history = parseCommandHistoryOsc(data, integration);
-    if (history.matched) {
-      if (history.command) {
-        historyWriteChainRef.current = historyWriteChainRef.current
-          .then(() => api.addCommandHistory(history.command!))
-          .catch((error) => {
-            // 历史库故障不能阻塞远程终端；链继续可用，便于后续命令自动恢复写入。
-            console.error("历史命令保存失败", error);
-          });
-      }
-      return true;
-    }
-    const shellPrefix = `fstty-shell:${integration.token}:`;
-    if (data.startsWith(shellPrefix) && integration.stage === "detecting") {
-      const shellName = data
-        .slice(shellPrefix.length)
-        .replace(/\\/g, "/")
-        .split("/")
-        .pop()
-        ?.toLowerCase();
-      const command = createShellIntegrationCommand(shellName, integration);
-      if (!command) {
-        integration.stage = "unsupported";
-        return true;
-      }
-      integration.stage = "installing";
-      sendImmediateInput(command);
-      return true;
-    }
-    const directoryPrefix = `fstty-cwd:${integration.token}:`;
-    if (!data.startsWith(directoryPrefix)) {
-      return true;
-    }
-    const path = data.slice(directoryPrefix.length);
-    if (!isValidRemotePath(path)) {
-      return true;
-    }
-    integration.stage = "active";
-    shellAtPromptRef.current = true;
-    lastReportedDirectoryRef.current = path;
-    onDirectoryChangeRef.current(runtimeId, path);
-    return true;
+    return shellIntegrationRef.current?.handleOsc(data) ?? true;
   }
 
   function flushInput() {
@@ -995,7 +942,7 @@ export const TerminalPane = memo(function TerminalPane({
           return;
         }
         // 收到目录信号后，只要用户开始输入就不再视为干净提示符，避免自动 cd 污染命令行。
-        shellAtPromptRef.current = false;
+        shellIntegrationRef.current?.markInput();
         sendInputRef.current(data);
       });
       terminalRef.current = terminal;
@@ -1080,17 +1027,10 @@ export const TerminalPane = memo(function TerminalPane({
     if (
       connectionState !== "connected" ||
       !connectionLifecycleRef.current.connection() ||
-      shellIntegrationRef.current?.stage !== "active" ||
-      !shellAtPromptRef.current ||
-      lastReportedDirectoryRef.current === directoryRequest.path ||
-      !isValidRemotePath(directoryRequest.path)
+      !shellIntegrationRef.current?.requestDirectory(directoryRequest.path)
     ) {
       return;
     }
-    shellAtPromptRef.current = false;
-    sendImmediateInputRef.current(
-      ` builtin cd -- ${quoteShellPath(directoryRequest.path)}\r`,
-    );
   }, [connectionState, directoryRequest]);
 
   useEffect(() => {
@@ -1119,6 +1059,8 @@ export const TerminalPane = memo(function TerminalPane({
       }
     });
     return () => window.cancelAnimationFrame(frame);
+    // 终端运行时刻意通过 ref 读取函数，避免可见性变化重建连接。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, connectionState, visible]);
 
   async function connectTerminal(options: ConnectTerminalOptions = {}) {

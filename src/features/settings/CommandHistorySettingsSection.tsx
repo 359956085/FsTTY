@@ -1,6 +1,6 @@
 import { Download, Trash2, Upload } from "lucide-react";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -13,24 +13,37 @@ export function CommandHistorySettingsSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-
-  async function loadSettings() {
-    setError(null);
-    try {
-      setSettings(await api.getCommandHistorySettings());
-    } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.commandHistoryLoadFailed")));
-    }
-  }
+  const lifecycleRef = useRef(0);
+  const loadPromiseRef = useRef<Promise<CommandHistorySettings> | null>(null);
+  const busyRef = useRef(false);
 
   useEffect(() => {
-    void loadSettings();
+    const lifecycle = ++lifecycleRef.current;
+    setError(null);
+    const request = loadPromiseRef.current ?? api.getCommandHistorySettings();
+    loadPromiseRef.current = request;
+    void request.then(
+      (next) => {
+        if (lifecycleRef.current === lifecycle) setSettings(next);
+      },
+      (nextError: unknown) => {
+        if (loadPromiseRef.current === request) loadPromiseRef.current = null;
+        if (lifecycleRef.current === lifecycle) {
+          setError(resolveApiError(nextError, t("settings.commandHistoryLoadFailed")));
+        }
+      },
+    );
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current += 1;
+    };
     // 设置页首次挂载时读取独立历史库，语言变化不应重复请求。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function updateDeduplication(enabled: boolean) {
-    if (!settings || busy || enabled === settings.deduplicate) return;
+    if (!settings || busyRef.current || enabled === settings.deduplicate) return;
+    const lifecycle = lifecycleRef.current;
+    busyRef.current = true;
     if (enabled && settings.duplicateCount > 0) {
       try {
         const accepted = await confirm(
@@ -42,28 +55,43 @@ export function CommandHistorySettingsSection() {
             cancelLabel: t("sessions.cancel"),
           },
         );
-        if (!accepted) return;
+        if (!accepted) {
+          busyRef.current = false;
+          return;
+        }
       } catch (nextError) {
-        setError(resolveApiError(nextError, t("settings.commandHistorySaveFailed")));
+        if (lifecycleRef.current === lifecycle) {
+          setError(resolveApiError(nextError, t("settings.commandHistorySaveFailed")));
+        }
+        busyRef.current = false;
         return;
       }
     }
-    setBusy(true);
-    setError(null);
-    setStatus(null);
     try {
+      if (lifecycleRef.current === lifecycle) {
+        setBusy(true);
+        setError(null);
+        setStatus(null);
+      }
       const next = await api.updateCommandHistoryDeduplication(enabled);
-      setSettings(next);
-      setStatus(t("settings.commandHistorySettingsSaved"));
+      if (lifecycleRef.current === lifecycle) {
+        setSettings(next);
+        setStatus(t("settings.commandHistorySettingsSaved"));
+      }
     } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.commandHistorySaveFailed")));
+      if (lifecycleRef.current === lifecycle) {
+        setError(resolveApiError(nextError, t("settings.commandHistorySaveFailed")));
+      }
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (lifecycleRef.current === lifecycle) setBusy(false);
     }
   }
 
   async function importHistory() {
-    if (busy) return;
+    if (busyRef.current) return;
+    const lifecycle = lifecycleRef.current;
+    busyRef.current = true;
     try {
       const path = await open({
         directory: false,
@@ -72,27 +100,37 @@ export function CommandHistorySettingsSection() {
         title: t("settings.commandHistoryImport"),
       });
       if (!path) return;
-      setBusy(true);
-      setError(null);
-      setStatus(null);
+      if (lifecycleRef.current === lifecycle) {
+        setBusy(true);
+        setError(null);
+        setStatus(null);
+      }
       const result = await api.importCommandHistory(path);
-      setSettings(await api.getCommandHistorySettings());
-      setStatus(
-        t("settings.commandHistoryImportSucceeded", {
-          imported: result.importedCount,
-          merged: result.mergedCount,
-          total: result.totalCount,
-        }),
-      );
+      const nextSettings = await api.getCommandHistorySettings();
+      if (lifecycleRef.current === lifecycle) {
+        setSettings(nextSettings);
+        setStatus(
+          t("settings.commandHistoryImportSucceeded", {
+            imported: result.importedCount,
+            merged: result.mergedCount,
+            total: result.totalCount,
+          }),
+        );
+      }
     } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.commandHistoryImportFailed")));
+      if (lifecycleRef.current === lifecycle) {
+        setError(resolveApiError(nextError, t("settings.commandHistoryImportFailed")));
+      }
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (lifecycleRef.current === lifecycle) setBusy(false);
     }
   }
 
   async function exportHistory() {
-    if (busy) return;
+    if (busyRef.current) return;
+    const lifecycle = lifecycleRef.current;
+    busyRef.current = true;
     try {
       const path = await save({
         defaultPath: defaultExportName(),
@@ -100,20 +138,29 @@ export function CommandHistorySettingsSection() {
         title: t("settings.commandHistoryExport"),
       });
       if (!path) return;
-      setBusy(true);
-      setError(null);
-      setStatus(null);
+      if (lifecycleRef.current === lifecycle) {
+        setBusy(true);
+        setError(null);
+        setStatus(null);
+      }
       await api.exportCommandHistory(path);
-      setStatus(t("settings.commandHistoryExportSucceeded"));
+      if (lifecycleRef.current === lifecycle) {
+        setStatus(t("settings.commandHistoryExportSucceeded"));
+      }
     } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.commandHistoryExportFailed")));
+      if (lifecycleRef.current === lifecycle) {
+        setError(resolveApiError(nextError, t("settings.commandHistoryExportFailed")));
+      }
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (lifecycleRef.current === lifecycle) setBusy(false);
     }
   }
 
   async function clearHistory() {
-    if (!settings || settings.entryCount === 0 || busy) return;
+    if (!settings || settings.entryCount === 0 || busyRef.current) return;
+    const lifecycle = lifecycleRef.current;
+    busyRef.current = true;
     try {
       const accepted = await confirm(t("settings.commandHistoryClearConfirm"), {
         title: t("settings.commandHistoryClear"),
@@ -122,15 +169,23 @@ export function CommandHistorySettingsSection() {
         cancelLabel: t("sessions.cancel"),
       });
       if (!accepted) return;
-      setBusy(true);
-      setError(null);
-      setStatus(null);
-      setSettings(await api.clearCommandHistory());
-      setStatus(t("settings.commandHistoryCleared"));
+      if (lifecycleRef.current === lifecycle) {
+        setBusy(true);
+        setError(null);
+        setStatus(null);
+      }
+      const nextSettings = await api.clearCommandHistory();
+      if (lifecycleRef.current === lifecycle) {
+        setSettings(nextSettings);
+        setStatus(t("settings.commandHistoryCleared"));
+      }
     } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.commandHistoryClearFailed")));
+      if (lifecycleRef.current === lifecycle) {
+        setError(resolveApiError(nextError, t("settings.commandHistoryClearFailed")));
+      }
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (lifecycleRef.current === lifecycle) setBusy(false);
     }
   }
 

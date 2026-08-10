@@ -275,7 +275,7 @@ export function usePaneLayout(): UsePaneLayoutResult {
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
         window.removeEventListener("pointercancel", handlePointerCancel);
-        window.removeEventListener("blur", handlePointerCancel);
+        window.removeEventListener("blur", cancelDrag);
         if (handle.hasPointerCapture(drag.pointerId)) {
           handle.releasePointerCapture(drag.pointerId);
         }
@@ -314,7 +314,7 @@ export function usePaneLayout(): UsePaneLayoutResult {
         commitLayout(nextLayout);
       };
 
-      const handlePointerCancel = () => {
+      const cancelDrag = () => {
         const currentLayout = layoutRef.current;
         applyCssValue(
           root,
@@ -326,11 +326,18 @@ export function usePaneLayout(): UsePaneLayoutResult {
         cleanup();
       };
 
+      const handlePointerCancel = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== drag.pointerId) {
+          return;
+        }
+        cancelDrag();
+      };
+
       removeDragListenersRef.current = cleanup;
       window.addEventListener("pointermove", handlePointerMove, { passive: false });
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerCancel);
-      window.addEventListener("blur", handlePointerCancel);
+      window.addEventListener("blur", cancelDrag);
     },
     [commitLayout],
   );

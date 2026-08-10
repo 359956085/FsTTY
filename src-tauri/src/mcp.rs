@@ -15,12 +15,9 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::Mutex;
+#[cfg(test)]
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 #[cfg(test)]
 use tokio::sync::RwLock;
 #[cfg(test)]
@@ -35,6 +32,7 @@ const MAX_COMMAND_BYTES: usize = 64 * 1024;
 mod access;
 mod audit;
 mod catalog;
+mod connection_cache;
 mod http;
 mod result;
 mod search;
@@ -51,6 +49,7 @@ use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
 pub(crate) use catalog::{mcp_agent_prompt, permission_catalog, McpPermissionCatalogEntry};
+use connection_cache::{CacheLookup, ConnectionCache};
 pub use http::{get_or_create_http_token, rotate_http_token, McpHttpRuntime};
 #[cfg(test)]
 use http::{http_bind_address, http_server_config, validate_http_headers, RunningMcpHttp};
@@ -93,16 +92,11 @@ pub async fn run_stdio(app_data_dir: std::path::PathBuf) -> Result<(), String> {
 #[derive(Clone)]
 pub struct McpService {
     state: AppState,
-    connections: Arc<Mutex<HashMap<String, CachedConnection>>>,
+    connections: ConnectionCache,
     transport: &'static str,
     transfer_runtime: Option<McpTransferRuntime>,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-}
-
-struct CachedConnection {
-    connection_id: String,
-    last_used: Instant,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -237,7 +231,7 @@ impl McpService {
         tool_router.remove_route("create_remote_file_upload_link");
         Self {
             state,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            connections: ConnectionCache::default(),
             transport,
             transfer_runtime: None,
             tool_router,
@@ -250,7 +244,7 @@ impl McpService {
         tool_router.remove_route("download_remote_file");
         Self {
             state,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            connections: ConnectionCache::default(),
             transport: "http",
             transfer_runtime: Some(transfer_runtime),
             tool_router,
@@ -937,17 +931,19 @@ impl McpService {
         session_id: &str,
         session: StoredSession,
     ) -> Result<String, McpError> {
-        let mut cache = self.connections.lock().await;
-        if let Some(existing) = cache.get_mut(session_id) {
-            if existing.last_used.elapsed() < CONNECTION_IDLE {
-                existing.last_used = Instant::now();
-                return Ok(existing.connection_id.clone());
+        let session_gate = self.connections.session_gate(session_id).await;
+        let _session_guard = session_gate.lock().await;
+        match self.connections.lookup(session_id, CONNECTION_IDLE).await {
+            CacheLookup::Reusable(connection_id) => return Ok(connection_id),
+            CacheLookup::Expired(connection_id) => {
+                // 先从缓存移除，再在锁外断开，避免慢网络阻塞其他会话。
+                let _ = self
+                    .state
+                    .connection_manager
+                    .disconnect(&connection_id)
+                    .await;
             }
-            let expired = existing.connection_id.clone();
-            cache.remove(session_id);
-            drop(cache);
-            let _ = self.state.connection_manager.disconnect(&expired).await;
-            cache = self.connections.lock().await;
+            CacheLookup::Missing => {}
         }
         let connection = self
             .state
@@ -955,29 +951,20 @@ impl McpService {
             .connect_headless(session, &self.state.credential_service)
             .await
             .map_err(mcp_error)?;
-        cache.insert(
-            session_id.to_owned(),
-            CachedConnection {
-                connection_id: connection.connection_id.clone(),
-                last_used: Instant::now(),
-            },
-        );
+        self.connections
+            .insert(session_id.to_owned(), connection.connection_id.clone())
+            .await;
         let cached_connections = self.connections.clone();
         let connection_manager = self.state.connection_manager.clone();
         let session_id = session_id.to_owned();
         let connection_id = connection.connection_id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(CONNECTION_IDLE).await;
-            let expired = {
-                let mut cache = cached_connections.lock().await;
-                let should_remove = cache.get(&session_id).is_some_and(|entry| {
-                    entry.connection_id == connection_id
-                        && entry.last_used.elapsed() >= CONNECTION_IDLE
-                });
-                should_remove.then(|| cache.remove(&session_id)).flatten()
-            };
-            if let Some(expired) = expired {
-                let _ = connection_manager.disconnect(&expired.connection_id).await;
+            if let Some(expired) = cached_connections
+                .take_if_idle(&session_id, &connection_id, CONNECTION_IDLE)
+                .await
+            {
+                let _ = connection_manager.disconnect(&expired).await;
             }
         });
         Ok(connection.connection_id)

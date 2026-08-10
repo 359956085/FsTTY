@@ -1,5 +1,5 @@
 import { RotateCcw } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -33,20 +33,33 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
   const [recording, setRecording] = useState<ShortcutAction | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const lifecycleRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const lifecycle = ++lifecycleRef.current;
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current += 1;
+      busyRef.current = false;
+    };
+  }, []);
 
   async function saveShortcuts(next: ShortcutSettings) {
     if (busyRef.current) return;
+    const lifecycle = lifecycleRef.current;
     busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      onChange(await api.updateShortcutSettings(next));
+      const nextSettings = await api.updateShortcutSettings(next);
+      if (lifecycleRef.current === lifecycle) onChange(nextSettings);
     } catch (nextError) {
-      setError(resolveApiError(nextError, t("settings.shortcutSaveFailed")));
+      if (lifecycleRef.current === lifecycle) {
+        setError(resolveApiError(nextError, t("settings.shortcutSaveFailed")));
+      }
     } finally {
       busyRef.current = false;
-      setBusy(false);
+      if (lifecycleRef.current === lifecycle) setBusy(false);
     }
   }
 

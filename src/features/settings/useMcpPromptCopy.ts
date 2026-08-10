@@ -26,18 +26,23 @@ export function useMcpPromptCopy(
   const [error, setError] = useState(initialErrorState);
   const inFlightRef = useRef<McpPromptState<boolean>>({ http: false, stdio: false });
   const copiedTimerRef = useRef<Partial<McpPromptState<number>>>({});
+  const lifecycleRef = useRef(0);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const lifecycle = ++lifecycleRef.current;
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current += 1;
       for (const timer of Object.values(copiedTimerRef.current)) {
         window.clearTimeout(timer);
       }
-    },
-    [],
-  );
+      copiedTimerRef.current = {};
+      inFlightRef.current = { http: false, stdio: false };
+    };
+  }, []);
 
   async function copy(transport: McpTransport, target: HTMLButtonElement) {
     if (inFlightRef.current[transport]) return;
+    const lifecycle = lifecycleRef.current;
     inFlightRef.current[transport] = true;
     setCopying((current) => ({ ...current, [transport]: true }));
     setCopied((current) => ({ ...current, [transport]: false }));
@@ -49,6 +54,7 @@ export function useMcpPromptCopy(
     }
     try {
       await writeText(await api.getMcpAgentPrompt());
+      if (lifecycleRef.current !== lifecycle) return;
       setCopied((current) => ({ ...current, [transport]: true }));
       const tooltipKey = `${transport}-agent-prompt-copy`;
       const bounds = target.getBoundingClientRect();
@@ -63,18 +69,23 @@ export function useMcpPromptCopy(
         },
       });
       copiedTimerRef.current[transport] = window.setTimeout(() => {
+        if (lifecycleRef.current !== lifecycle) return;
         setCopied((current) => ({ ...current, [transport]: false }));
         setTooltip((current) => (current?.key === tooltipKey ? null : current));
         delete copiedTimerRef.current[transport];
       }, 2_000);
     } catch (nextError) {
-      setError((current) => ({
-        ...current,
-        [transport]: resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
-      }));
+      if (lifecycleRef.current === lifecycle) {
+        setError((current) => ({
+          ...current,
+          [transport]: resolveApiError(nextError, t("settings.mcpPromptCopyFailed")),
+        }));
+      }
     } finally {
       inFlightRef.current[transport] = false;
-      setCopying((current) => ({ ...current, [transport]: false }));
+      if (lifecycleRef.current === lifecycle) {
+        setCopying((current) => ({ ...current, [transport]: false }));
+      }
     }
   }
 

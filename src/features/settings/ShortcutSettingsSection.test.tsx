@@ -118,4 +118,29 @@ describe("ShortcutSettingsSection", () => {
       expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith(DEFAULT_SHORTCUTS),
     );
   });
+
+  it("卸载后不应用保存结果", async () => {
+    let resolve!: (value: AppSettings) => void;
+    mocks.updateShortcutSettings.mockReturnValue(
+      new Promise<AppSettings>((next) => { resolve = next; }),
+    );
+    const onChange = vi.fn();
+    const { unmount } = render(
+      <ShortcutSettingsSection onChange={onChange} settings={DEFAULT_SHORTCUTS} />,
+    );
+    const history = screen.getAllByRole("button", { name: "settings.shortcutEdit" })[2];
+    fireEvent.click(history);
+    fireEvent.keyDown(history, {
+      code: "KeyJ",
+      ctrlKey: true,
+      key: "J",
+      shiftKey: true,
+    });
+
+    unmount();
+    resolve(appSettings());
+    await Promise.resolve();
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
