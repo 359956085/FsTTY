@@ -34,11 +34,6 @@ export interface TransferProgress {
   state: "running" | "completed" | "cancelled";
 }
 
-export interface TerminalDirectoryRequest {
-  id: number;
-  path: string;
-}
-
 export interface SessionRuntime {
   connectionState: ConnectionState;
   connection: SshConnection | null;
@@ -49,7 +44,6 @@ export interface SessionRuntime {
   deviceStatus: DeviceStatus | null;
   deviceHistory: DeviceMetricSample[];
   transfer: TransferProgress | null;
-  terminalDirectoryRequest: TerminalDirectoryRequest | null;
 }
 
 interface UseSessionConnectionsOptions {
@@ -60,7 +54,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const [runtimes, setRuntimes] = useState<Record<string, SessionRuntime>>({});
   const runtimesRef = useRef(runtimes);
   const runtimeControllerRef = useRef(createSessionRuntimeController());
-  const terminalDirectoryRequestId = useRef(0);
+  const pendingTerminalPathsRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     runtimesRef.current = runtimes;
@@ -192,7 +186,12 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const handleConnected = useCallback(
     (sessionId: string, connection: SshConnection) => {
-      const currentPath = connection.homePath || DEFAULT_REMOTE_PATH;
+      // 登录提示符可能先于 connectSession 返回 OSC；缓存保证首次目录上报不丢失。
+      const currentPath =
+        pendingTerminalPathsRef.current.get(sessionId) ||
+        connection.homePath ||
+        DEFAULT_REMOTE_PATH;
+      pendingTerminalPathsRef.current.delete(sessionId);
       updateRuntime(sessionId, (runtime) => ({
         ...runtime,
         connectionState: "connected",
@@ -202,7 +201,6 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         files: [],
         deviceStatus: null,
         deviceHistory: [],
-        terminalDirectoryRequest: null,
       }));
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
@@ -214,6 +212,9 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const handleTerminalState = useCallback(
     (sessionId: string, state: ConnectionState, error: string | null = null) => {
+      if (state === "connecting" || state === "disconnected" || state === "error") {
+        pendingTerminalPathsRef.current.delete(sessionId);
+      }
       if (state === "disconnected" || state === "error") {
         runtimeControllerRef.current.cancelUploadBatch(sessionId);
         runtimeControllerRef.current.cancelFileRequest(sessionId);
@@ -245,10 +246,6 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             : runtime.deviceHistory,
         transfer:
           state === "disconnected" || state === "error" ? null : runtime.transfer,
-        terminalDirectoryRequest:
-          state === "disconnected" || state === "error"
-            ? null
-            : runtime.terminalDirectoryRequest,
       }));
     },
     [stopDevicePolling, updateRuntime],
@@ -265,34 +262,20 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         return;
       }
       const connectionId = runtime.connection.connectionId;
-      void loadFiles(sessionId, connectionId, normalizedPath).then((opened) => {
-        const current = runtimesRef.current[sessionId];
-        if (!opened || current?.connection?.connectionId !== connectionId) {
-          return;
-        }
-        updateRuntime(sessionId, (latest) => ({
-          ...latest,
-          terminalDirectoryRequest: {
-            id: ++terminalDirectoryRequestId.current,
-            path: normalizedPath,
-          },
-        }));
-      });
+      void loadFiles(sessionId, connectionId, normalizedPath);
     },
-    [loadFiles, updateRuntime],
+    [loadFiles],
   );
 
   const handleTerminalDirectory = useCallback(
     (sessionId: string, path: string) => {
       const normalizedPath = normalizeRemotePath(path);
       const runtime = runtimesRef.current[sessionId];
-      if (
-        !normalizedPath ||
-        !runtime?.connection?.sftpAvailable ||
-        runtime.currentPath === normalizedPath
-      ) {
+      if (!normalizedPath) {
         return;
       }
+      pendingTerminalPathsRef.current.set(sessionId, normalizedPath);
+      if (!runtime?.connection?.sftpAvailable || runtime.currentPath === normalizedPath) return;
       void loadFiles(sessionId, runtime.connection.connectionId, normalizedPath);
     },
     [loadFiles],
@@ -414,6 +397,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const removeRuntime = useCallback((sessionId: string) => {
+    pendingTerminalPathsRef.current.delete(sessionId);
     runtimeControllerRef.current.removeSession(sessionId);
     setRuntimes((current) => {
       const next = { ...current };
@@ -428,6 +412,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       ([sessionId]) => !validSessionIds.has(sessionId),
     );
     for (const [sessionId, runtime] of invalid) {
+      pendingTerminalPathsRef.current.delete(sessionId);
       if (runtime.connection) {
         void api.disconnectSession(runtime.connection.connectionId);
       }
@@ -745,7 +730,6 @@ export function createRuntime(): SessionRuntime {
     deviceStatus: null,
     deviceHistory: [],
     transfer: null,
-    terminalDirectoryRequest: null,
   };
 }
 

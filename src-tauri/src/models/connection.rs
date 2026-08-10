@@ -7,6 +7,15 @@ pub struct SshConnection {
     pub session_id: String,
     pub home_path: String,
     pub sftp_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_name: Option<ShellName>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellName {
+    Bash,
+    Zsh,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -131,5 +140,18 @@ mod tests {
         assert_eq!(value["kind"], "credentialRequired");
         assert_eq!(value["credentialKind"], "privateKeyPassphrase");
         assert!(value.get("credential_kind").is_none());
+    }
+
+    #[test]
+    fn serializes_detected_shell_name() {
+        let value = serde_json::to_value(SshConnection {
+            connection_id: "connection".to_owned(),
+            session_id: "session".to_owned(),
+            home_path: "/home/user".to_owned(),
+            sftp_available: true,
+            shell_name: Some(ShellName::Bash),
+        })
+        .expect("SSH 连接应能序列化");
+        assert_eq!(value["shellName"], "bash");
     }
 }

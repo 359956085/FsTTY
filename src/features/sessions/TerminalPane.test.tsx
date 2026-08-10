@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 
 import { StrictMode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, ShortcutSettings } from "../../shared/api/types";
 import { TerminalPane } from "./TerminalPane";
 
 const apiMocks = vi.hoisted(() => ({
   connectSession: vi.fn(),
   disconnectSession: vi.fn(),
+  writeTerminal: vi.fn(),
 }));
 
 const runtimeMocks = vi.hoisted(() => ({
@@ -16,6 +17,13 @@ const runtimeMocks = vi.hoisted(() => ({
   getTheme: vi.fn((theme: string) => ({ name: theme })),
   install: vi.fn(),
   options: { theme: undefined as unknown },
+  oscHandlers: new Map<number, (data: string) => boolean>(),
+  registerOscHandler: vi.fn(
+    (identifier: number, handler: (data: string) => boolean) => {
+      runtimeMocks.oscHandlers.set(identifier, handler);
+      return { dispose: vi.fn() };
+    },
+  ),
   reset: vi.fn(),
 }));
 
@@ -62,11 +70,15 @@ const shortcuts: ShortcutSettings = {
 };
 
 describe("终端面板连接", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeMocks.options.theme = undefined;
     apiMocks.connectSession.mockReturnValue(new Promise(() => undefined));
     apiMocks.disconnectSession.mockResolvedValue(undefined);
+    apiMocks.writeTerminal.mockResolvedValue(undefined);
+    runtimeMocks.oscHandlers.clear();
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -90,7 +102,7 @@ describe("终端面板连接", () => {
       modes: { mouseTrackingMode: "none" },
       onData: vi.fn(),
       options: runtimeMocks.options,
-      parser: { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) },
+      parser: { registerOscHandler: runtimeMocks.registerOscHandler },
       reset: runtimeMocks.reset,
       rows: 24,
       textarea: null,
@@ -120,7 +132,6 @@ describe("终端面板连接", () => {
           allowRemoteClipboardWrite={false}
           autoConnect={false}
           connectionState="disconnected"
-          directoryRequest={null}
           onConnected={vi.fn()}
           onCredentialSaved={vi.fn()}
           onDirectoryChange={vi.fn()}
@@ -149,7 +160,6 @@ describe("终端面板连接", () => {
       allowRemoteClipboardWrite: false,
       autoConnect: false,
       connectionState: "disconnected" as const,
-      directoryRequest: null,
       onConnected: vi.fn(),
       onCredentialSaved: vi.fn(),
       onDirectoryChange: vi.fn(),
@@ -166,5 +176,92 @@ describe("终端面板连接", () => {
     rerender(<TerminalPane {...commonProps} theme="light" />);
     await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light" }));
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
+  });
+
+  it("注册标准和私有协议，Bash 无原生能力时注入一次", async () => {
+    const onConnected = vi.fn();
+    apiMocks.connectSession.mockResolvedValue({
+      kind: "connected",
+      connection: {
+        connectionId: "connection-1",
+        homePath: "/home/root",
+        shellName: "bash",
+        sessionId: "session-1",
+        sftpAvailable: true,
+      },
+    });
+    render(
+      <TerminalPane
+        active
+        allowRemoteClipboardWrite={false}
+        autoConnect={false}
+        connectionState="disconnected"
+        onConnected={onConnected}
+        onCredentialSaved={vi.fn()}
+        onDirectoryChange={vi.fn()}
+        onStateChange={vi.fn()}
+        runtimeId="runtime-passive"
+        session={session}
+        shortcuts={shortcuts}
+        theme="dark"
+        visible
+      />,
+    );
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    expect(runtimeMocks.registerOscHandler.mock.calls.map(([identifier]) => identifier)).toEqual([
+      7,
+      133,
+      633,
+      777,
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "sessions.connect" }));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledOnce());
+    await waitFor(() => expect(apiMocks.writeTerminal).toHaveBeenCalledOnce());
+    expect(apiMocks.writeTerminal.mock.calls[0]?.[0]).toBe("connection-1");
+    expect(apiMocks.writeTerminal.mock.calls[0]?.[1]).toContain("fstty-ready");
+  });
+
+  it("连接完成前收到原生 OSC 633 能力时不注入", async () => {
+    let resolveConnect!: (value: unknown) => void;
+    const onConnected = vi.fn();
+    apiMocks.connectSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConnect = resolve;
+      }),
+    );
+    render(
+      <TerminalPane
+        active
+        allowRemoteClipboardWrite={false}
+        autoConnect={false}
+        connectionState="disconnected"
+        onConnected={onConnected}
+        onCredentialSaved={vi.fn()}
+        onDirectoryChange={vi.fn()}
+        onStateChange={vi.fn()}
+        runtimeId="runtime-native"
+        session={session}
+        shortcuts={shortcuts}
+        theme="dark"
+        visible
+      />,
+    );
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "sessions.connect" }));
+    await waitFor(() => expect(apiMocks.connectSession).toHaveBeenCalledOnce());
+    runtimeMocks.oscHandlers.get(633)?.("P;HasRichCommandDetection=True");
+    resolveConnect({
+      kind: "connected",
+      connection: {
+        connectionId: "connection-native",
+        homePath: "/home/root",
+        sessionId: "session-1",
+        shellName: "bash",
+        sftpAvailable: true,
+      },
+    });
+    await waitFor(() => expect(onConnected).toHaveBeenCalledOnce());
+    expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
   });
 });

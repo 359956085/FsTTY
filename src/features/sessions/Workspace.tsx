@@ -214,7 +214,6 @@ export function Workspace({
                     allowRemoteClipboardWrite={allowRemoteClipboardWrite}
                     autoConnect={tab.autoConnect}
                     connectionState={runtime?.connectionState ?? "disconnected"}
-                    directoryRequest={runtime?.terminalDirectoryRequest ?? null}
                     onConnected={onConnected}
                     onCredentialSaved={onCredentialSaved}
                     onDirectoryChange={onDirectoryChange}

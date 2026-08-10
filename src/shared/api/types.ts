@@ -242,6 +242,7 @@ export interface SshConnection {
   sessionId: string;
   homePath: string;
   sftpAvailable: boolean;
+  shellName?: "bash" | "zsh" | null;
 }
 
 export interface HostKeyChallenge {

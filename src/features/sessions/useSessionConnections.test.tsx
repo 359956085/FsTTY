@@ -80,6 +80,20 @@ beforeEach(() => {
 });
 
 describe("会话运行时异步生命周期", () => {
+  it("连接完成前收到的首个终端目录会覆盖初始目录", async () => {
+    mocks.listRemoteFiles.mockResolvedValue([]);
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+
+    act(() => result.current.handleTerminalState("session-1", "connecting"));
+    act(() => result.current.handleTerminalDirectory("session-1", "/srv/first"));
+    act(() => result.current.handleConnected("session-1", connection));
+
+    expect(result.current.runtimes["session-1"]?.currentPath).toBe("/srv/first");
+    expect(mocks.listRemoteFiles).toHaveBeenCalledWith("connection-1", "/srv/first");
+  });
+
   it("丢弃晚到的旧目录响应", async () => {
     const homeRequest = deferred<FileEntry[]>();
     const nextRequest = deferred<FileEntry[]>();

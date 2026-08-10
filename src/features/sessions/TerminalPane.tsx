@@ -26,7 +26,6 @@ import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
 import { hasControlCharacter } from "../../shared/validation/text";
-import type { TerminalDirectoryRequest } from "./useSessionConnections";
 import { retryInterruptedAuthentication } from "./authenticationRetry";
 import { createImeCompositionFallback } from "./imeCompositionFallback";
 import {
@@ -64,7 +63,7 @@ import { createCommandHistoryInsertion } from "./terminalCommandHistory";
 import { decodeBase64 } from "./terminalProtocol";
 import {
   createTerminalShellIntegration,
-  SHELL_OSC_IDENTIFIER,
+  SHELL_OSC_IDENTIFIERS,
 } from "./terminalShellIntegration";
 import { useTerminalAuthDialogs } from "./useTerminalAuthDialogs";
 
@@ -98,7 +97,6 @@ interface TerminalPaneProps {
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
   connectionState: ConnectionState;
-  directoryRequest: TerminalDirectoryRequest | null;
   onConnected: (sessionId: string, connection: SshConnection) => void;
   onCredentialSaved: () => Promise<void> | void;
   onDirectoryChange: (sessionId: string, path: string) => void;
@@ -114,7 +112,6 @@ export const TerminalPane = memo(function TerminalPane({
   allowRemoteClipboardWrite,
   autoConnect,
   connectionState,
-  directoryRequest,
   onConnected,
   onCredentialSaved,
   onDirectoryChange,
@@ -146,7 +143,6 @@ export const TerminalPane = memo(function TerminalPane({
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
-  const consumedDirectoryRequestRef = useRef(0);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
   const onCredentialSavedRef = useRef(onCredentialSaved);
   const shellIntegrationRef = useRef<ReturnType<
@@ -156,7 +152,9 @@ export const TerminalPane = memo(function TerminalPane({
   const connectTerminalRef = useRef<(options?: ConnectTerminalOptions) => Promise<void>>(
     async () => undefined,
   );
-  const handleShellOscRef = useRef<(data: string) => boolean>(() => true);
+  const handleShellOscRef = useRef<
+    (identifier: 7 | 133 | 633 | 777, data: string) => boolean
+  >(() => true);
   const reportStateRef = useRef<
     (state: ConnectionState, error?: string | null) => void
   >(() => undefined);
@@ -375,12 +373,8 @@ export const TerminalPane = memo(function TerminalPane({
     shellIntegrationRef.current?.reset();
   }
 
-  function startShellIntegration() {
-    shellIntegrationRef.current?.start();
-  }
-
-  function handleShellOsc(data: string) {
-    return shellIntegrationRef.current?.handleOsc(data) ?? true;
+  function handleShellOsc(identifier: 7 | 133 | 633 | 777, data: string) {
+    return shellIntegrationRef.current?.handleOsc(identifier, data) ?? true;
   }
 
   function flushInput() {
@@ -536,7 +530,7 @@ export const TerminalPane = memo(function TerminalPane({
     inputControllerRef.current = inputController;
     sendInputRef.current = inputController.enqueue;
     let observer: ResizeObserver | null = null;
-    let oscHandler: { dispose(): void } | null = null;
+    let oscHandlers: { dispose(): void }[] = [];
     let runtimeInstance: InstalledTerminalRuntime | null = null;
     let disposeImeListeners: (() => void) | null = null;
     let remoteMouseListenersAttached = false;
@@ -933,16 +927,15 @@ export const TerminalPane = memo(function TerminalPane({
         }
         return true;
       });
-      oscHandler = terminal.parser.registerOscHandler(
-        SHELL_OSC_IDENTIFIER,
-        (data) => handleShellOscRef.current(data),
+      oscHandlers = SHELL_OSC_IDENTIFIERS.map((identifier) =>
+        terminal.parser.registerOscHandler(identifier, (data) =>
+          handleShellOscRef.current(identifier, data),
+        ),
       );
       terminal.onData((data) => {
         if (handleTerminalLoginDataRef.current(data)) {
           return;
         }
-        // 收到目录信号后，只要用户开始输入就不再视为干净提示符，避免自动 cd 污染命令行。
-        shellIntegrationRef.current?.markInput();
         sendInputRef.current(data);
       });
       terminalRef.current = terminal;
@@ -989,7 +982,8 @@ export const TerminalPane = memo(function TerminalPane({
       disposed = true;
       resizeObserverActivityRef.current?.stop();
       resizeObserverActivityRef.current = null;
-      oscHandler?.dispose();
+      oscHandlers.forEach((handler) => handler.dispose());
+      oscHandlers = [];
       inputController.dispose();
       if (inputControllerRef.current === inputController) {
         inputControllerRef.current = null;
@@ -1018,20 +1012,6 @@ export const TerminalPane = memo(function TerminalPane({
       runtimeInstance?.dispose();
     };
   }, []);
-
-  useEffect(() => {
-    if (!directoryRequest || directoryRequest.id === consumedDirectoryRequestRef.current) {
-      return;
-    }
-    consumedDirectoryRequestRef.current = directoryRequest.id;
-    if (
-      connectionState !== "connected" ||
-      !connectionLifecycleRef.current.connection() ||
-      !shellIntegrationRef.current?.requestDirectory(directoryRequest.path)
-    ) {
-      return;
-    }
-  }, [connectionState, directoryRequest]);
 
   useEffect(() => {
     const resizeObserverActivity = resizeObserverActivityRef.current;
@@ -1215,6 +1195,7 @@ export const TerminalPane = memo(function TerminalPane({
       setDialogError(null);
       flushInput();
       onConnected(runtimeId, result.connection);
+      shellIntegrationRef.current?.activate(result.connection.shellName);
       const temporaryLogin = temporaryLoginRef.current;
       if (
         temporaryLogin &&
@@ -1232,7 +1213,6 @@ export const TerminalPane = memo(function TerminalPane({
       } else {
         clearTemporaryLogin();
       }
-      startShellIntegration();
       fitAndResize();
     } catch (error) {
       if (!mountedRef.current || !connectionLifecycleRef.current.isCurrent(attemptId)) {

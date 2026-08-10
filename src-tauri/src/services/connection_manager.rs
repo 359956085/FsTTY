@@ -9,7 +9,7 @@ use super::connection_paths::{
 use crate::models::PrivateKeySource;
 use crate::models::{
     AppError, ConnectResult, CredentialKind, FileEntry, HostKeyChallenge, HostKeyChange,
-    SessionAuth, SshConnection, StoredSession, TerminalEvent, TransferEvent,
+    SessionAuth, ShellName, SshConnection, StoredSession, TerminalEvent, TransferEvent,
 };
 use crate::services::CredentialService;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -460,12 +460,15 @@ impl ConnectionManager {
             manager.finish_connection(&worker_connection_id).await;
         });
 
+        let shell_name = self.detect_login_shell(&connection_id).await;
+
         Ok(ConnectResult::Connected {
             connection: SshConnection {
                 connection_id,
                 session_id: session.id,
                 home_path,
                 sftp_available: browser_sftp.is_some(),
+                shell_name,
             },
         })
     }
@@ -557,6 +560,7 @@ impl ConnectionManager {
             session_id: session.id,
             home_path,
             sftp_available: browser_sftp.is_some(),
+            shell_name: None,
         })
     }
 
@@ -1620,6 +1624,25 @@ mod tests {
     use super::*;
     use crate::services::DeviceService;
     use zeroize::Zeroizing;
+
+    #[test]
+    fn parses_supported_login_shells() {
+        assert_eq!(
+            terminal_io::parse_shell_name(b"/bin/bash\n"),
+            Some(ShellName::Bash)
+        );
+        assert_eq!(
+            terminal_io::parse_shell_name(br"C:\tools\ZSH"),
+            Some(ShellName::Zsh)
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_or_invalid_login_shells() {
+        assert_eq!(terminal_io::parse_shell_name(b"/usr/bin/fish"), None);
+        assert_eq!(terminal_io::parse_shell_name(b""), None);
+        assert_eq!(terminal_io::parse_shell_name(&[0xff]), None);
+    }
 
     fn temporary_username_session(auth: SessionAuth) -> StoredSession {
         StoredSession {

@@ -14,8 +14,8 @@ pub use command_history::{
     CommandHistoryEntry, CommandHistoryImportResult, CommandHistoryPage, CommandHistorySettings,
 };
 pub use connection::{
-    ConnectResult, CredentialKind, HostKeyChallenge, HostKeyChange, SshConnection, TerminalEvent,
-    TransferEvent,
+    ConnectResult, CredentialKind, HostKeyChallenge, HostKeyChange, ShellName, SshConnection,
+    TerminalEvent, TransferEvent,
 };
 pub use device::DeviceStatus;
 pub use file::{FileEntry, FileKind};

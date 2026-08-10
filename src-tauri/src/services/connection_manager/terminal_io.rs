@@ -118,6 +118,18 @@ impl ConnectionManager {
             .map_err(|_| AppError::Connection("设备信息命令超时".to_owned()))?
     }
 
+    pub(super) async fn detect_login_shell(&self, connection_id: &str) -> Option<ShellName> {
+        // 独立 exec 通道不会进入交互 Shell 历史；失败只关闭受控集成，不影响 SSH 连接。
+        let output = time::timeout(
+            Duration::from_secs(2),
+            self.exec(connection_id, "printf '%s' \"${SHELL:-}\""),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        parse_shell_name(&output)
+    }
+
     pub async fn exec_command(
         &self,
         connection_id: &str,
@@ -170,6 +182,15 @@ impl ConnectionManager {
         time::timeout(timeout, collect)
             .await
             .map_err(|_| AppError::Connection("远程命令执行超时".to_owned()))?
+    }
+}
+
+pub(super) fn parse_shell_name(output: &[u8]) -> Option<ShellName> {
+    let value = std::str::from_utf8(output).ok()?.trim().replace('\\', "/");
+    match value.rsplit('/').next()?.to_ascii_lowercase().as_str() {
+        "bash" => Some(ShellName::Bash),
+        "zsh" => Some(ShellName::Zsh),
+        _ => None,
     }
 }
 
