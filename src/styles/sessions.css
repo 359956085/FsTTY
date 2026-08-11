@@ -647,6 +647,8 @@
   --file-column-size: 72px;
   --file-column-modified: 132px;
   --file-column-permissions: 96px;
+  --file-column-gap: 0px;
+  --file-column-content-inset: 6px;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -660,7 +662,7 @@
     var(--file-column-size)
     var(--file-column-modified)
     minmax(var(--file-column-permissions), 1fr);
-  column-gap: 6px;
+  column-gap: var(--file-column-gap);
   align-items: center;
   width: max(
     100%,
@@ -678,6 +680,10 @@
   text-align: left;
 }
 
+.file-row > :not(:first-child) {
+  padding-left: var(--file-column-content-inset);
+}
+
 .file-head {
   position: sticky;
   top: 0;
@@ -690,6 +696,9 @@
 
 .file-head > .file-head-cell {
   position: relative;
+  display: flex;
+  align-self: stretch;
+  align-items: center;
   min-width: 0;
   overflow: visible;
 }
@@ -703,14 +712,21 @@
 
 .file-column-resizer.resize-handle-vertical {
   position: absolute;
-  top: -6px;
-  right: -10px;
-  bottom: -6px;
+  top: 0;
+  right: -4px;
+  bottom: 0;
   width: 8px;
 }
 
 .file-column-resizer.resize-handle-vertical::after {
-  left: 3px;
+  left: 4px;
+  width: 1px;
+  background: var(--border);
+}
+
+.file-column-resizer.resize-handle-vertical:hover::after,
+.file-column-resizer.resize-handle-vertical:focus-visible::after {
+  background: var(--resize-highlight);
 }
 
 .file-row:not(.file-head):hover {

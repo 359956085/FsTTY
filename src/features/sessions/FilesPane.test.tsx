@@ -72,6 +72,19 @@ function renderFilesPane(files: FileEntry[] = [], options: RenderFilesPaneOption
   return render(options.strict ? <StrictMode>{pane}</StrictMode> : pane);
 }
 
+describe("FilesPane 文件表头", () => {
+  it("为前三列提供可访问的列宽分隔手柄", () => {
+    renderFilesPane();
+
+    const separators = screen.getAllByRole("separator");
+    expect(separators).toHaveLength(3);
+    for (const separator of separators) {
+      expect(separator.getAttribute("aria-orientation")).toBe("vertical");
+      expect(separator.classList.contains("file-column-resizer")).toBe(true);
+    }
+  });
+});
+
 describe("FilesPane 右键菜单", () => {
   it("空白区域复制当前文件夹路径", async () => {
     const rendered = renderFilesPane();

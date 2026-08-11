@@ -77,4 +77,33 @@ describe("主题样式契约", () => {
     expect(sessionsCss).toContain(".session-tabs::-webkit-scrollbar");
     expect(sessionsCss).toContain("display: none;");
   });
+
+  it("文件表头分隔线常驻并与列间距居中对齐", () => {
+    expectRuleUses(sessionsCss, ".file-table", "--file-column-gap: 0px");
+    expectRuleUses(sessionsCss, ".file-row", "column-gap: var\\(--file-column-gap\\)");
+    expectRuleUses(
+      sessionsCss,
+      ".file-column-resizer.resize-handle-vertical",
+      "right: -4px",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".file-column-resizer.resize-handle-vertical::after",
+      "width: 1px",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".file-column-resizer.resize-handle-vertical::after",
+      "background: var\\(--border\\)",
+    );
+  });
+
+  it("文件表头与数据列共享左侧内容留白", () => {
+    expectRuleUses(sessionsCss, ".file-table", "--file-column-content-inset: 6px");
+    expectRuleUses(
+      sessionsCss,
+      ".file-row > :not(:first-child)",
+      "padding-left: var\\(--file-column-content-inset\\)",
+    );
+  });
 });
