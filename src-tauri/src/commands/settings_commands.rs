@@ -265,11 +265,18 @@ fn hydrate_mcp_permissions(
     state: &AppState,
     mut settings: AppSettings,
 ) -> Result<AppSettings, AppError> {
-    settings.mcp_group_permissions = state
+    let permissions = state
         .mcp_command_policy_service
         .lock()
         .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
-        .list_permissions()?;
+        .list_permissions();
+    match permissions {
+        Ok(permissions) => settings.mcp_group_permissions = permissions,
+        Err(error) => {
+            // MCP 数据故障不能阻断通用设置和应用更新；所有 MCP 授权入口仍直接读取数据库并失败关闭。
+            log::warn!("读取 MCP 权限失败，通用设置继续使用内存快照：{error}");
+        }
+    }
     Ok(settings)
 }
 
@@ -514,6 +521,55 @@ pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), App
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use uuid::Uuid;
+
+    fn future_policy_database_state() -> (std::path::PathBuf, AppState) {
+        let directory =
+            std::env::temp_dir().join(format!("fstty-settings-future-policy-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("应创建测试目录");
+        let connection =
+            Connection::open(directory.join("mcp-command-policy.v1.db")).expect("应创建策略数据库");
+        connection
+            .pragma_update(None, "user_version", 3)
+            .expect("应写入未来版本");
+        drop(connection);
+        let state = AppState::new(directory.clone());
+        (directory, state)
+    }
+
+    #[test]
+    fn mcp数据库过新时通用设置仍可读取和保存() {
+        let (directory, state) = future_policy_database_state();
+        let settings = state.settings_service.lock().expect("应锁定设置服务").get();
+
+        let loaded = hydrate_mcp_permissions(&state, settings).expect("通用设置读取不应失败");
+        assert!(loaded.auto_update);
+
+        let updated = state
+            .settings_service
+            .lock()
+            .expect("应锁定设置服务")
+            .update(
+                false,
+                "http://127.0.0.1:7890".to_owned(),
+                true,
+                UpdateSourcePreference::Auto,
+            )
+            .expect("更新设置应保存");
+        let updated = hydrate_mcp_permissions(&state, updated).expect("更新设置返回不应失败");
+        assert!(!updated.auto_update);
+        assert_eq!(updated.update_proxy, "http://127.0.0.1:7890");
+
+        assert!(state
+            .mcp_command_policy_service
+            .lock()
+            .expect("应锁定 MCP 策略服务")
+            .list_permissions()
+            .is_err());
+        drop(state);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn 项目链接使用固定地址() {
