@@ -47,11 +47,58 @@ pub(super) fn file_entry_from_remote(entry: russh_sftp::client::fs::DirEntry) ->
     })
 }
 
-pub(super) fn file_kind_rank(kind: FileKind) -> u8 {
+fn file_kind_rank(kind: FileKind) -> u8 {
     match kind {
         FileKind::Folder => 0,
         FileKind::File => 1,
         FileKind::Symlink => 2,
         FileKind::Other => 3,
+    }
+}
+
+pub(super) fn sort_file_entries(files: &mut Vec<FileEntry>) {
+    let mut keyed = files
+        .drain(..)
+        .map(|entry| (file_kind_rank(entry.kind), entry.name.to_lowercase(), entry))
+        .collect::<Vec<_>>();
+    keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    files.extend(keyed.into_iter().map(|(_, _, entry)| entry));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, kind: FileKind) -> FileEntry {
+        FileEntry {
+            name: name.to_owned(),
+            path: format!("/{name}"),
+            kind,
+            size: None,
+            modified_at: None,
+            owner: "root".to_owned(),
+            group: "root".to_owned(),
+            permissions: "--------- (000)".to_owned(),
+        }
+    }
+
+    #[test]
+    fn sorts_directories_first_and_names_case_insensitively() {
+        let mut files = vec![
+            entry("beta", FileKind::File),
+            entry("Zoo", FileKind::Folder),
+            entry("alpha", FileKind::File),
+            entry("apple", FileKind::Folder),
+        ];
+
+        sort_file_entries(&mut files);
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["apple", "Zoo", "alpha", "beta"]
+        );
     }
 }

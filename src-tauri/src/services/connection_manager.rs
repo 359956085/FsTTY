@@ -24,6 +24,7 @@ use russh_sftp::client::{error::Error as SftpError, SftpSession};
 use russh_sftp::protocol::{OpenFlags, StatusCode};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -52,7 +53,7 @@ use authentication::{
     authentication_rejected, is_authentication_interruption, map_authentication_exchange_error,
 };
 pub(crate) use remote_files::RemoteFileWindow;
-use remote_files::{file_entry_from_remote, file_kind_rank};
+use remote_files::{file_entry_from_remote, sort_file_entries};
 use terminal_io::{run_terminal, validate_terminal_size, wait_for_channel_success};
 use transfer::{
     finalize_local_file, finalize_remote_file, send_progress, validate_download_target,
@@ -144,6 +145,17 @@ fn map_sftp_read_error(
         return AppError::Sftp(format!("无法读取{target}：当前账号“{username}”权限不足"));
     }
     AppError::Sftp(fallback.to_owned())
+}
+
+async fn join_directory_reads<MetadataFuture, DirectoryFuture>(
+    metadata: MetadataFuture,
+    directory: DirectoryFuture,
+) -> (MetadataFuture::Output, DirectoryFuture::Output)
+where
+    MetadataFuture: Future,
+    DirectoryFuture: Future,
+{
+    tokio::join!(metadata, directory)
 }
 
 struct PendingHostKey {
@@ -686,7 +698,10 @@ impl ConnectionManager {
             .browser_sftp
             .clone()
             .ok_or_else(|| AppError::Sftp("服务器不支持 SFTP".to_owned()))?;
-        let metadata = sftp.symlink_metadata(path.clone()).await.map_err(|error| {
+        // 跨境连接的单次往返成本较高；两项互不依赖，应并发请求。
+        let (metadata, directory) =
+            join_directory_reads(sftp.symlink_metadata(path.clone()), sftp.read_dir(path)).await;
+        let metadata = metadata.map_err(|error| {
             map_sftp_read_error(
                 error,
                 RemoteReadKind::Directory,
@@ -700,7 +715,7 @@ impl ConnectionManager {
         if !metadata.file_type().is_dir() {
             return Err(AppError::Validation("远程路径不是目录".to_owned()));
         }
-        let directory = sftp.read_dir(path).await.map_err(|error| {
+        let directory = directory.map_err(|error| {
             map_sftp_read_error(
                 error,
                 RemoteReadKind::Directory,
@@ -711,11 +726,7 @@ impl ConnectionManager {
         let mut files = directory
             .filter_map(file_entry_from_remote)
             .collect::<Vec<_>>();
-        files.sort_by(|left, right| {
-            file_kind_rank(left.kind)
-                .cmp(&file_kind_rank(right.kind))
-                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-        });
+        sort_file_entries(&mut files);
         Ok(files)
     }
 
@@ -1715,6 +1726,7 @@ mod tests {
     use super::*;
     use crate::services::DeviceService;
     use russh_sftp::protocol::Status;
+    use std::sync::atomic::AtomicBool;
     use zeroize::Zeroizing;
 
     fn sftp_status_error(status_code: StatusCode) -> SftpError {
@@ -1765,6 +1777,38 @@ mod tests {
             "无法读取远程目录",
         );
         assert_eq!(disconnected.to_string(), "无法读取远程目录");
+    }
+
+    #[tokio::test]
+    async fn directory_metadata_and_listing_start_concurrently() {
+        let metadata_started = Arc::new(AtomicBool::new(false));
+        let directory_started = Arc::new(AtomicBool::new(false));
+        let metadata_peer = directory_started.clone();
+        let directory_peer = metadata_started.clone();
+
+        let reads = join_directory_reads(
+            async {
+                metadata_started.store(true, Ordering::Release);
+                while !metadata_peer.load(Ordering::Acquire) {
+                    tokio::task::yield_now().await;
+                }
+                "metadata"
+            },
+            async {
+                directory_started.store(true, Ordering::Release);
+                while !directory_peer.load(Ordering::Acquire) {
+                    tokio::task::yield_now().await;
+                }
+                "directory"
+            },
+        );
+
+        assert_eq!(
+            time::timeout(Duration::from_secs(1), reads)
+                .await
+                .expect("目录读取任务应并发完成"),
+            ("metadata", "directory")
+        );
     }
 
     #[test]
