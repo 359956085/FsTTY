@@ -20,8 +20,8 @@ use russh::keys::{known_hosts::learn_known_hosts_path, ssh_key::PublicKey};
 #[cfg(test)]
 use russh::MethodKind;
 use russh::{ChannelMsg, Disconnect};
-use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::OpenFlags;
+use russh_sftp::client::{error::Error as SftpError, SftpSession};
+use russh_sftp::protocol::{OpenFlags, StatusCode};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::SeekFrom;
@@ -115,9 +115,35 @@ struct ConnectionManagerInner {
 
 struct ConnectionEntry {
     session_id: String,
+    username: String,
     handle: Arc<Mutex<client::Handle<SshClient>>>,
     terminal_tx: Option<mpsc::Sender<TerminalControl>>,
     browser_sftp: Option<Arc<SftpSession>>,
+}
+
+#[derive(Clone, Copy)]
+enum RemoteReadKind {
+    Directory,
+    File,
+}
+
+fn map_sftp_read_error(
+    error: SftpError,
+    kind: RemoteReadKind,
+    username: &str,
+    fallback: &str,
+) -> AppError {
+    if matches!(
+        error,
+        SftpError::Status(ref status) if status.status_code == StatusCode::PermissionDenied
+    ) {
+        let target = match kind {
+            RemoteReadKind::Directory => "目录",
+            RemoteReadKind::File => "文件",
+        };
+        return AppError::Sftp(format!("无法读取{target}：当前账号“{username}”权限不足"));
+    }
+    AppError::Sftp(fallback.to_owned())
 }
 
 struct PendingHostKey {
@@ -415,6 +441,7 @@ impl ConnectionManager {
         let handle = Arc::new(Mutex::new(handle));
         let entry = Arc::new(ConnectionEntry {
             session_id: session.id.clone(),
+            username: session.username.clone(),
             handle,
             terminal_tx: Some(terminal_tx),
             browser_sftp: browser_sftp.clone(),
@@ -539,6 +566,7 @@ impl ConnectionManager {
         let connection_id = Uuid::new_v4().to_string();
         let entry = Arc::new(ConnectionEntry {
             session_id: session.id.clone(),
+            username: session.username.clone(),
             handle: Arc::new(Mutex::new(handle)),
             terminal_tx: None,
             browser_sftp: browser_sftp.clone(),
@@ -658,20 +686,28 @@ impl ConnectionManager {
             .browser_sftp
             .clone()
             .ok_or_else(|| AppError::Sftp("服务器不支持 SFTP".to_owned()))?;
-        let metadata = sftp
-            .symlink_metadata(path.clone())
-            .await
-            .map_err(|_| AppError::Sftp("无法读取远程目录信息".to_owned()))?;
+        let metadata = sftp.symlink_metadata(path.clone()).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::Directory,
+                &entry.username,
+                "无法读取远程目录信息",
+            )
+        })?;
         if metadata.file_type().is_symlink() {
             return Err(AppError::Validation("不允许进入符号链接目录".to_owned()));
         }
         if !metadata.file_type().is_dir() {
             return Err(AppError::Validation("远程路径不是目录".to_owned()));
         }
-        let directory = sftp
-            .read_dir(path)
-            .await
-            .map_err(|_| AppError::Sftp("无法读取远程目录".to_owned()))?;
+        let directory = sftp.read_dir(path).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::Directory,
+                &entry.username,
+                "无法读取远程目录",
+            )
+        })?;
         let mut files = directory
             .filter_map(file_entry_from_remote)
             .collect::<Vec<_>>();
@@ -836,10 +872,14 @@ impl ConnectionManager {
         }
         let entry = self.entry(connection_id).await?;
         let sftp = open_sftp(&entry).await?;
-        let mut file = sftp
-            .open(path)
-            .await
-            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        let mut file = sftp.open(path).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::File,
+                &entry.username,
+                "无法打开远程文件",
+            )
+        })?;
         file.seek(std::io::SeekFrom::Start(offset))
             .await
             .map_err(|_| AppError::Sftp("无法定位远程文件".to_owned()))?;
@@ -873,10 +913,14 @@ impl ConnectionManager {
         }
         let entry = self.entry(connection_id).await?;
         let sftp = open_sftp(&entry).await?;
-        let metadata = sftp
-            .metadata(path.clone())
-            .await
-            .map_err(|_| AppError::Sftp("无法读取远程文件信息".to_owned()))?;
+        let metadata = sftp.metadata(path.clone()).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::File,
+                &entry.username,
+                "无法读取远程文件信息",
+            )
+        })?;
         if !metadata.file_type().is_file() {
             return Err(AppError::Validation("远程目标不是普通文件".to_owned()));
         }
@@ -892,10 +936,14 @@ impl ConnectionManager {
         let seek_offset = start.saturating_sub(prefix_length as u64);
         let read_length = content_length.saturating_add(prefix_length);
 
-        let mut file = sftp
-            .open(path)
-            .await
-            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        let mut file = sftp.open(path).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::File,
+                &entry.username,
+                "无法打开远程文件",
+            )
+        })?;
         file.seek(SeekFrom::Start(seek_offset))
             .await
             .map_err(|_| AppError::Sftp("无法定位远程文件".to_owned()))?;
@@ -994,10 +1042,14 @@ impl ConnectionManager {
         }
         let entry = self.entry(connection_id).await?;
         let sftp = open_sftp(&entry).await?;
-        let mut source = sftp
-            .open(remote_path)
-            .await
-            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        let mut source = sftp.open(remote_path).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::File,
+                &entry.username,
+                "无法打开远程文件",
+            )
+        })?;
         let mut target = LocalFile::create(local_path)
             .await
             .map_err(|_| AppError::Validation("无法创建本地文件".to_owned()))?;
@@ -1017,7 +1069,14 @@ impl ConnectionManager {
         let metadata = time::timeout(SFTP_TIMEOUT, sftp.symlink_metadata(remote_path.clone()))
             .await
             .map_err(|_| AppError::Sftp("读取远程文件信息超时".to_owned()))?
-            .map_err(|_| AppError::Sftp("无法读取远程文件信息".to_owned()))?;
+            .map_err(|error| {
+                map_sftp_read_error(
+                    error,
+                    RemoteReadKind::File,
+                    &entry.username,
+                    "无法读取远程文件信息",
+                )
+            })?;
         if !metadata.file_type().is_file() {
             return Err(AppError::Validation("只能下载普通文件".to_owned()));
         }
@@ -1035,7 +1094,14 @@ impl ConnectionManager {
         let metadata = time::timeout(SFTP_TIMEOUT, sftp.metadata(remote_directory.clone()))
             .await
             .map_err(|_| AppError::Sftp("读取远程目录信息超时".to_owned()))?
-            .map_err(|_| AppError::Sftp("无法读取远程目录信息".to_owned()))?;
+            .map_err(|error| {
+                map_sftp_read_error(
+                    error,
+                    RemoteReadKind::Directory,
+                    &entry.username,
+                    "无法读取远程目录信息",
+                )
+            })?;
         if !metadata.file_type().is_dir() {
             return Err(AppError::Validation("远程目标不是目录".to_owned()));
         }
@@ -1061,7 +1127,14 @@ impl ConnectionManager {
         let mut source = time::timeout(SFTP_TIMEOUT, sftp.open(remote_path))
             .await
             .map_err(|_| AppError::Sftp("打开远程文件超时".to_owned()))?
-            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+            .map_err(|error| {
+                map_sftp_read_error(
+                    error,
+                    RemoteReadKind::File,
+                    &entry.username,
+                    "无法打开远程文件",
+                )
+            })?;
         if offset > 0 {
             time::timeout(idle_timeout, source.seek(SeekFrom::Start(offset)))
                 .await
@@ -1129,7 +1202,14 @@ impl ConnectionManager {
             time::timeout(SFTP_TIMEOUT, sftp.metadata(remote_directory.clone()))
                 .await
                 .map_err(|_| AppError::Sftp("读取远程目录信息超时".to_owned()))?
-                .map_err(|_| AppError::Sftp("无法读取远程目录信息".to_owned()))?;
+                .map_err(|error| {
+                    map_sftp_read_error(
+                        error,
+                        RemoteReadKind::Directory,
+                        &entry.username,
+                        "无法读取远程目录信息",
+                    )
+                })?;
         if !directory_metadata.file_type().is_dir() {
             return Err(AppError::Validation("远程目标不是目录".to_owned()));
         }
@@ -1388,15 +1468,26 @@ impl ConnectionManager {
         let metadata = sftp
             .symlink_metadata(remote_path.clone())
             .await
-            .map_err(|_| AppError::Sftp("无法读取远程文件信息".to_owned()))?;
+            .map_err(|error| {
+                map_sftp_read_error(
+                    error,
+                    RemoteReadKind::File,
+                    &entry.username,
+                    "无法读取远程文件信息",
+                )
+            })?;
         if !metadata.file_type().is_file() {
             return Err(AppError::Validation("只能下载普通文件".to_owned()));
         }
         let total = metadata.len();
-        let mut source = sftp
-            .open(remote_path)
-            .await
-            .map_err(|_| AppError::Sftp("无法打开远程文件".to_owned()))?;
+        let mut source = sftp.open(remote_path).await.map_err(|error| {
+            map_sftp_read_error(
+                error,
+                RemoteReadKind::File,
+                &entry.username,
+                "无法打开远程文件",
+            )
+        })?;
         let mut destination = TokioOpenOptions::new()
             .create_new(true)
             .write(true)
@@ -1623,7 +1714,58 @@ fn validate_uuid(label: &str, value: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::services::DeviceService;
+    use russh_sftp::protocol::Status;
     use zeroize::Zeroizing;
+
+    fn sftp_status_error(status_code: StatusCode) -> SftpError {
+        SftpError::Status(Status {
+            id: 1,
+            status_code,
+            error_message: status_code.to_string(),
+            language_tag: "zh-CN".to_owned(),
+        })
+    }
+
+    #[test]
+    fn permission_denied_reports_remote_account_for_directory_and_file() {
+        let directory = map_sftp_read_error(
+            sftp_status_error(StatusCode::PermissionDenied),
+            RemoteReadKind::Directory,
+            "ubuntu",
+            "无法读取远程目录",
+        );
+        assert_eq!(
+            directory.to_string(),
+            "无法读取目录：当前账号“ubuntu”权限不足"
+        );
+
+        let file = map_sftp_read_error(
+            sftp_status_error(StatusCode::PermissionDenied),
+            RemoteReadKind::File,
+            "root",
+            "无法打开远程文件",
+        );
+        assert_eq!(file.to_string(), "无法读取文件：当前账号“root”权限不足");
+    }
+
+    #[test]
+    fn non_permission_sftp_errors_keep_original_message() {
+        let missing = map_sftp_read_error(
+            sftp_status_error(StatusCode::NoSuchFile),
+            RemoteReadKind::File,
+            "ubuntu",
+            "无法打开远程文件",
+        );
+        assert_eq!(missing.to_string(), "无法打开远程文件");
+
+        let disconnected = map_sftp_read_error(
+            SftpError::IO("connection lost".to_owned()),
+            RemoteReadKind::Directory,
+            "ubuntu",
+            "无法读取远程目录",
+        );
+        assert_eq!(disconnected.to_string(), "无法读取远程目录");
+    }
 
     #[test]
     fn parses_supported_login_shells() {
