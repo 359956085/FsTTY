@@ -1,4 +1,3 @@
-import { Channel } from "@tauri-apps/api/core";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
@@ -10,7 +9,6 @@ import type {
   DeviceStatus,
   FileEntry,
   SshConnection,
-  TransferEvent,
 } from "../../shared/api/types";
 import { DEFAULT_REMOTE_PATH } from "./constants";
 import {
@@ -18,8 +16,8 @@ import {
   DEVICE_POLL_INTERVAL_MS,
   type DeviceMetricSample,
 } from "./deviceMetrics";
-import { createTransferSpeedTracker } from "./fileUtils";
 import { createSessionRuntimeController } from "./sessionRuntimeController";
+import { createTransferChannel, fileNameFromPath } from "./sessionTransfer";
 
 export interface TransferProgress {
   id: string;
@@ -414,7 +412,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     for (const [sessionId, runtime] of invalid) {
       pendingTerminalPathsRef.current.delete(sessionId);
       if (runtime.connection) {
-        void api.disconnectSession(runtime.connection.connectionId);
+        // 会话已从界面移除，断开属于尽力清理；失败不能形成未处理 Promise。
+        void api.disconnectSession(runtime.connection.connectionId).catch(() => undefined);
       }
       runtimeControllerRef.current.removeSession(sessionId);
     }
@@ -731,68 +730,6 @@ export function createRuntime(): SessionRuntime {
     deviceHistory: [],
     transfer: null,
   };
-}
-
-function createTransferChannel(
-  sessionId: string,
-  transferId: string,
-  direction: TransferProgress["direction"],
-  fileName: string,
-  updateRuntime: (
-    sessionId: string,
-    update: (runtime: SessionRuntime) => SessionRuntime,
-  ) => void,
-  batchIndex?: number,
-  batchTotal?: number,
-) {
-  const channel = new Channel<TransferEvent>();
-  const speedTracker = createTransferSpeedTracker();
-  const initialSpeed = speedTracker.update(0, performance.now());
-  channel.onmessage = (event) => {
-    if (event.transferId !== transferId) {
-      return;
-    }
-    const speed = speedTracker.update(event.transferredBytes, performance.now());
-    updateRuntime(sessionId, (runtime) => ({
-      ...runtime,
-      transfer: {
-        id: transferId,
-        direction,
-        fileName,
-        batchIndex,
-        batchTotal,
-        transferredBytes: event.transferredBytes,
-        totalBytes: event.totalBytes,
-        ...speed,
-        state:
-          event.kind === "completed"
-            ? "completed"
-            : event.kind === "cancelled"
-              ? "cancelled"
-              : "running",
-      },
-    }));
-  };
-  updateRuntime(sessionId, (runtime) => ({
-    ...runtime,
-    error: null,
-    transfer: {
-      id: transferId,
-      direction,
-      fileName,
-      batchIndex,
-      batchTotal,
-      transferredBytes: 0,
-      totalBytes: 0,
-      ...initialSpeed,
-      state: "running",
-    },
-  }));
-  return channel;
-}
-
-function fileNameFromPath(path: string) {
-  return path.split(/[\\/]/).pop() || i18n.t("sessions.fallbackFileName");
 }
 
 function normalizeRemotePath(path: string) {

@@ -149,6 +149,9 @@ export function FilesPane({
   > | null>(null);
   const suppressRemoteClickRef = useRef(false);
   const moveSuccessTimerRef = useRef<number | null>(null);
+  const copyErrorTimerRef = useRef<number | null>(null);
+  const copyRequestIdRef = useRef(0);
+  const [copyError, setCopyError] = useState(false);
   const [moveStatus, setMoveStatus] = useState<RemoteMoveStatus | null>(null);
   const [moveRequestPending, setMoveRequestPending] = useState(false);
   const [speedDisplayTimeMs, setSpeedDisplayTimeMs] = useState(() => performance.now());
@@ -264,6 +267,11 @@ export function FilesPane({
         window.clearTimeout(moveSuccessTimerRef.current);
         moveSuccessTimerRef.current = null;
       }
+      if (copyErrorTimerRef.current !== null) {
+        window.clearTimeout(copyErrorTimerRef.current);
+        copyErrorTimerRef.current = null;
+      }
+      copyRequestIdRef.current += 1;
     };
   }, [finishRemoteDrag]);
 
@@ -318,7 +326,20 @@ export function FilesPane({
         : t("sessions.deleteRemoteEntry");
 
   async function copyPath(path: string) {
-    await navigator.clipboard.writeText(path).catch(() => undefined);
+    const requestId = ++copyRequestIdRef.current;
+    try {
+      await navigator.clipboard.writeText(path);
+    } catch {
+      if (requestId !== copyRequestIdRef.current) return;
+      setCopyError(true);
+      if (copyErrorTimerRef.current !== null) {
+        window.clearTimeout(copyErrorTimerRef.current);
+      }
+      copyErrorTimerRef.current = window.setTimeout(() => {
+        copyErrorTimerRef.current = null;
+        setCopyError(false);
+      }, 3000);
+    }
   }
 
   function beginInlineRename(file: FileEntry) {
@@ -605,7 +626,11 @@ export function FilesPane({
         </button>
       </div>
 
-      {inlineRename?.error ? (
+      {copyError ? (
+        <div className="file-move-notice file-move-error" role="alert">
+          {t("sessions.clipboardWriteFailed")}
+        </div>
+      ) : inlineRename?.error ? (
         <div className="file-move-notice file-move-error" role="alert">
           <span>{inlineRename.error}</span>
         </div>

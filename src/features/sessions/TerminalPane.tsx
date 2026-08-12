@@ -66,6 +66,7 @@ import {
   SHELL_OSC_IDENTIFIERS,
 } from "./terminalShellIntegration";
 import { useTerminalAuthDialogs } from "./useTerminalAuthDialogs";
+import { createTerminalInteractionCoordinator } from "./terminalInteractionCoordinator";
 
 const CLIPBOARD_MESSAGE_KEYS = {
   nonText: "sessions.clipboardNonText",
@@ -129,6 +130,7 @@ export const TerminalPane = memo(function TerminalPane({
   const connectionLifecycleRef = useRef(
     createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>(),
   );
+  const interactionCoordinatorRef = useRef(createTerminalInteractionCoordinator());
   const inputControllerRef = useRef<TerminalInputController | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
   const clipboardErrorTimerRef = useRef<number | null>(null);
@@ -195,6 +197,7 @@ export const TerminalPane = memo(function TerminalPane({
     setTerminalLoginPrompt,
     terminalLoginPrompt,
   } = useTerminalAuthDialogs();
+  const hostKeyChallengeRef = useRef(hostKeyChallenge);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
 
@@ -210,6 +213,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   onDirectoryChangeRef.current = onDirectoryChange;
   onCredentialSavedRef.current = onCredentialSaved;
+  hostKeyChallengeRef.current = hostKeyChallenge;
   // 终端实例只挂载一次；通过 ref 读取最新回调，避免属性变化时销毁现有 SSH 连接。
   autoConnectRef.current = autoConnect;
   connectTerminalRef.current = connectTerminal;
@@ -525,7 +529,9 @@ export const TerminalPane = memo(function TerminalPane({
     // StrictMode 会重放 Effect；每次安装必须拥有独立控制器，不能复用上次清理时已销毁的实例。
     const connectionLifecycle =
       createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>();
+    const interactionCoordinator = createTerminalInteractionCoordinator();
     connectionLifecycleRef.current = connectionLifecycle;
+    interactionCoordinatorRef.current = interactionCoordinator;
     const inputController = createInputController();
     inputControllerRef.current = inputController;
     sendInputRef.current = inputController.enqueue;
@@ -1004,6 +1010,7 @@ export const TerminalPane = memo(function TerminalPane({
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
       const connection = connectionLifecycle.dispose();
+      interactionCoordinator.dispose();
       if (connection) {
         void api.disconnectSession(connection.connectionId).catch(() => undefined);
       }
@@ -1264,6 +1271,8 @@ export const TerminalPane = memo(function TerminalPane({
       setDialogError(t("sessions.credentialPassphrasePrompt"));
       return;
     }
+    const generation = interactionCoordinatorRef.current.begin("credential");
+    if (generation === null) return;
     setCredentialSubmitting(true);
     setDialogError(null);
     try {
@@ -1278,13 +1287,18 @@ export const TerminalPane = memo(function TerminalPane({
         });
       }
     } catch (error) {
-      setDialogError(resolveApiError(error, t("errors.unknown")));
+      if (interactionCoordinatorRef.current.isCurrent("credential", generation)) {
+        setDialogError(resolveApiError(error, t("errors.unknown")));
+      }
     } finally {
-      setCredentialSubmitting(false);
+      if (interactionCoordinatorRef.current.finish("credential", generation)) {
+        setCredentialSubmitting(false);
+      }
     }
   }
 
   function closeCredentialPrompt() {
+    interactionCoordinatorRef.current.cancel("credential");
     setCredentialPrompt(null);
     setCredentialValue("");
     setDialogError(null);
@@ -1301,6 +1315,8 @@ export const TerminalPane = memo(function TerminalPane({
       setLoginSaveError(t("sessions.loginSaveExpired"));
       return;
     }
+    const generation = interactionCoordinatorRef.current.begin("loginSave");
+    if (generation === null) return;
     setLoginSaveSubmitting(true);
     setLoginSaveError(null);
     try {
@@ -1319,12 +1335,16 @@ export const TerminalPane = memo(function TerminalPane({
           : { mode: "decline" },
       );
       await onCredentialSavedRef.current();
-      clearTemporaryLogin();
-      restoreTerminalFocus();
+      if (interactionCoordinatorRef.current.isCurrent("loginSave", generation)) {
+        clearTemporaryLogin();
+        restoreTerminalFocus();
+      }
     } catch (error) {
-      setLoginSaveError(resolveApiError(error, t("errors.unknown")));
+      if (interactionCoordinatorRef.current.isCurrent("loginSave", generation)) {
+        setLoginSaveError(resolveApiError(error, t("errors.unknown")));
+      }
     } finally {
-      if (mountedRef.current) {
+      if (interactionCoordinatorRef.current.finish("loginSave", generation)) {
         setLoginSaveSubmitting(false);
       }
     }
@@ -1336,18 +1356,30 @@ export const TerminalPane = memo(function TerminalPane({
       reportState("disconnected");
       return;
     }
+    const generation = interactionCoordinatorRef.current.begin("disconnect");
+    if (generation === null) return;
     clearPendingInput();
     resetShellIntegration();
     reportState("disconnecting");
     try {
       await api.disconnectSession(connection.connectionId);
+      if (
+        !interactionCoordinatorRef.current.isCurrent("disconnect", generation) ||
+        connectionLifecycleRef.current.connection()?.connectionId !== connection.connectionId
+      ) {
+        return;
+      }
       connectionLifecycleRef.current.reset();
       clearPendingInput();
       resetShellIntegration();
       clearTemporaryLogin();
       reportState("disconnected");
     } catch (error) {
-      reportState("error", resolveApiError(error, t("errors.unknown")));
+      if (interactionCoordinatorRef.current.isCurrent("disconnect", generation)) {
+        reportState("error", resolveApiError(error, t("errors.unknown")));
+      }
+    } finally {
+      interactionCoordinatorRef.current.finish("disconnect", generation);
     }
   }
 
@@ -1355,12 +1387,25 @@ export const TerminalPane = memo(function TerminalPane({
     if (!hostKeyChallenge) {
       return;
     }
+    const challengeId = hostKeyChallenge.challengeId;
+    const generation = interactionCoordinatorRef.current.begin("trustHost");
+    if (generation === null) return;
     try {
-      await api.trustHostKey(session.id, hostKeyChallenge.challengeId);
+      await api.trustHostKey(session.id, challengeId);
+      if (
+        !interactionCoordinatorRef.current.isCurrent("trustHost", generation) ||
+        hostKeyChallengeRef.current?.challengeId !== challengeId
+      ) {
+        return;
+      }
       setHostKeyChallenge(null);
       await connectTerminal();
     } catch (error) {
-      setDialogError(resolveApiError(error, t("errors.unknown")));
+      if (interactionCoordinatorRef.current.isCurrent("trustHost", generation)) {
+        setDialogError(resolveApiError(error, t("errors.unknown")));
+      }
+    } finally {
+      interactionCoordinatorRef.current.finish("trustHost", generation);
     }
   }
 
@@ -1568,6 +1613,7 @@ export const TerminalPane = memo(function TerminalPane({
             <footer className="dialog-actions">
               <Button
                 onClick={() => {
+                  interactionCoordinatorRef.current.cancel("trustHost");
                   setHostKeyChallenge(null);
                   clearTemporaryLogin();
                   reportState("disconnected");

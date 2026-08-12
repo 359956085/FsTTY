@@ -1,6 +1,45 @@
 use super::super::connection_paths::{normalize_remote_path, validate_remote_name};
-use crate::models::{FileEntry, FileKind};
+use crate::models::{AppError, FileEntry, FileKind};
+use russh_sftp::client::error::Error as SftpError;
+use russh_sftp::protocol::StatusCode;
 use russh_sftp::protocol::{FilePermissions, FileType as SftpFileType};
+use std::future::Future;
+
+#[derive(Clone, Copy)]
+pub(super) enum RemoteReadKind {
+    Directory,
+    File,
+}
+
+pub(super) fn map_sftp_read_error(
+    error: SftpError,
+    kind: RemoteReadKind,
+    username: &str,
+    fallback: &str,
+) -> AppError {
+    if matches!(
+        error,
+        SftpError::Status(ref status) if status.status_code == StatusCode::PermissionDenied
+    ) {
+        let target = match kind {
+            RemoteReadKind::Directory => "目录",
+            RemoteReadKind::File => "文件",
+        };
+        return AppError::Sftp(format!("无法读取{target}：当前账号“{username}”权限不足"));
+    }
+    AppError::Sftp(fallback.to_owned())
+}
+
+pub(super) async fn join_directory_reads<MetadataFuture, DirectoryFuture>(
+    metadata: MetadataFuture,
+    directory: DirectoryFuture,
+) -> (MetadataFuture::Output, DirectoryFuture::Output)
+where
+    MetadataFuture: Future,
+    DirectoryFuture: Future,
+{
+    tokio::join!(metadata, directory)
+}
 
 pub(crate) struct RemoteFileWindow {
     pub(crate) content: Vec<u8>,

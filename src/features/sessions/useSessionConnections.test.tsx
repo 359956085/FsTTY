@@ -155,4 +155,21 @@ describe("会话运行时异步生命周期", () => {
     await waitFor(() => expect(mocks.disconnectSession).toHaveBeenCalledTimes(1));
     expect(mocks.disconnectSession).toHaveBeenCalledWith("connection-1");
   });
+
+  it("裁剪会话时吞掉后台断开失败", async () => {
+    mocks.listRemoteFiles.mockResolvedValue([]);
+    mocks.disconnectSession.mockRejectedValueOnce(new Error("offline"));
+    const unhandled = vi.fn();
+    window.addEventListener("unhandledrejection", unhandled);
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleConnected("session-1", connection));
+
+    act(() => result.current.pruneRuntimes(new Set()));
+    await act(async () => Promise.resolve());
+
+    expect(unhandled).not.toHaveBeenCalled();
+    window.removeEventListener("unhandledrejection", unhandled);
+  });
 });

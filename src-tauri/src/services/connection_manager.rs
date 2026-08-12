@@ -20,11 +20,10 @@ use russh::keys::{known_hosts::learn_known_hosts_path, ssh_key::PublicKey};
 #[cfg(test)]
 use russh::MethodKind;
 use russh::{ChannelMsg, Disconnect};
-use russh_sftp::client::{error::Error as SftpError, SftpSession};
-use russh_sftp::protocol::{OpenFlags, StatusCode};
+use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::future::Future;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -53,7 +52,12 @@ use authentication::{
     authentication_rejected, is_authentication_interruption, map_authentication_exchange_error,
 };
 pub(crate) use remote_files::RemoteFileWindow;
-use remote_files::{file_entry_from_remote, sort_file_entries};
+use remote_files::{
+    file_entry_from_remote, join_directory_reads, map_sftp_read_error, sort_file_entries,
+    RemoteReadKind,
+};
+#[cfg(test)]
+use russh_sftp::{client::error::Error as SftpError, protocol::StatusCode};
 use terminal_io::{run_terminal, validate_terminal_size, wait_for_channel_success};
 use transfer::{
     finalize_local_file, finalize_remote_file, send_progress, validate_download_target,
@@ -120,42 +124,6 @@ struct ConnectionEntry {
     handle: Arc<Mutex<client::Handle<SshClient>>>,
     terminal_tx: Option<mpsc::Sender<TerminalControl>>,
     browser_sftp: Option<Arc<SftpSession>>,
-}
-
-#[derive(Clone, Copy)]
-enum RemoteReadKind {
-    Directory,
-    File,
-}
-
-fn map_sftp_read_error(
-    error: SftpError,
-    kind: RemoteReadKind,
-    username: &str,
-    fallback: &str,
-) -> AppError {
-    if matches!(
-        error,
-        SftpError::Status(ref status) if status.status_code == StatusCode::PermissionDenied
-    ) {
-        let target = match kind {
-            RemoteReadKind::Directory => "目录",
-            RemoteReadKind::File => "文件",
-        };
-        return AppError::Sftp(format!("无法读取{target}：当前账号“{username}”权限不足"));
-    }
-    AppError::Sftp(fallback.to_owned())
-}
-
-async fn join_directory_reads<MetadataFuture, DirectoryFuture>(
-    metadata: MetadataFuture,
-    directory: DirectoryFuture,
-) -> (MetadataFuture::Output, DirectoryFuture::Output)
-where
-    MetadataFuture: Future,
-    DirectoryFuture: Future,
-{
-    tokio::join!(metadata, directory)
 }
 
 struct PendingHostKey {

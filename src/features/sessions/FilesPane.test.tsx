@@ -41,6 +41,14 @@ interface RenderFilesPaneOptions {
   strict?: boolean;
 }
 
+function deferred<T>() {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((_resolve, nextReject) => {
+    reject = nextReject;
+  });
+  return { promise, reject };
+}
+
 function renderFilesPane(files: FileEntry[] = [], options: RenderFilesPaneOptions = {}) {
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -125,6 +133,38 @@ describe("FilesPane 右键菜单", () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("/srv/apps/notes.txt"),
     );
+  });
+
+  it("复制路径失败时显示现有剪贴板错误", async () => {
+    writeText.mockRejectedValueOnce(new Error("clipboard unavailable"));
+    const rendered = renderFilesPane();
+    const fileTable = rendered.container.querySelector<HTMLElement>(".file-table");
+
+    fireEvent.contextMenu(fileTable!);
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "sessions.contextCopyCurrentFolderPath" }),
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "sessions.clipboardWriteFailed",
+    );
+  });
+
+  it("卸载后忽略晚到的剪贴板失败", async () => {
+    const pending = deferred<void>();
+    writeText.mockReturnValueOnce(pending.promise);
+    const rendered = renderFilesPane();
+    const fileTable = rendered.container.querySelector<HTMLElement>(".file-table");
+    fireEvent.contextMenu(fileTable!);
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "sessions.contextCopyCurrentFolderPath" }),
+    );
+
+    rendered.unmount();
+    pending.reject(new Error("clipboard unavailable"));
+    await Promise.resolve();
+
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("StrictMode 重放后文件增删改操作各执行一次", async () => {

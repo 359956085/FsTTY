@@ -9,6 +9,8 @@ import { TerminalPane } from "./TerminalPane";
 const apiMocks = vi.hoisted(() => ({
   connectSession: vi.fn(),
   disconnectSession: vi.fn(),
+  setSessionCredential: vi.fn(),
+  trustHostKey: vi.fn(),
   writeTerminal: vi.fn(),
 }));
 
@@ -82,6 +84,8 @@ describe("终端面板连接", () => {
     runtimeMocks.options.theme = undefined;
     apiMocks.connectSession.mockReturnValue(new Promise(() => undefined));
     apiMocks.disconnectSession.mockResolvedValue(undefined);
+    apiMocks.setSessionCredential.mockResolvedValue(undefined);
+    apiMocks.trustHostKey.mockResolvedValue(undefined);
     apiMocks.writeTerminal.mockResolvedValue(undefined);
     runtimeMocks.oscHandlers.clear();
     vi.stubGlobal(
@@ -298,5 +302,100 @@ describe("终端面板连接", () => {
     });
     await waitFor(() => expect(onConnected).toHaveBeenCalledOnce());
     expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+  });
+
+  it("主机信任重复点击只提交一次并在完成后重连", async () => {
+    let resolveTrust!: () => void;
+    apiMocks.connectSession
+      .mockResolvedValueOnce({
+        kind: "hostKeyRequired",
+        challenge: {
+          algorithm: "ssh-ed25519",
+          challengeId: "challenge-1",
+          fingerprint: "SHA256:test",
+          host: "127.0.0.1",
+          port: 22,
+        },
+      })
+      .mockReturnValueOnce(new Promise(() => undefined));
+    apiMocks.trustHostKey.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveTrust = resolve;
+      }),
+    );
+    render(
+      <TerminalPane
+        active
+        allowRemoteClipboardWrite={false}
+        autoConnect={false}
+        connectionState="disconnected"
+        onConnected={vi.fn()}
+        onCredentialSaved={vi.fn()}
+        onDirectoryChange={vi.fn()}
+        onStateChange={vi.fn()}
+        runtimeId="runtime-trust"
+        session={session}
+        shortcuts={shortcuts}
+        theme="dark"
+        visible
+      />,
+    );
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "sessions.connect" }));
+    const trustButton = await screen.findByRole("button", {
+      name: "sessions.trustAndConnect",
+    });
+    fireEvent.click(trustButton);
+    fireEvent.click(trustButton);
+
+    expect(apiMocks.trustHostKey).toHaveBeenCalledTimes(1);
+    resolveTrust();
+    await waitFor(() => expect(apiMocks.connectSession).toHaveBeenCalledTimes(2));
+  });
+
+  it("关闭主机信任弹窗后忽略晚到结果", async () => {
+    let resolveTrust!: () => void;
+    apiMocks.connectSession.mockResolvedValueOnce({
+      kind: "hostKeyRequired",
+      challenge: {
+        algorithm: "ssh-ed25519",
+        challengeId: "challenge-2",
+        fingerprint: "SHA256:test",
+        host: "127.0.0.1",
+        port: 22,
+      },
+    });
+    apiMocks.trustHostKey.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveTrust = resolve;
+      }),
+    );
+    render(
+      <TerminalPane
+        active
+        allowRemoteClipboardWrite={false}
+        autoConnect={false}
+        connectionState="disconnected"
+        onConnected={vi.fn()}
+        onCredentialSaved={vi.fn()}
+        onDirectoryChange={vi.fn()}
+        onStateChange={vi.fn()}
+        runtimeId="runtime-trust-cancel"
+        session={session}
+        shortcuts={shortcuts}
+        theme="dark"
+        visible
+      />,
+    );
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "sessions.connect" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "sessions.trustAndConnect" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "sessions.cancel" }));
+    resolveTrust();
+    await Promise.resolve();
+
+    expect(apiMocks.connectSession).toHaveBeenCalledTimes(1);
   });
 });
