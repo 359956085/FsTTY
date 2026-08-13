@@ -15,6 +15,7 @@ export function createTransferChannel(
   direction: TransferProgress["direction"],
   fileName: string,
   updateRuntime: RuntimeUpdater,
+  isCurrent: () => boolean,
   batchIndex?: number,
   batchTotal?: number,
 ) {
@@ -22,7 +23,7 @@ export function createTransferChannel(
   const speedTracker = createTransferSpeedTracker();
   const initialSpeed = speedTracker.update(0, performance.now());
   channel.onmessage = (event) => {
-    if (event.transferId !== transferId) return;
+    if (event.transferId !== transferId || !isCurrent()) return;
     const speed = speedTracker.update(event.transferredBytes, performance.now());
     updateRuntime(sessionId, (runtime) => ({
       ...runtime,
@@ -44,6 +45,7 @@ export function createTransferChannel(
       },
     }));
   };
+  if (!isCurrent()) return channel;
   updateRuntime(sessionId, (runtime) => ({
     ...runtime,
     error: null,

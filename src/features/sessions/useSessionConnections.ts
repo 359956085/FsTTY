@@ -12,10 +12,17 @@ import type {
 } from "../../shared/api/types";
 import { DEFAULT_REMOTE_PATH } from "./constants";
 import {
-  appendDeviceMetricSample,
   DEVICE_POLL_INTERVAL_MS,
   type DeviceMetricSample,
 } from "./deviceMetrics";
+import {
+  createSessionDevicePollingController,
+  type SessionDevicePollingController,
+} from "./sessionDevicePolling";
+import {
+  createSessionRemoteFilesController,
+  type SessionRemoteFilesController,
+} from "./sessionRemoteFiles";
 import { createSessionRuntimeController } from "./sessionRuntimeController";
 import { createTransferChannel, fileNameFromPath } from "./sessionTransfer";
 
@@ -51,12 +58,15 @@ interface UseSessionConnectionsOptions {
 export function useSessionConnections({ errorFallback }: UseSessionConnectionsOptions) {
   const [runtimes, setRuntimes] = useState<Record<string, SessionRuntime>>({});
   const runtimesRef = useRef(runtimes);
+  const errorFallbackRef = useRef(errorFallback);
   const runtimeControllerRef = useRef(createSessionRuntimeController());
-  const pendingTerminalPathsRef = useRef(new Map<string, string>());
+  const remoteFilesControllerRef = useRef<SessionRemoteFilesController | null>(null);
+  const devicePollingControllerRef = useRef<SessionDevicePollingController | null>(null);
 
   useEffect(() => {
     runtimesRef.current = runtimes;
   }, [runtimes]);
+  errorFallbackRef.current = errorFallback;
 
   const updateRuntime = useCallback(
     (sessionId: string, update: (runtime: SessionRuntime) => SessionRuntime) => {
@@ -77,119 +87,65 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [],
   );
 
-  const stopDevicePolling = useCallback((sessionId: string) => {
-    runtimeControllerRef.current.stopDevicePoll(sessionId);
+  if (!remoteFilesControllerRef.current) {
+    remoteFilesControllerRef.current = createSessionRemoteFilesController<SessionRuntime>({
+      defaultPath: DEFAULT_REMOTE_PATH,
+      getRuntime: (sessionId) => runtimesRef.current[sessionId],
+      listFiles: (connectionId, path) => api.listRemoteFiles(connectionId, path),
+      normalizePath: normalizeRemotePath,
+      operationBusyError: () => i18n.t("sessions.fileOperationBusy"),
+      operationUnavailableError: () => i18n.t("sessions.sftpOperationUnavailable"),
+      resolveError: (error) => resolveApiError(error, errorFallbackRef.current),
+      updateRuntime,
+    });
+  }
+  if (!devicePollingControllerRef.current) {
+    devicePollingControllerRef.current =
+      createSessionDevicePollingController<SessionRuntime>({
+        getDeviceStatus: (connectionId) => api.getDeviceStatus(connectionId),
+        getRuntime: (sessionId) => runtimesRef.current[sessionId],
+        intervalMs: DEVICE_POLL_INTERVAL_MS,
+        updateRuntime,
+      });
+  }
+
+  useEffect(() => {
+    const runtimeController = runtimeControllerRef.current;
+    const remoteFilesController = remoteFilesControllerRef.current;
+    const devicePollingController = devicePollingControllerRef.current;
+    runtimeController.activate();
+    remoteFilesController?.activate();
+    devicePollingController?.activate();
+    return () => {
+      runtimeController.dispose();
+      remoteFilesController?.dispose();
+      devicePollingController?.dispose();
+    };
   }, []);
 
-  useEffect(
-    () => () => {
-      runtimeControllerRef.current.dispose();
-    },
-    [],
-  );
-
   const loadFiles = useCallback(
-    async (sessionId: string, connectionId: string, path: string) => {
-      const requestId = runtimeControllerRef.current.beginFileRequest(sessionId);
-      updateRuntime(sessionId, (runtime) => ({
-        ...runtime,
-        currentPath: path,
-        files: [],
-        filesLoading: true,
-        error: null,
-      }));
-      try {
-        const files = await api.listRemoteFiles(connectionId, path);
-        if (!runtimeControllerRef.current.isFileRequestCurrent(sessionId, requestId)) {
-          return false;
-        }
-        updateRuntime(sessionId, (runtime) => ({
-          ...runtime,
-          files,
-          filesLoading: false,
-        }));
-        return true;
-      } catch (error) {
-        if (!runtimeControllerRef.current.isFileRequestCurrent(sessionId, requestId)) {
-          return false;
-        }
-        updateRuntime(sessionId, (runtime) => ({
-          ...runtime,
-          filesLoading: false,
-          error: resolveApiError(error, errorFallback),
-        }));
-        return false;
-      }
-    },
-    [errorFallback, updateRuntime],
-  );
-
-  const loadDevice = useCallback(
-    async (sessionId: string, connectionId: string) => {
-      const requestId = runtimeControllerRef.current.beginDeviceRequest(sessionId);
-      try {
-        const deviceStatus = await api.getDeviceStatus(connectionId);
-        const runtime = runtimesRef.current[sessionId];
-        if (
-          !runtimeControllerRef.current.isDeviceRequestCurrent(sessionId, requestId) ||
-          runtime?.connection?.connectionId !== connectionId
-        ) {
-          return false;
-        }
-        const sample = appendDeviceMetricSample(
-          runtime.deviceHistory,
-          deviceStatus,
-          performance.now(),
-          runtimeControllerRef.current.getDeviceCounter(sessionId),
-        );
-        if (sample.networkCounter) {
-          runtimeControllerRef.current.setDeviceCounter(sessionId, sample.networkCounter);
-        } else {
-          runtimeControllerRef.current.deleteDeviceCounter(sessionId);
-        }
-        updateRuntime(sessionId, (current) => ({
-          ...current,
-          deviceStatus,
-          deviceHistory: sample.history,
-        }));
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [updateRuntime],
+    (sessionId: string, connectionId: string, path: string) =>
+      remoteFilesControllerRef.current!.loadFiles(sessionId, connectionId, path),
+    [],
   );
 
   const startDevicePolling = useCallback(
     (sessionId: string, connectionId: string) => {
-      const pollId = runtimeControllerRef.current.startDevicePoll(sessionId);
-      const poll = async () => {
-        await loadDevice(sessionId, connectionId);
-        if (
-          !runtimeControllerRef.current.isDevicePollCurrent(sessionId, pollId) ||
-          runtimesRef.current[sessionId]?.connection?.connectionId !== connectionId
-        ) {
-          return;
-        }
-        const timer = window.setTimeout(() => {
-          runtimeControllerRef.current.clearDeviceTimer(sessionId);
-          void poll();
-        }, DEVICE_POLL_INTERVAL_MS);
-        runtimeControllerRef.current.setDeviceTimer(sessionId, timer);
-      };
-      void poll();
+      devicePollingControllerRef.current!.start(sessionId, connectionId);
     },
-    [loadDevice],
+    [],
   );
 
   const handleConnected = useCallback(
     (sessionId: string, connection: SshConnection) => {
-      // 登录提示符可能先于 connectSession 返回 OSC；缓存保证首次目录上报不丢失。
-      const currentPath =
-        pendingTerminalPathsRef.current.get(sessionId) ||
-        connection.homePath ||
-        DEFAULT_REMOTE_PATH;
-      pendingTerminalPathsRef.current.delete(sessionId);
+      runtimeControllerRef.current.cancelUploadBatch(sessionId);
+      runtimeControllerRef.current.cancelTransfer(sessionId);
+      // 登录提示符可能先于 connectSession 返回 OSC；控制器保证首次目录上报不丢失。
+      const currentPath = remoteFilesControllerRef.current!.consumeInitialPath(
+        sessionId,
+        connection.homePath,
+      );
+      remoteFilesControllerRef.current!.cancelSession(sessionId);
       updateRuntime(sessionId, (runtime) => ({
         ...runtime,
         connectionState: "connected",
@@ -199,6 +155,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         files: [],
         deviceStatus: null,
         deviceHistory: [],
+        transfer: null,
       }));
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
@@ -211,12 +168,12 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const handleTerminalState = useCallback(
     (sessionId: string, state: ConnectionState, error: string | null = null) => {
       if (state === "connecting" || state === "disconnected" || state === "error") {
-        pendingTerminalPathsRef.current.delete(sessionId);
+        remoteFilesControllerRef.current!.cancelSession(sessionId);
+        runtimeControllerRef.current.cancelUploadBatch(sessionId);
+        runtimeControllerRef.current.cancelTransfer(sessionId);
       }
       if (state === "disconnected" || state === "error") {
-        runtimeControllerRef.current.cancelUploadBatch(sessionId);
-        runtimeControllerRef.current.cancelFileRequest(sessionId);
-        stopDevicePolling(sessionId);
+        devicePollingControllerRef.current!.cancelSession(sessionId);
       }
       updateRuntime(sessionId, (runtime) => ({
         ...runtime,
@@ -243,51 +200,29 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             ? []
             : runtime.deviceHistory,
         transfer:
-          state === "disconnected" || state === "error" ? null : runtime.transfer,
+          state === "connecting" || state === "disconnected" || state === "error"
+            ? null
+            : runtime.transfer,
       }));
     },
-    [stopDevicePolling, updateRuntime],
+    [updateRuntime],
   );
 
   const openPath = useCallback(
-    (sessionId: string, path: string) => {
-      const runtime = runtimesRef.current[sessionId];
-      if (!runtime?.connection?.sftpAvailable) {
-        return;
-      }
-      const normalizedPath = normalizeRemotePath(path);
-      if (!normalizedPath) {
-        return;
-      }
-      const connectionId = runtime.connection.connectionId;
-      void loadFiles(sessionId, connectionId, normalizedPath);
-    },
-    [loadFiles],
+    (sessionId: string, path: string) =>
+      remoteFilesControllerRef.current!.openPath(sessionId, path),
+    [],
   );
 
   const handleTerminalDirectory = useCallback(
-    (sessionId: string, path: string) => {
-      const normalizedPath = normalizeRemotePath(path);
-      const runtime = runtimesRef.current[sessionId];
-      if (!normalizedPath) {
-        return;
-      }
-      pendingTerminalPathsRef.current.set(sessionId, normalizedPath);
-      if (!runtime?.connection?.sftpAvailable || runtime.currentPath === normalizedPath) return;
-      void loadFiles(sessionId, runtime.connection.connectionId, normalizedPath);
-    },
-    [loadFiles],
+    (sessionId: string, path: string) =>
+      remoteFilesControllerRef.current!.handleTerminalDirectory(sessionId, path),
+    [],
   );
 
   const refreshFiles = useCallback(
-    (sessionId: string) => {
-      const runtime = runtimesRef.current[sessionId];
-      if (!runtime?.connection?.sftpAvailable || runtime.filesLoading) {
-        return;
-      }
-      void loadFiles(sessionId, runtime.connection.connectionId, runtime.currentPath);
-    },
-    [loadFiles],
+    (sessionId: string) => remoteFilesControllerRef.current!.refreshFiles(sessionId),
+    [],
   );
 
   const runRemoteMutation = useCallback(
@@ -295,28 +230,9 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       sessionId: string,
       mutation: (connectionId: string, currentPath: string) => Promise<void>,
     ) => {
-      const runtime = runtimesRef.current[sessionId];
-      if (!runtime?.connection?.sftpAvailable) {
-        throw new Error(i18n.t("sessions.sftpOperationUnavailable"));
-      }
-      if (runtime.filesLoading || runtime.transfer?.state === "running") {
-        throw new Error(i18n.t("sessions.fileOperationBusy"));
-      }
-      const connectionId = runtime.connection.connectionId;
-      const currentPath = runtime.currentPath;
-      try {
-        await mutation(connectionId, currentPath);
-      } finally {
-        const latest = runtimesRef.current[sessionId];
-        if (
-          latest?.connection?.connectionId === connectionId &&
-          latest.currentPath === currentPath
-        ) {
-          await loadFiles(sessionId, connectionId, currentPath);
-        }
-      }
+      await remoteFilesControllerRef.current!.runMutation(sessionId, mutation);
     },
-    [loadFiles],
+    [],
   );
 
   const createRemoteDirectory = useCallback(
@@ -352,24 +268,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const refreshSession = useCallback(
-    async (sessionId: string) => {
-      const runtime = runtimesRef.current[sessionId];
-      if (!runtime?.connection || runtime.filesLoading) {
-        return;
-      }
-      const tasks: Promise<unknown>[] = [];
-      if (runtime.connection.sftpAvailable) {
-        tasks.push(
-          loadFiles(
-            sessionId,
-            runtime.connection.connectionId,
-            runtime.currentPath,
-          ),
-        );
-      }
-      await Promise.all(tasks);
-    },
-    [loadFiles],
+    (sessionId: string) => remoteFilesControllerRef.current!.refreshSession(sessionId),
+    [],
   );
 
   const disconnect = useCallback(
@@ -395,7 +295,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const removeRuntime = useCallback((sessionId: string) => {
-    pendingTerminalPathsRef.current.delete(sessionId);
+    remoteFilesControllerRef.current!.removeSession(sessionId);
+    devicePollingControllerRef.current!.removeSession(sessionId);
     runtimeControllerRef.current.removeSession(sessionId);
     setRuntimes((current) => {
       const next = { ...current };
@@ -410,7 +311,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       ([sessionId]) => !validSessionIds.has(sessionId),
     );
     for (const [sessionId, runtime] of invalid) {
-      pendingTerminalPathsRef.current.delete(sessionId);
+      remoteFilesControllerRef.current!.removeSession(sessionId);
+      devicePollingControllerRef.current!.removeSession(sessionId);
       if (runtime.connection) {
         // 会话已从界面移除，断开属于尽力清理；失败不能形成未处理 Promise。
         void api.disconnectSession(runtime.connection.connectionId).catch(() => undefined);
@@ -470,12 +372,26 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             overwrite: boolean,
           ): Promise<"uploaded" | "skipped" | "failed" | "cancelled"> => {
             const transferId = crypto.randomUUID();
+            const transferGeneration = runtimeControllerRef.current.beginTransfer(
+              sessionId,
+              connectionId,
+              transferId,
+            );
+            const transferIsCurrent = () =>
+              batchIsActive() &&
+              runtimeControllerRef.current.isTransferCurrent(
+                sessionId,
+                connectionId,
+                transferId,
+                transferGeneration,
+              );
             const progress = createTransferChannel(
               sessionId,
               transferId,
               "upload",
               fileName,
               updateRuntime,
+              transferIsCurrent,
               index + 1,
               paths.length,
             );
@@ -488,10 +404,13 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
                 overwrite,
                 progress,
               );
-              return batchIsActive() ? "uploaded" : "cancelled";
+              return transferIsCurrent() ? "uploaded" : "cancelled";
             } catch (error) {
+              if (!transferIsCurrent()) return "cancelled";
               const info = readApiError(error, errorFallback);
               if (info.kind === "conflict" && !overwrite) {
+                runtimeControllerRef.current.cancelTransfer(sessionId);
+                clearTransfer(transferId);
                 let accepted = false;
                 try {
                   accepted = await confirm(
@@ -504,19 +423,17 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
                     },
                   );
                 } catch {
-                  clearTransfer(transferId);
                   return "failed";
                 }
                 if (!batchIsActive()) {
-                  clearTransfer(transferId);
                   return "cancelled";
                 }
                 if (accepted) {
                   return run(true);
                 }
-                clearTransfer(transferId);
                 return "skipped";
               }
+              runtimeControllerRef.current.cancelTransfer(sessionId);
               clearTransfer(transferId);
               return "failed";
             }
@@ -533,6 +450,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }
       } finally {
         const ownsBatch = runtimeControllerRef.current.endUploadBatch(sessionId, batchToken);
+        if (ownsBatch) runtimeControllerRef.current.cancelTransfer(sessionId);
         const latest = runtimesRef.current[sessionId];
         let refreshSucceeded = true;
         if (
@@ -559,6 +477,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const uploadFile = useCallback(
     async (sessionId: string) => {
+      const initialConnectionId = runtimesRef.current[sessionId]?.connection?.connectionId;
       try {
         const runtime = runtimesRef.current[sessionId];
         if (
@@ -577,6 +496,12 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           await uploadFiles(sessionId, [selected]);
         }
       } catch (error) {
+        if (
+          !initialConnectionId ||
+          runtimesRef.current[sessionId]?.connection?.connectionId !== initialConnectionId
+        ) {
+          return;
+        }
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
           transfer: null,
@@ -589,6 +514,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const downloadFile = useCallback(
     async (sessionId: string, file: FileEntry) => {
+      const initialConnectionId = runtimesRef.current[sessionId]?.connection?.connectionId;
       try {
         const runtime = runtimesRef.current[sessionId];
         if (
@@ -607,6 +533,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }
         const selectedRuntime = runtimesRef.current[sessionId];
         if (
+          !runtimeControllerRef.current.isActive() ||
           !selectedRuntime?.connection?.sftpAvailable ||
           selectedRuntime.transfer?.state === "running"
         ) {
@@ -616,12 +543,26 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
         const run = async (overwrite: boolean): Promise<void> => {
           const transferId = crypto.randomUUID();
+          const transferGeneration = runtimeControllerRef.current.beginTransfer(
+            sessionId,
+            connectionId,
+            transferId,
+          );
+          const transferIsCurrent = () =>
+            runtimeControllerRef.current.isTransferCurrent(
+              sessionId,
+              connectionId,
+              transferId,
+              transferGeneration,
+            ) &&
+            runtimesRef.current[sessionId]?.connection?.connectionId === connectionId;
           const progress = createTransferChannel(
             sessionId,
             transferId,
             "download",
             file.name,
             updateRuntime,
+            transferIsCurrent,
           );
           try {
             await api.downloadFile(
@@ -633,19 +574,31 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
               progress,
             );
           } catch (error) {
+            if (!transferIsCurrent()) return;
             const info = readApiError(error, errorFallback);
             if (info.kind === "conflict" && !overwrite) {
+              runtimeControllerRef.current.cancelTransfer(sessionId);
+              updateRuntime(sessionId, (current) => ({
+                ...current,
+                transfer: current.transfer?.id === transferId ? null : current.transfer,
+              }));
               const accepted = await confirm(i18n.t("sessions.localOverwriteConfirm"), {
                 title: i18n.t("sessions.overwriteTitle"),
                 kind: "warning",
                 okLabel: i18n.t("sessions.overwrite"),
                 cancelLabel: i18n.t("sessions.cancel"),
               });
-              if (accepted) {
+              if (
+                accepted &&
+                runtimeControllerRef.current.isActive() &&
+                runtimesRef.current[sessionId]?.connection?.connectionId === connectionId
+              ) {
                 await run(true);
                 return;
               }
+              return;
             }
+            runtimeControllerRef.current.cancelTransfer(sessionId);
             updateRuntime(sessionId, (current) => ({
               ...current,
               transfer: current.transfer?.id === transferId ? null : current.transfer,
@@ -655,6 +608,13 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         };
         await run(false);
       } catch (error) {
+        if (
+          !initialConnectionId ||
+          runtimesRef.current[sessionId]?.connection?.connectionId !== initialConnectionId
+        ) {
+          return;
+        }
+        runtimeControllerRef.current.cancelTransfer(sessionId);
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
           transfer: null,
@@ -672,12 +632,23 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (!transfer || transfer.state !== "running") {
         return;
       }
+      runtimeControllerRef.current.cancelTransfer(sessionId);
+      updateRuntime(sessionId, (runtime) => ({
+        ...runtime,
+        transfer:
+          runtime.transfer?.id === transfer.id
+            ? { ...runtime.transfer, state: "cancelled" }
+            : runtime.transfer,
+      }));
       try {
         await api.cancelTransfer(transfer.id);
       } catch (error) {
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
-          error: resolveApiError(error, errorFallback),
+          error:
+            runtime.transfer?.id === transfer.id
+              ? resolveApiError(error, errorFallback)
+              : runtime.error,
         }));
       }
     },
@@ -686,6 +657,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const dismissTransfer = useCallback(
     (sessionId: string) => {
+      const transfer = runtimesRef.current[sessionId]?.transfer;
+      if (transfer && transfer.state !== "running") {
+        runtimeControllerRef.current.cancelTransfer(sessionId);
+      }
       updateRuntime(sessionId, (runtime) =>
         runtime.transfer?.state === "running"
           ? runtime
