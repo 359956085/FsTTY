@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.1.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.3.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

@@ -15,6 +15,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -44,7 +45,7 @@ use access::{
 pub(crate) use access::{authorized_session, McpAccessError, Permission};
 #[cfg(test)]
 use access::{localized_access_error, localized_unsupported_syntax_error, AccessIssue};
-use audit::{write_file_audit_input, AuditGuard};
+use audit::{redact_audit_value, write_file_audit_input, AuditGuard};
 use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
@@ -260,7 +261,7 @@ impl McpService {
         let input = current_mcp_settings(&self.state)
             .ok()
             .filter(|settings| settings.record_mcp_tool_inputs)
-            .and_then(|_| serde_json::to_value(input).ok());
+            .and_then(|_| serde_json::to_value(input).ok().map(redact_audit_value));
         self.audit_guard(tool, session_id, input)
     }
 
@@ -975,7 +976,7 @@ async fn rooted_path(
     path: &str,
     must_exist: bool,
 ) -> Result<std::path::PathBuf, McpError> {
-    let requested = std::path::PathBuf::from(path);
+    let requested = PathBuf::from(path);
     if !requested.is_absolute() {
         return Err(McpError::invalid_params("本地路径必须是绝对路径", None));
     }
@@ -994,19 +995,27 @@ async fn rooted_path(
         let Ok(root_path) = std::fs::canonicalize(root_path) else {
             continue;
         };
-        let candidate = if must_exist {
-            std::fs::canonicalize(&requested).ok()
-        } else {
-            requested
-                .parent()
-                .and_then(|parent| std::fs::canonicalize(parent).ok())
-                .and_then(|parent| requested.file_name().map(|name| parent.join(name)))
-        };
-        if let Some(candidate) = candidate.filter(|candidate| candidate.starts_with(&root_path)) {
+        if let Some(candidate) = rooted_candidate(&root_path, &requested, must_exist) {
             return Ok(candidate);
         }
     }
     Err(McpError::invalid_request("本地路径不在 MCP Roots 内", None))
+}
+
+fn rooted_candidate(root_path: &Path, requested: &Path, must_exist: bool) -> Option<PathBuf> {
+    let candidate = if must_exist {
+        std::fs::canonicalize(requested).ok()
+    } else if std::fs::symlink_metadata(requested).is_ok() {
+        // 已存在的终点也要解析，防止下载覆盖符号链接实际指向 Roots 外的文件。
+        std::fs::canonicalize(requested).ok()
+    } else {
+        requested
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .and_then(|parent| requested.file_name().map(|name| parent.join(name)))
+    }?;
+    candidate.strip_prefix(root_path).ok()?;
+    Some(candidate)
 }
 
 #[tool_handler]
@@ -1155,6 +1164,24 @@ mod tests {
         );
         assert!(input.get("content").is_none());
         assert!(!input.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn rooted_candidate_rejects_sibling_prefix_and_parent_escape() {
+        let directory = std::env::temp_dir().join(format!("fstty-roots-{}", Uuid::new_v4()));
+        let root = directory.join("allowed");
+        let sibling = directory.join("allowed-other");
+        std::fs::create_dir_all(&root).expect("无法创建 Roots 测试目录");
+        std::fs::create_dir_all(&sibling).expect("无法创建相邻测试目录");
+        let root = std::fs::canonicalize(root).expect("无法规范化 Roots 测试目录");
+        let sibling_file = sibling.join("secret.txt");
+        std::fs::write(&sibling_file, b"outside").expect("无法创建越界测试文件");
+
+        assert!(rooted_candidate(&root, &root.join("new.txt"), false).is_some());
+        assert!(rooted_candidate(&root, &sibling_file, true).is_none());
+        assert!(rooted_candidate(&root, &root.join("..").join("outside.txt"), false).is_none());
+
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     fn mcp_permission(command_execute: bool) -> McpGroupPermission {

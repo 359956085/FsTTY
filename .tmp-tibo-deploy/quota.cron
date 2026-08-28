@@ -1,0 +1,9 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# 服务器使用UTC；北京时间周一至周五06:01对应UTC周日至周四22:01。
+1 22 * * 0-4 /home/ubuntu/codex-quota-ping/quota-window.sh 06:01
+# 北京时间周一至周五11:05。
+5 3 * * 1-5 /home/ubuntu/codex-quota-ping/quota-window.sh 11:05
+# 北京时间周一至周五16:10。
+10 8 * * 1-5 /home/ubuntu/codex-quota-ping/quota-window.sh 16:10

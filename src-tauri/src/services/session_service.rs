@@ -147,19 +147,13 @@ impl SessionService {
             private_key: None,
         };
         if let Err(error) = apply_auth_changes(&id, &changes, &snapshot, credentials).await {
-            if credentials.delete_all(&id).await.is_err() {
-                self.queue_credential_cleanup(&id);
-                let _ = self.persist();
-            }
+            self.cleanup_credentials_or_queue(&id, credentials).await;
             return Err(error);
         }
         let credential_state = match resolve_credential_state(&session, credentials).await {
             Ok(state) => state,
             Err(error) => {
-                if credentials.delete_all(&id).await.is_err() {
-                    self.queue_credential_cleanup(&id);
-                    let _ = self.persist();
-                }
+                self.cleanup_credentials_or_queue(&id, credentials).await;
                 return Err(error);
             }
         };
@@ -167,9 +161,8 @@ impl SessionService {
         self.store.sessions.push(session.clone());
         if let Err(error) = self.persist() {
             self.store = previous;
-            if changes.changed() && credentials.delete_all(&id).await.is_err() {
-                self.queue_credential_cleanup(&id);
-                let _ = self.persist();
+            if changes.changed() {
+                self.cleanup_credentials_or_queue(&id, credentials).await;
             }
             return Err(error);
         }

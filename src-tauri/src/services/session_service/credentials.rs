@@ -198,6 +198,17 @@ impl SessionService {
         }
     }
 
+    pub(super) async fn cleanup_credentials_or_queue(
+        &mut self,
+        session_id: &str,
+        credentials: &CredentialService,
+    ) {
+        if credentials.delete_all(session_id).await.is_err() {
+            self.queue_credential_cleanup(session_id);
+            let _ = self.persist();
+        }
+    }
+
     pub(super) fn queue_credential_cleanup(&mut self, session_id: &str) {
         if !self
             .store

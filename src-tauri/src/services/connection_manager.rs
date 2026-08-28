@@ -240,6 +240,11 @@ enum AuthenticationOutcome {
     CredentialRequired(CredentialKind),
 }
 
+enum TransportError {
+    Timeout,
+    Handshake(Box<Option<HostObservation>>),
+}
+
 impl ConnectionManager {
     pub fn new(app_data_dir: &Path) -> Self {
         Self {
@@ -252,6 +257,137 @@ impl ConnectionManager {
                 challenges: Mutex::new(HashMap::new()),
                 transfers: Mutex::new(HashMap::new()),
             }),
+        }
+    }
+
+    fn ssh_client(
+        &self,
+        session: &StoredSession,
+    ) -> (SshClient, Arc<StdMutex<Option<HostObservation>>>) {
+        let observation = Arc::new(StdMutex::new(None));
+        let handler = SshClient {
+            host: session.host.clone(),
+            port: session.port,
+            known_hosts_path: self.inner.known_hosts_path.clone(),
+            known_hosts_lock: self.inner.known_hosts_lock.clone(),
+            observation: observation.clone(),
+        };
+        (handler, observation)
+    }
+
+    async fn open_transport(
+        &self,
+        session: &StoredSession,
+    ) -> Result<client::Handle<SshClient>, TransportError> {
+        let (handler, observation) = self.ssh_client(session);
+        let config = client::Config {
+            keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_max: 3,
+            nodelay: true,
+            ..Default::default()
+        };
+        let connection = time::timeout(
+            CONNECT_TIMEOUT,
+            client::connect(
+                Arc::new(config),
+                (session.host.as_str(), session.port),
+                handler,
+            ),
+        )
+        .await
+        .map_err(|_| TransportError::Timeout)?;
+
+        connection.map_err(|_| {
+            TransportError::Handshake(Box::new(
+                observation.lock().ok().and_then(|mut value| value.take()),
+            ))
+        })
+    }
+
+    async fn browser_sftp_and_home_path(
+        handle: &mut client::Handle<SshClient>,
+    ) -> (Option<Arc<SftpSession>>, String) {
+        let browser_sftp = open_sftp_with_handle(handle).await.ok().map(Arc::new);
+        let home_path = match &browser_sftp {
+            Some(sftp) => time::timeout(SFTP_TIMEOUT, sftp.canonicalize("."))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(|path| normalize_remote_path(&path).ok())
+                .unwrap_or_else(|| "/".to_owned()),
+            None => "/".to_owned(),
+        };
+        (browser_sftp, home_path)
+    }
+
+    async fn authenticate_handle(
+        &self,
+        handle: &mut client::Handle<SshClient>,
+        session: &StoredSession,
+        credentials: &CredentialService,
+        one_time: Option<Zeroizing<String>>,
+    ) -> Result<AuthenticationOutcome, AppError> {
+        authenticate(handle, session, credentials, one_time).await
+    }
+
+    async fn register_connection(&self, connection_id: String, entry: Arc<ConnectionEntry>) {
+        let session_id = entry.session_id.clone();
+        self.inner
+            .connections
+            .write()
+            .await
+            .insert(connection_id.clone(), entry);
+        self.inner
+            .session_connections
+            .write()
+            .await
+            .entry(session_id)
+            .or_default()
+            .insert(connection_id);
+    }
+
+    async fn map_transport_error(
+        &self,
+        session: &StoredSession,
+        error: TransportError,
+    ) -> Result<ConnectResult, AppError> {
+        match error {
+            TransportError::Timeout => Err(AppError::Connection("连接服务器超时".to_owned())),
+            TransportError::Handshake(observed) => match *observed {
+                Some(HostObservation::Unknown(key)) => Ok(ConnectResult::HostKeyRequired {
+                    challenge: self.register_challenge(session, key).await,
+                }),
+                Some(HostObservation::Changed { old_key, new_key }) => {
+                    Ok(ConnectResult::HostKeyChanged {
+                        change: HostKeyChange {
+                            host: session.host.clone(),
+                            port: session.port,
+                            algorithm: key_algorithm(&new_key),
+                            old_fingerprint: key_fingerprint(&old_key),
+                            new_fingerprint: key_fingerprint(&new_key),
+                        },
+                    })
+                }
+                Some(HostObservation::Failure) => {
+                    Err(AppError::Persistence("无法校验主机密钥存储".to_owned()))
+                }
+                None => Err(AppError::Connection("无法建立 SSH 连接".to_owned())),
+            },
+        }
+    }
+
+    fn map_headless_transport_error(error: TransportError) -> AppError {
+        match error {
+            TransportError::Timeout => AppError::Connection("连接服务器超时".to_owned()),
+            TransportError::Handshake(observed) => match *observed {
+                Some(HostObservation::Unknown(_)) => {
+                    AppError::Connection("主机密钥尚未信任，请先在 FsTTY 中确认".to_owned())
+                }
+                Some(HostObservation::Changed { .. }) => {
+                    AppError::Connection("主机密钥已变化，请先在 FsTTY 中确认".to_owned())
+                }
+                _ => AppError::Connection("无法建立 SSH 连接".to_owned()),
+            },
         }
     }
 
@@ -313,65 +449,19 @@ impl ConnectionManager {
         credential_input: ConnectionCredentialInput<'_>,
         cancellation: &Arc<ConnectCancellation>,
     ) -> Result<ConnectResult, AppError> {
-        let observation = Arc::new(StdMutex::new(None));
-        let handler = SshClient {
-            host: session.host.clone(),
-            port: session.port,
-            known_hosts_path: self.inner.known_hosts_path.clone(),
-            known_hosts_lock: self.inner.known_hosts_lock.clone(),
-            observation: observation.clone(),
-        };
-        let config = client::Config {
-            keepalive_interval: Some(Duration::from_secs(30)),
-            keepalive_max: 3,
-            nodelay: true,
-            ..Default::default()
-        };
-        let connection = time::timeout(
-            CONNECT_TIMEOUT,
-            client::connect(
-                Arc::new(config),
-                (session.host.as_str(), session.port),
-                handler,
-            ),
-        )
-        .await;
-
-        let mut handle = match connection {
-            Err(_) => return Err(AppError::Connection("连接服务器超时".to_owned())),
-            Ok(Ok(handle)) => handle,
-            Ok(Err(_)) => {
-                let observed = observation.lock().ok().and_then(|mut value| value.take());
-                return match observed {
-                    Some(HostObservation::Unknown(key)) => Ok(ConnectResult::HostKeyRequired {
-                        challenge: self.register_challenge(&session, key).await,
-                    }),
-                    Some(HostObservation::Changed { old_key, new_key }) => {
-                        Ok(ConnectResult::HostKeyChanged {
-                            change: HostKeyChange {
-                                host: session.host,
-                                port: session.port,
-                                algorithm: key_algorithm(&new_key),
-                                old_fingerprint: key_fingerprint(&old_key),
-                                new_fingerprint: key_fingerprint(&new_key),
-                            },
-                        })
-                    }
-                    Some(HostObservation::Failure) => {
-                        Err(AppError::Persistence("无法校验主机密钥存储".to_owned()))
-                    }
-                    None => Err(AppError::Connection("无法建立 SSH 连接".to_owned())),
-                };
-            }
+        let mut handle = match self.open_transport(&session).await {
+            Ok(handle) => handle,
+            Err(error) => return self.map_transport_error(&session, error).await,
         };
 
-        match authenticate(
-            &mut handle,
-            &session,
-            credential_input.service,
-            credential_input.one_time,
-        )
-        .await?
+        match self
+            .authenticate_handle(
+                &mut handle,
+                &session,
+                credential_input.service,
+                credential_input.one_time,
+            )
+            .await?
         {
             AuthenticationOutcome::Authenticated => {}
             AuthenticationOutcome::CredentialRequired(credential_kind) => {
@@ -402,16 +492,7 @@ impl ConnectionManager {
             .await?;
 
         // PTY 与 Shell 请求连续完成，避免 SFTP 初始化插入终端启动握手。
-        let browser_sftp = open_sftp_with_handle(&mut handle).await.ok().map(Arc::new);
-        let home_path = match &browser_sftp {
-            Some(sftp) => time::timeout(SFTP_TIMEOUT, sftp.canonicalize("."))
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .and_then(|path| normalize_remote_path(&path).ok())
-                .unwrap_or_else(|| "/".to_owned()),
-            None => "/".to_owned(),
-        };
+        let (browser_sftp, home_path) = Self::browser_sftp_and_home_path(&mut handle).await;
 
         let connection_id = Uuid::new_v4().to_string();
         let (terminal_tx, terminal_rx) = mpsc::channel(128);
@@ -434,18 +515,7 @@ impl ConnectionManager {
         {
             return Err(AppError::Connection("连接已取消".to_owned()));
         }
-        self.inner
-            .connections
-            .write()
-            .await
-            .insert(connection_id.clone(), entry);
-        self.inner
-            .session_connections
-            .write()
-            .await
-            .entry(session.id.clone())
-            .or_default()
-            .insert(connection_id.clone());
+        self.register_connection(connection_id.clone(), entry).await;
         drop(connecting);
 
         let (terminal_reader, terminal_writer) = terminal.split();
@@ -486,43 +556,14 @@ impl ConnectionManager {
         if session.username.trim().is_empty() {
             return Err(AppError::Validation("当前会话缺少用户名".to_owned()));
         }
-        let observation = Arc::new(StdMutex::new(None));
-        let handler = SshClient {
-            host: session.host.clone(),
-            port: session.port,
-            known_hosts_path: self.inner.known_hosts_path.clone(),
-            known_hosts_lock: self.inner.known_hosts_lock.clone(),
-            observation: observation.clone(),
-        };
-        let config = client::Config {
-            keepalive_interval: Some(Duration::from_secs(30)),
-            keepalive_max: 3,
-            nodelay: true,
-            ..Default::default()
-        };
-        let mut handle = time::timeout(
-            CONNECT_TIMEOUT,
-            client::connect(
-                Arc::new(config),
-                (session.host.as_str(), session.port),
-                handler,
-            ),
-        )
-        .await
-        .map_err(|_| AppError::Connection("连接服务器超时".to_owned()))?
-        .map_err(|_| {
-            let observed = observation.lock().ok().and_then(|mut value| value.take());
-            match observed {
-                Some(HostObservation::Unknown(_)) => {
-                    AppError::Connection("主机密钥尚未信任，请先在 FsTTY 中确认".to_owned())
-                }
-                Some(HostObservation::Changed { .. }) => {
-                    AppError::Connection("主机密钥已变化，请先在 FsTTY 中确认".to_owned())
-                }
-                _ => AppError::Connection("无法建立 SSH 连接".to_owned()),
-            }
-        })?;
-        match authenticate(&mut handle, &session, credentials, None).await? {
+        let mut handle = self
+            .open_transport(&session)
+            .await
+            .map_err(Self::map_headless_transport_error)?;
+        match self
+            .authenticate_handle(&mut handle, &session, credentials, None)
+            .await?
+        {
             AuthenticationOutcome::Authenticated => {}
             AuthenticationOutcome::CredentialRequired(_) => {
                 return Err(AppError::Authentication(
@@ -530,16 +571,7 @@ impl ConnectionManager {
                 ));
             }
         }
-        let browser_sftp = open_sftp_with_handle(&mut handle).await.ok().map(Arc::new);
-        let home_path = match &browser_sftp {
-            Some(sftp) => time::timeout(SFTP_TIMEOUT, sftp.canonicalize("."))
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .and_then(|path| normalize_remote_path(&path).ok())
-                .unwrap_or_else(|| "/".to_owned()),
-            None => "/".to_owned(),
-        };
+        let (browser_sftp, home_path) = Self::browser_sftp_and_home_path(&mut handle).await;
         let connection_id = Uuid::new_v4().to_string();
         let entry = Arc::new(ConnectionEntry {
             session_id: session.id.clone(),
@@ -548,18 +580,7 @@ impl ConnectionManager {
             terminal_tx: None,
             browser_sftp: browser_sftp.clone(),
         });
-        self.inner
-            .connections
-            .write()
-            .await
-            .insert(connection_id.clone(), entry);
-        self.inner
-            .session_connections
-            .write()
-            .await
-            .entry(session.id.clone())
-            .or_default()
-            .insert(connection_id.clone());
+        self.register_connection(connection_id.clone(), entry).await;
         Ok(SshConnection {
             connection_id,
             session_id: session.id,

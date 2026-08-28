@@ -296,4 +296,69 @@ describe("设置状态控制器", () => {
     await act(async () => Promise.resolve());
     expect(result.current.configDialog).toBeNull();
   });
+
+  it("权限目录加载失败时显示失败状态并清空旧结果", async () => {
+    apiMocks.getMcpPermissionCatalog.mockRejectedValueOnce(new Error("catalog failed"));
+    const { result } = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+
+    await act(async () => Promise.resolve());
+
+    expect(result.current.permissionCatalog).toEqual([]);
+    expect(result.current.permissionCatalogFailed).toBe(true);
+  });
+
+  it("权限保存失败后保留脏状态，并允许再次保存恢复", async () => {
+    apiMocks.listSessions.mockResolvedValueOnce([{ name: "生产", sessions: [] }]);
+    const nextSettings = {
+      ...settings,
+      mcpGroupPermissions: [
+        {
+          groupName: "生产",
+          enabled: true,
+          sessionRead: true,
+          fileRead: true,
+          fileTransfer: false,
+          commandExecute: false,
+          fileWrite: false,
+          fileDelete: false,
+          commandPolicy: { enabled: false, mode: "allow" as const, allowRules: [], excludeRules: [] },
+        },
+      ],
+    };
+    apiMocks.updateMcpSettings
+      .mockRejectedValueOnce(new Error("save failed"))
+      .mockResolvedValueOnce(nextSettings);
+    const { result } = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+
+    await act(async () => Promise.resolve());
+    act(() => result.current.updatePermission("生产", { enabled: true }));
+    await act(async () => result.current.save("permissions"));
+    expect(result.current.permissionError).toBe("save failed");
+    expect(result.current.permissionsDirty).toBe(true);
+    expect(result.current.saving).toBe(false);
+
+    await act(async () => result.current.save("permissions"));
+    expect(result.current.permissionError).toBeNull();
+    expect(result.current.permissionSaveSucceeded).toBe(true);
+    expect(result.current.permissionsDirty).toBe(false);
+  });
+
+  it("配置加载失败会结束加载状态并保留对话框", async () => {
+    apiMocks.getMcpHttpClientConfig.mockRejectedValueOnce(new Error("config failed"));
+    const { result } = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+
+    act(() => result.current.openConfigDialog("http"));
+    await act(async () => Promise.resolve());
+
+    expect(result.current.configDialog).toMatchObject({
+      error: "config failed",
+      loading: false,
+    });
+  });
 });

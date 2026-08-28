@@ -67,3 +67,60 @@ pub(super) fn write_file_audit_input(
         "base64": base64,
     })
 }
+
+pub(super) fn redact_audit_value(value: Value) -> Value {
+    match value {
+        Value::Object(mut object) => {
+            for (key, value) in &mut object {
+                if is_sensitive_audit_key(key) {
+                    *value = Value::String("[已隐藏]".to_owned());
+                } else {
+                    *value = redact_audit_value(std::mem::take(value));
+                }
+            }
+            Value::Object(object)
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(redact_audit_value).collect()),
+        other => other,
+    }
+}
+
+fn is_sensitive_audit_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "password",
+        "passphrase",
+        "credential",
+        "privatekey",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|part| key.contains(part))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recursively_hides_sensitive_audit_fields() {
+        let value = redact_audit_value(json!({
+            "command": "visible",
+            "password": "secret-password",
+            "nested": {
+                "passphrase": "secret-passphrase",
+                "items": [{"token": "secret-token"}],
+            },
+        }));
+        let serialized = value.to_string();
+
+        assert_eq!(value["command"], "visible");
+        assert_eq!(value["password"], "[已隐藏]");
+        assert_eq!(value["nested"]["passphrase"], "[已隐藏]");
+        assert_eq!(value["nested"]["items"][0]["token"], "[已隐藏]");
+        assert!(!serialized.contains("secret-password"));
+        assert!(!serialized.contains("secret-passphrase"));
+        assert!(!serialized.contains("secret-token"));
+    }
+}

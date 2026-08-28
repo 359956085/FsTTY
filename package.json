@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
-    "verify": "npm run typecheck && npm run lint && npm run test",
+    "check:version": "node scripts/check-version.mjs",
+    "verify": "npm run check:version && npm run typecheck && npm run lint && npm run test",
     "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "verify:all": "npm run verify && npm run build && npm run verify:rust",
     "tauri": "tauri"

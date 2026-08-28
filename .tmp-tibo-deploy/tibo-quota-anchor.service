@@ -1,0 +1,27 @@
+[Unit]
+Description=tibo 周额度监听与5h锚定器
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/codex-quota-ping
+RuntimeDirectory=tibo-quota-anchor
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/python3 /home/ubuntu/codex-quota-ping/quota-window-watcher.py --daemon
+Restart=on-failure
+RestartSec=10
+MemoryHigh=192M
+MemoryMax=256M
+CPUQuota=50%
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

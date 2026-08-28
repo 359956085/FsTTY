@@ -72,8 +72,9 @@ pub(super) fn persist_store(
         }
     }
     if fs::rename(temp_path, store_path).is_err() {
+        // 提交失败时优先恢复备份原文件，临时文件保留给下一次写入覆盖，避免丢失最后可信版本。
         if !store_path.exists() && backup_path.exists() {
-            let _ = fs::copy(backup_path, store_path);
+            let _ = fs::rename(backup_path, store_path);
         }
         return Err(AppError::Persistence("无法提交会话数据".to_owned()));
     }

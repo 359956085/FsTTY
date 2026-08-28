@@ -25,6 +25,7 @@ import {
 } from "./sessionRemoteFiles";
 import { createSessionRuntimeController } from "./sessionRuntimeController";
 import { createTransferChannel, fileNameFromPath } from "./sessionTransfer";
+import { runTransferWithConflictRetry, type TransferAttemptResult } from "./transferConflict";
 
 export interface TransferProgress {
   id: string;
@@ -370,7 +371,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           const fileName = fileNameFromPath(localPath);
           const run = async (
             overwrite: boolean,
-          ): Promise<"uploaded" | "skipped" | "failed" | "cancelled"> => {
+          ): Promise<TransferAttemptResult<"uploaded">> => {
             const transferId = crypto.randomUUID();
             const transferGeneration = runtimeControllerRef.current.beginTransfer(
               sessionId,
@@ -404,49 +405,35 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
                 overwrite,
                 progress,
               );
-              return transferIsCurrent() ? "uploaded" : "cancelled";
+              return transferIsCurrent()
+                ? { status: "completed", value: "uploaded" }
+                : { status: "cancelled" };
             } catch (error) {
-              if (!transferIsCurrent()) return "cancelled";
-              const info = readApiError(error, errorFallback);
-              if (info.kind === "conflict" && !overwrite) {
-                runtimeControllerRef.current.cancelTransfer(sessionId);
-                clearTransfer(transferId);
-                let accepted = false;
-                try {
-                  accepted = await confirm(
-                    i18n.t("sessions.remoteOverwriteConfirm", { name: fileName }),
-                    {
-                      title: i18n.t("sessions.overwriteTitle"),
-                      kind: "warning",
-                      okLabel: i18n.t("sessions.overwrite"),
-                      cancelLabel: i18n.t("sessions.skip"),
-                    },
-                  );
-                } catch {
-                  return "failed";
-                }
-                if (!batchIsActive()) {
-                  return "cancelled";
-                }
-                if (accepted) {
-                  return run(true);
-                }
-                return "skipped";
-              }
+              if (!transferIsCurrent()) return { status: "cancelled" };
               runtimeControllerRef.current.cancelTransfer(sessionId);
               clearTransfer(transferId);
-              return "failed";
+              throw error;
             }
           };
 
-          const result = await run(false);
-          if (result === "cancelled") {
+          const result = await runTransferWithConflictRetry(run, {
+            isCurrent: batchIsActive,
+            isConflict: (error) => readApiError(error, errorFallback).kind === "conflict",
+            confirmOverwrite: () =>
+              confirm(i18n.t("sessions.remoteOverwriteConfirm", { name: fileName }), {
+                title: i18n.t("sessions.overwriteTitle"),
+                kind: "warning",
+                okLabel: i18n.t("sessions.overwrite"),
+                cancelLabel: i18n.t("sessions.skip"),
+              }),
+          });
+          if (result.kind === "cancelled") {
             cancelled = true;
             break;
           }
-          if (result === "uploaded") uploaded += 1;
-          if (result === "skipped") skipped += 1;
-          if (result === "failed") failed += 1;
+          if (result.kind === "completed") uploaded += 1;
+          if (result.kind === "skipped") skipped += 1;
+          if (result.kind === "failed") failed += 1;
         }
       } finally {
         const ownsBatch = runtimeControllerRef.current.endUploadBatch(sessionId, batchToken);
@@ -541,7 +528,9 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }
         const connectionId = selectedRuntime.connection.connectionId;
 
-        const run = async (overwrite: boolean): Promise<void> => {
+        const run = async (
+          overwrite: boolean,
+        ): Promise<TransferAttemptResult<void>> => {
           const transferId = crypto.randomUUID();
           const transferGeneration = runtimeControllerRef.current.beginTransfer(
             sessionId,
@@ -573,40 +562,35 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
               overwrite,
               progress,
             );
+            return transferIsCurrent()
+              ? { status: "completed", value: undefined }
+              : { status: "cancelled" };
           } catch (error) {
-            if (!transferIsCurrent()) return;
-            const info = readApiError(error, errorFallback);
-            if (info.kind === "conflict" && !overwrite) {
-              runtimeControllerRef.current.cancelTransfer(sessionId);
-              updateRuntime(sessionId, (current) => ({
-                ...current,
-                transfer: current.transfer?.id === transferId ? null : current.transfer,
-              }));
-              const accepted = await confirm(i18n.t("sessions.localOverwriteConfirm"), {
-                title: i18n.t("sessions.overwriteTitle"),
-                kind: "warning",
-                okLabel: i18n.t("sessions.overwrite"),
-                cancelLabel: i18n.t("sessions.cancel"),
-              });
-              if (
-                accepted &&
-                runtimeControllerRef.current.isActive() &&
-                runtimesRef.current[sessionId]?.connection?.connectionId === connectionId
-              ) {
-                await run(true);
-                return;
-              }
-              return;
-            }
+            if (!transferIsCurrent()) return { status: "cancelled" };
             runtimeControllerRef.current.cancelTransfer(sessionId);
             updateRuntime(sessionId, (current) => ({
               ...current,
               transfer: current.transfer?.id === transferId ? null : current.transfer,
-              error: info.message,
             }));
+            throw error;
           }
         };
-        await run(false);
+        const result = await runTransferWithConflictRetry(run, {
+          isCurrent: () =>
+            runtimeControllerRef.current.isActive() &&
+            runtimesRef.current[sessionId]?.connection?.connectionId === connectionId,
+          isConflict: (error) => readApiError(error, errorFallback).kind === "conflict",
+          confirmOverwrite: () =>
+            confirm(i18n.t("sessions.localOverwriteConfirm"), {
+              title: i18n.t("sessions.overwriteTitle"),
+              kind: "warning",
+              okLabel: i18n.t("sessions.overwrite"),
+              cancelLabel: i18n.t("sessions.cancel"),
+            }),
+        });
+        if (result.kind === "failed") {
+          throw result.error;
+        }
       } catch (error) {
         if (
           !initialConnectionId ||
