@@ -68,6 +68,16 @@ pub(super) fn write_file_audit_input(
     })
 }
 
+pub(super) fn command_audit_input(session_id: &str, command: &str, timeout_seconds: u64) -> Value {
+    // 命令本身可能携带口令、令牌或业务数据，只记录审计所需的大小和超时。
+    json!({
+        "sessionId": session_id,
+        "commandOmitted": true,
+        "commandBytes": command.len(),
+        "timeoutSeconds": timeout_seconds,
+    })
+}
+
 pub(super) fn redact_audit_value(value: Value) -> Value {
     match value {
         Value::Object(mut object) => {
@@ -122,5 +132,14 @@ mod tests {
         assert!(!serialized.contains("secret-password"));
         assert!(!serialized.contains("secret-passphrase"));
         assert!(!serialized.contains("secret-token"));
+    }
+
+    #[test]
+    fn command_audit_does_not_record_command_text() {
+        let value = command_audit_input("session-1", "curl -H token=secret", 60);
+
+        assert_eq!(value["commandOmitted"], true);
+        assert_eq!(value["commandBytes"], 20);
+        assert!(!value.to_string().contains("secret"));
     }
 }

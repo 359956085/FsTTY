@@ -7,9 +7,14 @@ import type { DeviceStatus, FileEntry, SshConnection } from "../../shared/api/ty
 import { useSessionConnections } from "./useSessionConnections";
 
 const mocks = vi.hoisted(() => ({
+  confirm: vi.fn(),
   disconnectSession: vi.fn(),
+  downloadFile: vi.fn(),
   getDeviceStatus: vi.fn(),
   listRemoteFiles: vi.fn(),
+  open: vi.fn(),
+  save: vi.fn(),
+  uploadFile: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -19,30 +24,36 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  confirm: vi.fn(),
-  open: vi.fn(),
-  save: vi.fn(),
+  confirm: mocks.confirm,
+  open: mocks.open,
+  save: mocks.save,
 }));
 
 vi.mock("../../shared/api/client", () => ({
   api: {
     disconnectSession: mocks.disconnectSession,
+    downloadFile: mocks.downloadFile,
     getDeviceStatus: mocks.getDeviceStatus,
     listRemoteFiles: mocks.listRemoteFiles,
+    uploadFile: mocks.uploadFile,
+    cancelTransfer: vi.fn(),
   },
 }));
 
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 const connection: SshConnection = {
@@ -75,8 +86,14 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.confirm.mockResolvedValue(false);
   mocks.disconnectSession.mockResolvedValue(undefined);
+  mocks.downloadFile.mockResolvedValue(undefined);
   mocks.getDeviceStatus.mockResolvedValue(deviceStatus);
+  mocks.listRemoteFiles.mockResolvedValue([]);
+  mocks.open.mockResolvedValue(null);
+  mocks.save.mockResolvedValue(null);
+  mocks.uploadFile.mockResolvedValue(undefined);
 });
 
 describe("会话运行时异步生命周期", () => {
@@ -168,6 +185,145 @@ describe("会话运行时异步生命周期", () => {
 
     act(() => result.current.pruneRuntimes(new Set()));
     await act(async () => Promise.resolve());
+
+    expect(unhandled).not.toHaveBeenCalled();
+    window.removeEventListener("unhandledrejection", unhandled);
+  });
+
+  it("连接中关闭会话时用会话 ID 取消后端尝试", async () => {
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleTerminalState("session-1", "connecting"));
+
+    await act(async () => {
+      await result.current.disconnect("session-1");
+    });
+
+    expect(mocks.disconnectSession).toHaveBeenCalledWith("session-1");
+    expect(result.current.runtimes["session-1"]?.connectionState).toBe("disconnected");
+  });
+
+  it("上传冲突确认后只使用覆盖参数重试一次", async () => {
+    mocks.uploadFile
+      .mockRejectedValueOnce({ kind: "conflict", message: "目标已存在" })
+      .mockResolvedValueOnce(undefined);
+    mocks.confirm.mockResolvedValueOnce(true);
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleConnected("session-1", connection));
+
+    await act(async () => {
+      await result.current.uploadFiles("session-1", ["C:\\tmp\\report.txt"]);
+    });
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadFile).toHaveBeenNthCalledWith(
+      1,
+      "connection-1",
+      expect.any(String),
+      "C:\\tmp\\report.txt",
+      "/home",
+      false,
+      expect.anything(),
+    );
+    expect(mocks.uploadFile).toHaveBeenNthCalledWith(
+      2,
+      "connection-1",
+      expect.any(String),
+      "C:\\tmp\\report.txt",
+      "/home",
+      true,
+      expect.anything(),
+    );
+  });
+
+  it("下载冲突确认后只使用覆盖参数重试一次", async () => {
+    mocks.save.mockResolvedValueOnce("C:\\downloads\\report.txt");
+    mocks.downloadFile
+      .mockRejectedValueOnce({ kind: "conflict", message: "目标已存在" })
+      .mockResolvedValueOnce(undefined);
+    mocks.confirm.mockResolvedValueOnce(true);
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleConnected("session-1", connection));
+
+    await act(async () => {
+      await result.current.downloadFile("session-1", file("/home/report.txt"));
+    });
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.downloadFile).toHaveBeenNthCalledWith(
+      1,
+      "connection-1",
+      expect.any(String),
+      "/home/report.txt",
+      "C:\\downloads\\report.txt",
+      false,
+      expect.anything(),
+    );
+    expect(mocks.downloadFile).toHaveBeenNthCalledWith(
+      2,
+      "connection-1",
+      expect.any(String),
+      "/home/report.txt",
+      "C:\\downloads\\report.txt",
+      true,
+      expect.anything(),
+    );
+  });
+
+  it("重连后丢弃旧下载失败，不污染新连接状态", async () => {
+    const request = deferred<void>();
+    mocks.save.mockResolvedValueOnce("C:\\downloads\\report.txt");
+    mocks.downloadFile.mockReturnValueOnce(request.promise);
+    const nextConnection = { ...connection, connectionId: "connection-2" };
+    const { result } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleConnected("session-1", connection));
+
+    let oldDownload!: Promise<void>;
+    act(() => {
+      oldDownload = result.current.downloadFile(
+        "session-1",
+        file("/home/report.txt"),
+      );
+    });
+    await act(async () => Promise.resolve());
+    act(() => result.current.handleConnected("session-1", nextConnection));
+    request.reject(new Error("旧连接失败"));
+    await act(async () => oldDownload);
+
+    expect(result.current.runtimes["session-1"]?.connection?.connectionId).toBe(
+      "connection-2",
+    );
+    expect(result.current.runtimes["session-1"]?.error).toBeNull();
+  });
+
+  it("卸载后传输失败不再更新状态或产生未处理拒绝", async () => {
+    const request = deferred<void>();
+    mocks.save.mockResolvedValueOnce("C:\\downloads\\report.txt");
+    mocks.downloadFile.mockReturnValueOnce(request.promise);
+    const unhandled = vi.fn();
+    window.addEventListener("unhandledrejection", unhandled);
+    const { result, unmount } = renderHook(() =>
+      useSessionConnections({ errorFallback: "未知错误" }),
+    );
+    act(() => result.current.handleConnected("session-1", connection));
+    let download!: Promise<void>;
+    act(() => {
+      download = result.current.downloadFile(
+        "session-1",
+        file("/home/report.txt"),
+      );
+    });
+    await act(async () => Promise.resolve());
+    unmount();
+    request.reject(new Error("卸载时失败"));
+    await download;
 
     expect(unhandled).not.toHaveBeenCalled();
     window.removeEventListener("unhandledrejection", unhandled);

@@ -58,6 +58,18 @@ impl ConnectionCache {
         );
     }
 
+    pub(super) async fn remove_if_matches(&self, session_id: &str, connection_id: &str) -> bool {
+        let mut entries = self.inner.entries.lock().await;
+        if entries
+            .get(session_id)
+            .is_some_and(|entry| entry.connection_id == connection_id)
+        {
+            entries.remove(session_id);
+            return true;
+        }
+        false
+    }
+
     pub(super) async fn take_if_idle(
         &self,
         session_id: &str,
@@ -138,6 +150,22 @@ mod tests {
         assert!(matches!(
             cache.lookup("a", Duration::from_secs(300)).await,
             CacheLookup::Reusable(ref id) if id == "new"
+        ));
+    }
+
+    #[tokio::test]
+    async fn 只移除仍匹配的失效缓存() {
+        let cache = ConnectionCache::default();
+        cache.insert("a".to_owned(), "old".to_owned()).await;
+        assert!(!cache.remove_if_matches("a", "new").await);
+        assert!(matches!(
+            cache.lookup("a", Duration::from_secs(300)).await,
+            CacheLookup::Reusable(ref id) if id == "old"
+        ));
+        assert!(cache.remove_if_matches("a", "old").await);
+        assert!(matches!(
+            cache.lookup("a", Duration::from_secs(300)).await,
+            CacheLookup::Missing
         ));
     }
 }

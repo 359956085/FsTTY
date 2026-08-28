@@ -19,6 +19,10 @@ function readVersion(relativePath, pattern) {
 const versions = {
   packageJson: readJson("package.json").version,
   cargo: readVersion("src-tauri/Cargo.toml", /^version\s*=\s*"([^"]+)"/m),
+  cargoLock: readVersion(
+    "src-tauri/Cargo.lock",
+    /\[\[package\]\]\s+name\s*=\s*"fstty"\s+version\s*=\s*"([^"]+)"/m,
+  ),
   tauri: readJson("src-tauri/tauri.conf.json").version,
   readme: readVersion("README.md", /badge\/version-([^/-]+)-/),
   readmeEnglish: readVersion("README.en-US.md", /badge\/version-([^/-]+)-/),

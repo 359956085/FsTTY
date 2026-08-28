@@ -277,6 +277,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     async (sessionId: string) => {
       const runtime = runtimesRef.current[sessionId];
       if (!runtime?.connection) {
+        if (runtime?.connectionState === "connecting") {
+          // 连接尚未返回 ID 时用会话 ID 取消后端全部进行中的连接尝试。
+          await api.disconnectSession(sessionId).catch(() => undefined);
+        }
         handleTerminalState(sessionId, "disconnected");
         return;
       }

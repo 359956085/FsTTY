@@ -46,14 +46,30 @@ impl SessionService {
 
         let (store, primary_trusted, blocked_error) = match read_store(&store_path) {
             Ok(Some(store)) => (store, true, None),
-            Ok(None) => match read_store(&backup_path) {
+            primary_result => match read_store(&backup_path) {
                 Ok(Some(store)) => (store, false, None),
-                Ok(None) => (SessionStore::default(), true, None),
-                Err(error) => (SessionStore::default(), false, Some(error)),
-            },
-            Err(primary_error) => match read_store(&backup_path) {
-                Ok(Some(store)) => (store, false, None),
-                _ => (SessionStore::default(), false, Some(primary_error)),
+                backup_result => match read_store(&temp_path) {
+                    Ok(Some(store)) => (store, false, None),
+                    Ok(None)
+                        if matches!(&primary_result, Ok(None))
+                            && matches!(&backup_result, Ok(None)) =>
+                    {
+                        (SessionStore::default(), true, None)
+                    }
+                    Ok(None) => (
+                        SessionStore::default(),
+                        false,
+                        Some(first_persistence_error(primary_result, backup_result)),
+                    ),
+                    Err(temp_error) => (
+                        SessionStore::default(),
+                        false,
+                        Some(first_persistence_error(
+                            primary_result,
+                            backup_result.or(Err(temp_error)),
+                        )),
+                    ),
+                },
             },
         };
 
@@ -497,6 +513,16 @@ impl SessionService {
     }
 }
 
+fn first_persistence_error(
+    primary: Result<Option<SessionStore>, AppError>,
+    backup: Result<Option<SessionStore>, AppError>,
+) -> AppError {
+    primary
+        .err()
+        .or_else(|| backup.err())
+        .unwrap_or_else(|| AppError::Persistence("会话存储文件无法恢复".to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -815,6 +841,31 @@ mod tests {
         let reloaded = SessionService::load(&directory);
         assert_eq!(reloaded.store.sessions[0].name, "恢复版");
         assert!(reloaded.blocked_error.is_none());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn recovers_valid_temp_store_when_primary_and_backup_are_missing() {
+        let directory = test_directory("temp-recovery");
+        fs::create_dir_all(&directory).expect("无法创建测试目录");
+        let store = SessionStore {
+            version: STORE_VERSION,
+            sessions: vec![sample_session("临时恢复")],
+            pending_credential_cleanup_ids: vec![],
+        };
+        fs::write(
+            directory.join(STORE_TEMP_FILE),
+            serde_json::to_vec_pretty(&store).expect("无法生成临时会话数据"),
+        )
+        .expect("无法写入临时会话数据");
+
+        let mut service = SessionService::load(&directory);
+        assert_eq!(service.store.sessions[0].name, "临时恢复");
+        assert!(!service.primary_trusted);
+
+        service.persist().expect("无法提交临时恢复数据");
+        assert!(directory.join(STORE_FILE).is_file());
+        assert!(!directory.join(STORE_TEMP_FILE).exists());
         let _ = fs::remove_dir_all(directory);
     }
 

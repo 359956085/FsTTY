@@ -33,6 +33,12 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect(&self, connection_id: &str) -> Result<(), AppError> {
+        // IPC 仍接收原有字符串参数；当调用方传入会话 ID 时，同时取消该会话所有连接尝试。
+        self.disconnect_session(connection_id).await;
+        self.disconnect_connection(connection_id).await
+    }
+
+    async fn disconnect_connection(&self, connection_id: &str) -> Result<(), AppError> {
         let Some(entry) = self.take_connection(connection_id).await else {
             return Ok(());
         };
@@ -48,27 +54,25 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect_session(&self, session_id: &str) {
-        let cancellations = self
-            .inner
-            .connecting_sessions
-            .lock()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        for cancellation in cancellations {
-            cancellation.cancel();
-        }
-        let connection_ids = self
-            .inner
-            .session_connections
-            .read()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
+        let connection_ids = {
+            // 连接登记与取消共用同一顺序，避免快到的连接绕过本次断开。
+            let connecting = self.inner.connecting_sessions.lock().await;
+            if let Some(cancellations) = connecting.get(session_id) {
+                for cancellation in cancellations {
+                    cancellation.cancel();
+                }
+            }
+            self.inner
+                .registry
+                .read()
+                .await
+                .session_connections
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default()
+        };
         for connection_id in connection_ids {
-            let _ = self.disconnect(&connection_id).await;
+            let _ = self.disconnect_connection(&connection_id).await;
         }
     }
 

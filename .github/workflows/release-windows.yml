@@ -23,13 +23,17 @@ jobs:
         shell: pwsh
         run: node scripts/extract-release-notes.mjs "$env:GITHUB_REF_NAME"
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
       - run: npm ci
-      - run: npm run verify
-      - run: npm run build
-      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: 安装 Rust 依赖审计工具
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: 审计 Rust 依赖
+        run: cargo audit --file src-tauri/Cargo.lock
+      - run: npm run verify:all
       - name: 注入更新公钥
         shell: pwsh
         env:

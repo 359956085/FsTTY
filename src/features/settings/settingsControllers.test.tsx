@@ -17,10 +17,15 @@ const apiMocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
   updateAppSettings: vi.fn(),
   updateMcpSettings: vi.fn(),
+  writeText: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
   api: apiMocks,
+}));
+
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  writeText: apiMocks.writeText,
 }));
 
 vi.mock("./useMcpPromptCopy", () => ({
@@ -57,10 +62,12 @@ const settings: AppSettings = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 describe("设置状态控制器", () => {
@@ -246,6 +253,54 @@ describe("设置状态控制器", () => {
     expect(result.current.saving).toBe(false);
   });
 
+  it("MCP 保存期间忽略重复请求，不覆盖已提交结果", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.updateMcpSettings.mockReturnValue(request.promise);
+    const nextSettings = { ...settings, mcpEnabled: false };
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useMcpSettings({ onChange, settings, translate: (key) => key }),
+    );
+
+    let firstSave!: Promise<void>;
+    let duplicateSave!: Promise<void>;
+    act(() => {
+      firstSave = result.current.save("stdio", false);
+      duplicateSave = result.current.save("stdio", true);
+    });
+    await act(async () => Promise.resolve());
+    expect(apiMocks.updateMcpSettings).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      request.resolve(nextSettings);
+      await firstSave;
+      await duplicateSave;
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(nextSettings);
+    expect(result.current.saving).toBe(false);
+  });
+
+  it("MCP 卸载后不应用保存结果", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.updateMcpSettings.mockReturnValue(request.promise);
+    const onChange = vi.fn();
+    const { result, unmount } = renderHook(() =>
+      useMcpSettings({ onChange, settings, translate: (key) => key }),
+    );
+
+    let save!: Promise<void>;
+    act(() => {
+      save = result.current.save("stdio", false);
+    });
+    await act(async () => Promise.resolve());
+    unmount();
+    request.resolve(settings);
+    await save;
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("StrictMode 重放后轮换 Token 能结束处理中状态并显示错误", async () => {
     apiMocks.rotateMcpHttpToken.mockResolvedValueOnce(undefined);
     const { result } = renderHook(
@@ -360,5 +415,51 @@ describe("设置状态控制器", () => {
       error: "config failed",
       loading: false,
     });
+  });
+
+  it("MCP 配置复制在卸载后丢弃成功和失败结果", async () => {
+    const configRequest = deferred<string>();
+    const copyRequest = deferred<void>();
+    apiMocks.getMcpHttpClientConfig.mockReturnValue(configRequest.promise);
+    apiMocks.writeText.mockReturnValue(copyRequest.promise);
+    const { result, unmount } = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+
+    act(() => result.current.openConfigDialog("http"));
+    await act(async () => {
+      configRequest.resolve("mcp-config");
+      await Promise.resolve();
+    });
+    expect(result.current.configDialog?.config).toBe("mcp-config");
+
+    let copy!: Promise<void>;
+    act(() => {
+      copy = result.current.copyConfig();
+    });
+    unmount();
+    copyRequest.resolve();
+    await copy;
+    expect(apiMocks.writeText).toHaveBeenCalledWith("mcp-config");
+
+    const failedConfig = deferred<string>();
+    const failedCopy = deferred<void>();
+    apiMocks.getMcpHttpClientConfig.mockReturnValue(failedConfig.promise);
+    apiMocks.writeText.mockReturnValue(failedCopy.promise);
+    const second = renderHook(() =>
+      useMcpSettings({ onChange: vi.fn(), settings, translate: (key) => key }),
+    );
+    act(() => second.result.current.openConfigDialog("http"));
+    await act(async () => {
+      failedConfig.resolve("mcp-config-2");
+      await Promise.resolve();
+    });
+    let failed!: Promise<void>;
+    act(() => {
+      failed = second.result.current.copyConfig();
+    });
+    second.unmount();
+    failedCopy.reject(new Error("clipboard failed"));
+    await failed;
   });
 });

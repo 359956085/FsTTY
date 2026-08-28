@@ -108,11 +108,16 @@ pub struct OneTimeLogin {
 struct ConnectionManagerInner {
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
-    connections: RwLock<HashMap<String, Arc<ConnectionEntry>>>,
-    session_connections: RwLock<HashMap<String, HashSet<String>>>,
+    registry: RwLock<ConnectionRegistry>,
     connecting_sessions: Mutex<HashMap<String, Vec<Arc<ConnectCancellation>>>>,
     challenges: Mutex<HashMap<String, PendingHostKey>>,
     transfers: Mutex<HashMap<String, ActiveTransfer>>,
+}
+
+#[derive(Default)]
+struct ConnectionRegistry {
+    connections: HashMap<String, Arc<ConnectionEntry>>,
+    session_connections: HashMap<String, HashSet<String>>,
 }
 
 struct ConnectionEntry {
@@ -134,6 +139,8 @@ struct PendingHostKey {
 struct ConnectCancellation {
     cancelled: AtomicBool,
     notify: Notify,
+    registered_connection: StdMutex<Option<String>>,
+    registered_challenge: StdMutex<Option<String>>,
 }
 
 struct ConnectionCredentialInput<'a> {
@@ -146,6 +153,8 @@ impl ConnectCancellation {
         Self {
             cancelled: AtomicBool::new(false),
             notify: Notify::new(),
+            registered_connection: StdMutex::new(None),
+            registered_challenge: StdMutex::new(None),
         }
     }
 
@@ -159,6 +168,32 @@ impl ConnectCancellation {
             return;
         }
         self.notify.notified().await;
+    }
+
+    fn set_registered_connection(&self, connection_id: String) {
+        if let Ok(mut registered) = self.registered_connection.lock() {
+            *registered = Some(connection_id);
+        }
+    }
+
+    fn take_registered_connection(&self) -> Option<String> {
+        self.registered_connection
+            .lock()
+            .ok()
+            .and_then(|mut registered| registered.take())
+    }
+
+    fn set_registered_challenge(&self, challenge_id: String) {
+        if let Ok(mut registered) = self.registered_challenge.lock() {
+            *registered = Some(challenge_id);
+        }
+    }
+
+    fn take_registered_challenge(&self) -> Option<String> {
+        self.registered_challenge
+            .lock()
+            .ok()
+            .and_then(|mut registered| registered.take())
     }
 }
 
@@ -251,8 +286,7 @@ impl ConnectionManager {
             inner: Arc::new(ConnectionManagerInner {
                 known_hosts_path: app_data_dir.join("known_hosts"),
                 known_hosts_lock: Arc::new(StdMutex::new(())),
-                connections: RwLock::new(HashMap::new()),
-                session_connections: RwLock::new(HashMap::new()),
+                registry: RwLock::new(ConnectionRegistry::default()),
                 connecting_sessions: Mutex::new(HashMap::new()),
                 challenges: Mutex::new(HashMap::new()),
                 transfers: Mutex::new(HashMap::new()),
@@ -330,33 +364,112 @@ impl ConnectionManager {
         authenticate(handle, session, credentials, one_time).await
     }
 
+    async fn begin_connection_attempt(&self, session_id: &str) -> Arc<ConnectCancellation> {
+        let cancellation = Arc::new(ConnectCancellation::new());
+        self.inner
+            .connecting_sessions
+            .lock()
+            .await
+            .entry(session_id.to_owned())
+            .or_default()
+            .push(cancellation.clone());
+        cancellation
+    }
+
+    async fn finish_connection_attempt(
+        &self,
+        session_id: &str,
+        cancellation: &Arc<ConnectCancellation>,
+    ) {
+        let mut connecting = self.inner.connecting_sessions.lock().await;
+        if let Some(attempts) = connecting.get_mut(session_id) {
+            attempts.retain(|current| !Arc::ptr_eq(current, cancellation));
+            if attempts.is_empty() {
+                connecting.remove(session_id);
+            }
+        }
+    }
+
     async fn register_connection(&self, connection_id: String, entry: Arc<ConnectionEntry>) {
         let session_id = entry.session_id.clone();
-        self.inner
-            .connections
-            .write()
-            .await
-            .insert(connection_id.clone(), entry);
-        self.inner
+        let mut registry = self.inner.registry.write().await;
+        registry.connections.insert(connection_id.clone(), entry);
+        registry
             .session_connections
-            .write()
-            .await
             .entry(session_id)
             .or_default()
             .insert(connection_id);
+    }
+
+    async fn register_connection_if_current(
+        &self,
+        session_id: &str,
+        cancellation: &Arc<ConnectCancellation>,
+        connection_id: String,
+        entry: Arc<ConnectionEntry>,
+    ) -> bool {
+        let _connecting = self.inner.connecting_sessions.lock().await;
+        if cancellation.cancelled.load(Ordering::Acquire)
+            || !_connecting.get(session_id).is_some_and(|attempts| {
+                attempts
+                    .iter()
+                    .any(|current| Arc::ptr_eq(current, cancellation))
+            })
+        {
+            return false;
+        }
+        self.register_connection(connection_id.clone(), entry).await;
+        cancellation.set_registered_connection(connection_id);
+        true
+    }
+
+    async fn connection_is_current(
+        &self,
+        session_id: &str,
+        cancellation: &Arc<ConnectCancellation>,
+        connection_id: &str,
+    ) -> bool {
+        let _connecting = self.inner.connecting_sessions.lock().await;
+        if cancellation.cancelled.load(Ordering::Acquire)
+            || !_connecting.get(session_id).is_some_and(|attempts| {
+                attempts
+                    .iter()
+                    .any(|current| Arc::ptr_eq(current, cancellation))
+            })
+        {
+            return false;
+        }
+        self.inner
+            .registry
+            .read()
+            .await
+            .connections
+            .get(connection_id)
+            .is_some_and(|entry| entry.session_id == session_id)
+    }
+
+    async fn cleanup_cancelled_connection(&self, cancellation: &ConnectCancellation) {
+        if let Some(connection_id) = cancellation.take_registered_connection() {
+            let _ = self.disconnect(&connection_id).await;
+        }
+        if let Some(challenge_id) = cancellation.take_registered_challenge() {
+            self.inner.challenges.lock().await.remove(&challenge_id);
+        }
     }
 
     async fn map_transport_error(
         &self,
         session: &StoredSession,
         error: TransportError,
+        cancellation: &ConnectCancellation,
     ) -> Result<ConnectResult, AppError> {
         match error {
             TransportError::Timeout => Err(AppError::Connection("连接服务器超时".to_owned())),
             TransportError::Handshake(observed) => match *observed {
-                Some(HostObservation::Unknown(key)) => Ok(ConnectResult::HostKeyRequired {
-                    challenge: self.register_challenge(session, key).await,
-                }),
+                Some(HostObservation::Unknown(key)) => {
+                    let challenge = self.register_challenge(session, key, cancellation).await;
+                    Ok(ConnectResult::HostKeyRequired { challenge })
+                }
                 Some(HostObservation::Changed { old_key, new_key }) => {
                     Ok(ConnectResult::HostKeyChanged {
                         change: HostKeyChange {
@@ -406,17 +519,9 @@ impl ConnectionManager {
         if session.username.trim().is_empty() {
             return Err(AppError::Validation("当前会话缺少用户名".to_owned()));
         }
-        let cancellation = {
-            let mut connecting = self.inner.connecting_sessions.lock().await;
-            let cancellation = Arc::new(ConnectCancellation::new());
-            connecting
-                .entry(session.id.clone())
-                .or_default()
-                .push(cancellation.clone());
-            cancellation
-        };
+        let cancellation = self.begin_connection_attempt(&session.id).await;
 
-        let result = tokio::select! {
+        let (result, cancelled) = tokio::select! {
             result = self.connect_inner(
                 session.clone(),
                 columns,
@@ -427,17 +532,21 @@ impl ConnectionManager {
                     one_time: one_time_login.credential,
                 },
                 &cancellation,
-            ) => result,
-            () = cancellation.cancelled() => Err(AppError::Connection("连接已取消".to_owned())),
+            ) => (result, false),
+            () = cancellation.cancelled() => (Err(AppError::Connection("连接已取消".to_owned())), true),
         };
-        let mut connecting = self.inner.connecting_sessions.lock().await;
-        if let Some(attempts) = connecting.get_mut(&session.id) {
-            attempts.retain(|current| !Arc::ptr_eq(current, &cancellation));
-            if attempts.is_empty() {
-                connecting.remove(&session.id);
-            }
+        let cancellation_requested = cancelled || cancellation.cancelled.load(Ordering::Acquire);
+        if cancellation_requested {
+            // 内层可能在登记连接后才观察到取消；外层必须兜底清理，避免迟到连接残留。
+            self.cleanup_cancelled_connection(&cancellation).await;
         }
-        result
+        self.finish_connection_attempt(&session.id, &cancellation)
+            .await;
+        if cancellation_requested {
+            Err(AppError::Connection("连接已取消".to_owned()))
+        } else {
+            result
+        }
     }
 
     async fn connect_inner(
@@ -451,7 +560,11 @@ impl ConnectionManager {
     ) -> Result<ConnectResult, AppError> {
         let mut handle = match self.open_transport(&session).await {
             Ok(handle) => handle,
-            Err(error) => return self.map_transport_error(&session, error).await,
+            Err(error) => {
+                return self
+                    .map_transport_error(&session, error, cancellation)
+                    .await;
+            }
         };
 
         match self
@@ -505,18 +618,12 @@ impl ConnectionManager {
             browser_sftp: browser_sftp.clone(),
         });
         // 与删除/关键字段更新共用连接门闩，避免取消后旧连接晚到并重新写回。
-        let connecting = self.inner.connecting_sessions.lock().await;
-        if cancellation.cancelled.load(Ordering::Acquire)
-            || !connecting.get(&session.id).is_some_and(|attempts| {
-                attempts
-                    .iter()
-                    .any(|current| Arc::ptr_eq(current, cancellation))
-            })
+        if !self
+            .register_connection_if_current(&session.id, cancellation, connection_id.clone(), entry)
+            .await
         {
             return Err(AppError::Connection("连接已取消".to_owned()));
         }
-        self.register_connection(connection_id.clone(), entry).await;
-        drop(connecting);
 
         let (terminal_reader, terminal_writer) = terminal.split();
         let manager = self.clone();
@@ -535,6 +642,13 @@ impl ConnectionManager {
         });
 
         let shell_name = self.detect_login_shell(&connection_id).await;
+        // Shell 探测期间可能收到断开；返回前再次确认，避免 UI 得到已经失效的连接 ID。
+        if !self
+            .connection_is_current(&session.id, cancellation, &connection_id)
+            .await
+        {
+            return Err(AppError::Connection("连接已取消".to_owned()));
+        }
 
         Ok(ConnectResult::Connected {
             connection: SshConnection {
@@ -556,12 +670,36 @@ impl ConnectionManager {
         if session.username.trim().is_empty() {
             return Err(AppError::Validation("当前会话缺少用户名".to_owned()));
         }
+        let cancellation = self.begin_connection_attempt(&session.id).await;
+        let (result, cancelled) = tokio::select! {
+            result = self.connect_headless_inner(&session, credentials, &cancellation) => (result, false),
+            () = cancellation.cancelled() => (Err(AppError::Connection("连接已取消".to_owned())), true),
+        };
+        let cancellation_requested = cancelled || cancellation.cancelled.load(Ordering::Acquire);
+        if cancellation_requested {
+            self.cleanup_cancelled_connection(&cancellation).await;
+        }
+        self.finish_connection_attempt(&session.id, &cancellation)
+            .await;
+        if cancellation_requested {
+            Err(AppError::Connection("连接已取消".to_owned()))
+        } else {
+            result
+        }
+    }
+
+    async fn connect_headless_inner(
+        &self,
+        session: &StoredSession,
+        credentials: &CredentialService,
+        cancellation: &Arc<ConnectCancellation>,
+    ) -> Result<SshConnection, AppError> {
         let mut handle = self
-            .open_transport(&session)
+            .open_transport(session)
             .await
             .map_err(Self::map_headless_transport_error)?;
         match self
-            .authenticate_handle(&mut handle, &session, credentials, None)
+            .authenticate_handle(&mut handle, session, credentials, None)
             .await?
         {
             AuthenticationOutcome::Authenticated => {}
@@ -580,10 +718,15 @@ impl ConnectionManager {
             terminal_tx: None,
             browser_sftp: browser_sftp.clone(),
         });
-        self.register_connection(connection_id.clone(), entry).await;
+        if !self
+            .register_connection_if_current(&session.id, cancellation, connection_id.clone(), entry)
+            .await
+        {
+            return Err(AppError::Connection("连接已取消".to_owned()));
+        }
         Ok(SshConnection {
             connection_id,
-            session_id: session.id,
+            session_id: session.id.clone(),
             home_path,
             sftp_available: browser_sftp.is_some(),
             shell_name: None,
@@ -594,6 +737,7 @@ impl ConnectionManager {
         &self,
         session: &StoredSession,
         key: PublicKey,
+        cancellation: &ConnectCancellation,
     ) -> HostKeyChallenge {
         let challenge_id = Uuid::new_v4().to_string();
         let challenge = HostKeyChallenge {
@@ -616,6 +760,8 @@ impl ConnectionManager {
                 expires_at: Instant::now() + HOST_CHALLENGE_TTL,
             },
         );
+        // 插入后不再挂起，保证取消清理始终能拿到对应挑战 ID。
+        cancellation.set_registered_challenge(challenge.challenge_id.clone());
         challenge
     }
 
@@ -680,22 +826,23 @@ impl ConnectionManager {
     async fn entry(&self, connection_id: &str) -> Result<Arc<ConnectionEntry>, AppError> {
         validate_uuid("连接 ID", connection_id)?;
         self.inner
-            .connections
+            .registry
             .read()
             .await
+            .connections
             .get(connection_id)
             .cloned()
             .ok_or_else(|| AppError::NotFound("SSH 连接不存在或已断开".to_owned()))
     }
 
     async fn take_connection(&self, connection_id: &str) -> Option<Arc<ConnectionEntry>> {
-        let entry = self.inner.connections.write().await.remove(connection_id);
+        let mut registry = self.inner.registry.write().await;
+        let entry = registry.connections.remove(connection_id);
         if let Some(entry) = &entry {
-            let mut sessions = self.inner.session_connections.write().await;
-            if let Some(connection_ids) = sessions.get_mut(&entry.session_id) {
+            if let Some(connection_ids) = registry.session_connections.get_mut(&entry.session_id) {
                 connection_ids.remove(connection_id);
                 if connection_ids.is_empty() {
-                    sessions.remove(&entry.session_id);
+                    registry.session_connections.remove(&entry.session_id);
                 }
             }
         }
@@ -1152,6 +1299,51 @@ mod tests {
                 .await
                 .expect("连接取消通知未生效");
         }
+    }
+
+    #[tokio::test]
+    async fn connection_attempt_registration_can_be_cleaned_without_leaking_state() {
+        let manager = ConnectionManager::new(&std::env::temp_dir());
+        let session_id = Uuid::new_v4().to_string();
+        let cancellation = manager.begin_connection_attempt(&session_id).await;
+
+        assert!(manager
+            .inner
+            .connecting_sessions
+            .lock()
+            .await
+            .get(&session_id)
+            .is_some_and(|attempts| attempts.len() == 1));
+
+        manager
+            .finish_connection_attempt(&session_id, &cancellation)
+            .await;
+        assert!(!manager
+            .inner
+            .connecting_sessions
+            .lock()
+            .await
+            .contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn disconnect_accepts_session_id_and_cancels_connection_attempts() {
+        let manager = ConnectionManager::new(&std::env::temp_dir());
+        let session_id = Uuid::new_v4().to_string();
+        let cancellation = manager.begin_connection_attempt(&session_id).await;
+
+        manager
+            .disconnect(&session_id)
+            .await
+            .expect("按会话 ID 取消连接不应失败");
+
+        assert!(cancellation.cancelled.load(Ordering::Acquire));
+        assert!(manager
+            .inner
+            .connecting_sessions
+            .lock()
+            .await
+            .contains_key(&session_id));
     }
 
     #[tokio::test]

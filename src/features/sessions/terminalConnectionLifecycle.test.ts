@@ -26,6 +26,7 @@ describe("终端连接生命周期", () => {
     >();
     const first = lifecycle.beginConnect()!;
     lifecycle.cancel();
+    expect(lifecycle.isConnecting()).toBe(false);
     expect(lifecycle.isCurrent(first)).toBe(false);
     expect(lifecycle.setConnection(first, { connectionId: "stale" })).toBe(false);
 

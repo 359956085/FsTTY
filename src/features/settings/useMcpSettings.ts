@@ -238,8 +238,10 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     if (!configDialog?.config) return;
     try {
       await writeText(configDialog.config);
+      if (!mountedRef.current) return;
       closeConfigDialog();
     } catch (nextError) {
+      if (!mountedRef.current) return;
       setConfigDialog((current) =>
         current
           ? {

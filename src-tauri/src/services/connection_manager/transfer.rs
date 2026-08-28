@@ -74,9 +74,7 @@ impl ConnectionManager {
                 "无法打开远程文件",
             )
         })?;
-        let mut target = LocalFile::create(local_path)
-            .await
-            .map_err(|_| AppError::Validation("无法创建本地文件".to_owned()))?;
+        let mut target = create_local_file_exclusive(local_path).await?;
         tokio::io::copy(&mut source, &mut target)
             .await
             .map_err(|_| AppError::Sftp("下载文件失败".to_owned()))
@@ -636,6 +634,22 @@ pub(super) async fn validate_upload_source(path: &str) -> Result<PathBuf, AppErr
         .map_err(|_| AppError::Validation("无法规范化本地文件路径".to_owned()))
 }
 
+async fn create_local_file_exclusive(path: &Path) -> Result<LocalFile, AppError> {
+    // Roots 校验与实际写入之间仍可能出现竞态；排他创建可拒绝期间出现的文件或符号链接。
+    TokioOpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                AppError::Conflict("本地文件已存在".to_owned())
+            } else {
+                AppError::Validation("无法创建本地文件".to_owned())
+            }
+        })
+}
+
 pub(super) async fn validate_download_target(
     path: &str,
     overwrite: bool,
@@ -766,4 +780,33 @@ pub(super) fn send_progress(
         transferred_bytes,
         total_bytes,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn 排他创建不覆盖已存在的本地文件() {
+        let directory = std::env::temp_dir().join(format!("fstty-exclusive-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("无法创建测试目录");
+        let path = directory.join("target.txt");
+        tokio::fs::write(&path, b"original")
+            .await
+            .expect("无法创建原文件");
+
+        let error = create_local_file_exclusive(&path)
+            .await
+            .expect_err("已存在目标不应被覆盖");
+        assert_eq!(error.to_string(), "本地文件已存在");
+        assert_eq!(
+            tokio::fs::read(&path).await.expect("无法读取原文件"),
+            b"original"
+        );
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
 }

@@ -145,6 +145,7 @@ export const TerminalPane = memo(function TerminalPane({
   const temporaryLoginRef = useRef<TemporaryLogin | null>(null);
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
+  const sessionIdRef = useRef(session.id);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
   const onCredentialSavedRef = useRef(onCredentialSaved);
   const shellIntegrationRef = useRef<ReturnType<
@@ -172,6 +173,7 @@ export const TerminalPane = memo(function TerminalPane({
   const themeRef = useRef(theme);
   shortcutsRef.current = shortcuts;
   themeRef.current = theme;
+  sessionIdRef.current = session.id;
   const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
   const {
     credentialPrompt,
@@ -1009,10 +1011,14 @@ export const TerminalPane = memo(function TerminalPane({
       disposeImeListeners = null;
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
+      const wasConnecting = connectionLifecycle.isConnecting();
       const connection = connectionLifecycle.dispose();
       interactionCoordinator.dispose();
       if (connection) {
         void api.disconnectSession(connection.connectionId).catch(() => undefined);
+      } else if (wasConnecting) {
+        // 卸载发生在后端返回连接 ID 前，使用会话 ID 取消连接尝试，避免迟到注册。
+        void api.disconnectSession(sessionIdRef.current).catch(() => undefined);
       }
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1353,6 +1359,11 @@ export const TerminalPane = memo(function TerminalPane({
   async function disconnectTerminal() {
     const connection = connectionLifecycleRef.current.connection();
     if (!connection) {
+      if (connectionLifecycleRef.current.isConnecting()) {
+        // 连接尚未返回 ID 时先使前端尝试失效，再用会话 ID 取消后端尝试，避免迟到注册。
+        connectionLifecycleRef.current.cancel();
+        await api.disconnectSession(sessionIdRef.current).catch(() => undefined);
+      }
       reportState("disconnected");
       return;
     }

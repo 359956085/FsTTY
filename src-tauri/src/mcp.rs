@@ -30,6 +30,7 @@ use zeroize::Zeroizing;
 
 const CONNECTION_IDLE: Duration = Duration::from_secs(300);
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
+const MAX_COMMAND_TIMEOUT_SECONDS: u64 = 1800;
 mod access;
 mod audit;
 mod catalog;
@@ -45,7 +46,7 @@ use access::{
 pub(crate) use access::{authorized_session, McpAccessError, Permission};
 #[cfg(test)]
 use access::{localized_access_error, localized_unsupported_syntax_error, AccessIssue};
-use audit::{redact_audit_value, write_file_audit_input, AuditGuard};
+use audit::{command_audit_input, redact_audit_value, write_file_audit_input, AuditGuard};
 use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
@@ -218,6 +219,15 @@ struct SafeSession {
 
 fn default_timeout() -> u64 {
     60
+}
+
+fn validate_command_input(command: &str, timeout_seconds: u64) -> Result<Duration, &'static str> {
+    if command.trim().is_empty() || command.len() > MAX_COMMAND_BYTES {
+        return Err("命令为空或过长");
+    }
+    Ok(Duration::from_secs(
+        timeout_seconds.clamp(1, MAX_COMMAND_TIMEOUT_SECONDS),
+    ))
 }
 
 fn default_read_limit() -> usize {
@@ -537,10 +547,13 @@ impl McpService {
         &self,
         Parameters(args): Parameters<CommandArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("execute_command", Some(&args.session_id), &args);
-        if args.command.trim().is_empty() || args.command.len() > MAX_COMMAND_BYTES {
-            return Ok(tool_error("命令为空或过长"));
-        }
+        let audit_input =
+            command_audit_input(&args.session_id, &args.command, args.timeout_seconds);
+        let audit = self.audit("execute_command", Some(&args.session_id), &audit_input);
+        let timeout = match validate_command_input(&args.command, args.timeout_seconds) {
+            Ok(timeout) => timeout,
+            Err(message) => return Ok(tool_error(message)),
+        };
         let connection = self
             .authorized_command_connection(&args.session_id, &args.command)
             .await?;
@@ -549,11 +562,7 @@ impl McpService {
         let output = self
             .state
             .connection_manager
-            .exec_command(
-                &connection,
-                &args.command,
-                Duration::from_secs(args.timeout_seconds.clamp(1, 1800)),
-            )
+            .exec_command(&connection, &args.command, timeout)
             .await
             .map_err(mcp_error)?;
         let result = json_result(&json!({
@@ -852,11 +861,13 @@ impl McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("upload_local_file", Some(&args.session_id), &args);
-        let local_path = rooted_path(&context, &args.local_path, true).await?;
+        rooted_path(&context, &args.local_path, true).await?;
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let _operation_lock = self.operation_lock(&args.session_id)?;
+        // 鉴权和排队可能耗时；实际读取前重新确认 Roots，缩短路径校验与 I/O 的竞态窗口。
+        let local_path = rooted_path(&context, &args.local_path, true).await?;
         let bytes = self
             .state
             .connection_manager
@@ -881,11 +892,13 @@ impl McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("download_remote_file", Some(&args.session_id), &args);
-        let local_path = rooted_path(&context, &args.local_path, false).await?;
+        rooted_path(&context, &args.local_path, false).await?;
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileTransfer)
             .await?;
         let _operation_lock = self.operation_lock(&args.session_id)?;
+        // 覆盖本地目标前重新解析终点符号链接，避免使用过期的路径判定结果。
+        let local_path = rooted_path(&context, &args.local_path, false).await?;
         let bytes = self
             .state
             .connection_manager
@@ -932,7 +945,22 @@ impl McpService {
         let session_gate = self.connections.session_gate(session_id).await;
         let _session_guard = session_gate.lock().await;
         match self.connections.lookup(session_id, CONNECTION_IDLE).await {
-            CacheLookup::Reusable(connection_id) => return Ok(connection_id),
+            CacheLookup::Reusable(connection_id) => {
+                let valid = matches!(
+                    self.state
+                        .connection_manager
+                        .session_id(&connection_id)
+                        .await,
+                    Ok(owner) if owner == session_id
+                );
+                if valid {
+                    return Ok(connection_id);
+                }
+                // 界面断开连接后，MCP 缓存可能暂时保留旧 ID；只删除仍匹配的条目。
+                self.connections
+                    .remove_if_matches(session_id, &connection_id)
+                    .await;
+            }
             CacheLookup::Expired(connection_id) => {
                 // 先从缓存移除，再在锁外断开，避免慢网络阻塞其他会话。
                 let _ = self
@@ -1167,6 +1195,23 @@ mod tests {
     }
 
     #[test]
+    fn 命令输入统一限制长度和超时时间() {
+        assert_eq!(
+            validate_command_input("  pwd  ", 0),
+            Ok(Duration::from_secs(1))
+        );
+        assert_eq!(
+            validate_command_input("pwd", MAX_COMMAND_TIMEOUT_SECONDS + 1),
+            Ok(Duration::from_secs(MAX_COMMAND_TIMEOUT_SECONDS))
+        );
+        assert_eq!(validate_command_input(" \t", 60), Err("命令为空或过长"));
+        assert_eq!(
+            validate_command_input(&"x".repeat(MAX_COMMAND_BYTES + 1), 60),
+            Err("命令为空或过长")
+        );
+    }
+
+    #[test]
     fn rooted_candidate_rejects_sibling_prefix_and_parent_escape() {
         let directory = std::env::temp_dir().join(format!("fstty-roots-{}", Uuid::new_v4()));
         let root = directory.join("allowed");
@@ -1181,6 +1226,27 @@ mod tests {
         assert!(rooted_candidate(&root, &sibling_file, true).is_none());
         assert!(rooted_candidate(&root, &root.join("..").join("outside.txt"), false).is_none());
 
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rooted_candidate_rejects_existing_symlink_outside_root() {
+        use std::os::windows::fs::symlink_file;
+
+        let directory = std::env::temp_dir().join(format!("fstty-roots-link-{}", Uuid::new_v4()));
+        let root = directory.join("allowed");
+        let outside = directory.join("outside.txt");
+        let link = root.join("link.txt");
+        std::fs::create_dir_all(&root).expect("无法创建 Roots 符号链接目录");
+        std::fs::write(&outside, b"outside").expect("无法创建符号链接目标");
+        if symlink_file(&outside, &link).is_err() {
+            let _ = std::fs::remove_dir_all(directory);
+            return;
+        }
+
+        let root = std::fs::canonicalize(root).expect("无法规范化 Roots 目录");
+        assert!(rooted_candidate(&root, &link, false).is_none());
         let _ = std::fs::remove_dir_all(directory);
     }
 
