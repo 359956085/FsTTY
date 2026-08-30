@@ -19,6 +19,12 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.3.1");
+    expect(
+      screen.getByText(
+        "MCP stdio 一键配置改用固定启动脚本和版本化运行时，避免应用更新后 Agent 继续使用被锁定的旧版程序；重新连接 Agent 即可切换到当前运行时。",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("v1.3.0")).toBeTruthy();
     expect(
       screen.getByText(

@@ -26,6 +26,7 @@ pub use settings_service::SettingsService;
 #[derive(Clone)]
 pub struct AppState {
     pub app_update_service: AppUpdateService,
+    pub app_data_directory: PathBuf,
     pub log_directory: PathBuf,
     pub command_history_service: Arc<StdMutex<CommandHistoryService>>,
     pub session_service: Arc<Mutex<SessionService>>,
@@ -52,6 +53,7 @@ impl AppState {
         }
         Self {
             app_update_service: AppUpdateService::default(),
+            app_data_directory: app_data_dir.clone(),
             log_directory: log_directory.clone(),
             command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
                 &app_data_dir,

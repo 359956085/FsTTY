@@ -233,7 +233,7 @@ fn open_database(path: &Path) -> Result<Connection, AppError> {
         .map_err(db_error)?;
     if version > DATABASE_VERSION {
         return Err(AppError::Persistence(format!(
-            "MCP 策略数据库版本过新：{version}"
+            "FsTTY MCP 代理版本错配：当前代理仅支持策略数据库 schema v{DATABASE_VERSION}，数据库为 schema v{version}。请关闭并重新打开 Agent；若仍失败，请在 FsTTY 设置中重新执行 MCP 一键配置。"
         )));
     }
     connection
@@ -606,9 +606,27 @@ mod tests {
             .pragma_update(None, "user_version", DATABASE_VERSION + 1)
             .expect("应写入未来版本");
         drop(connection);
+        let before = fs::read(&database_path).expect("应读取未来版本数据库");
 
         let service = McpCommandPolicyService::load(&path, Vec::new());
-        assert!(service.list_permissions().is_err());
+        let error = service
+            .list_permissions()
+            .expect_err("未来版本必须拒绝读取");
+        let message = error.to_string();
+        assert!(message.contains(&format!("schema v{DATABASE_VERSION}")));
+        assert!(message.contains(&format!("schema v{}", DATABASE_VERSION + 1)));
+        assert!(message.contains("重新打开 Agent"));
+        assert!(message.contains("MCP 一键配置"));
+        assert_eq!(
+            fs::read(&database_path).expect("应再次读取未来版本数据库"),
+            before
+        );
+        let connection = Connection::open(&database_path).expect("未来版本数据库应保持可打开");
+        let version = connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .expect("应读取未修改的版本");
+        assert_eq!(version, DATABASE_VERSION + 1);
+        drop(connection);
         let _ = fs::remove_dir_all(path);
     }
 

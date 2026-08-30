@@ -16,6 +16,50 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 <!-- release-notes:en-US:end -->
 
+## [1.3.1] - 2026-08-30
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### MCP 与安全
+
+- MCP stdio 一键配置改用固定启动脚本和版本化运行时，避免应用更新后 Agent 继续使用被锁定的旧版程序；重新连接 Agent 即可切换到当前运行时。
+- 权限数据库 schema 高于 Agent 支持版本时，MCP 权限请求继续安全拒绝，同时不再阻断设置读取和应用更新，并提供版本信息、重新连接及重新一键配置指引。
+- 加强 MCP Roots 路径边界、符号链接、命令长度与超时校验；完善审计日志递归脱敏，并停止记录远程命令正文。
+
+#### SSH 与文件管理
+
+- 并发读取远程目录信息和文件列表并优化排序，降低文件管理加载延迟；权限不足时明确显示对应远程账号。
+- 改进连接取消与重连，以及终端、设备状态和远程文件异步请求的隔离，避免重复操作或旧结果覆盖当前连接状态。
+
+#### 文件传输与恢复
+
+- 改进上传、下载覆盖冲突的确认与重试流程，避免重复提交、覆盖竞态和旧传输结果污染新连接。
+- 增强会话数据持久化恢复，写入异常时保留可信备份，并可从有效临时文件恢复。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### MCP and Security
+
+- Changed MCP stdio one-click configurations to use a fixed launcher and versioned runtimes, preventing agents from continuing to use a locked outdated executable after an app update; reconnecting the agent switches to the current runtime.
+- MCP permission requests continue to fail closed when the policy database schema is newer than the agent supports, while Settings and application updates remain available with version details and guidance to reconnect or rerun one-click setup.
+- Hardened MCP Roots boundary, symbolic-link, command-length, and timeout validation; expanded recursive audit-log redaction and stopped recording remote command text.
+
+#### SSH and File Management
+
+- Reduced file-manager loading latency by reading remote directory metadata and entries concurrently and optimizing sorting; permission errors now identify the affected remote account.
+- Improved connection cancellation and reconnection, plus isolation of asynchronous terminal, device-status, and remote-file requests, preventing duplicate actions and stale results from replacing current connection state.
+
+#### File Transfer and Recovery
+
+- Improved upload and download overwrite-conflict confirmation and retry handling, preventing duplicate submissions, overwrite races, and stale transfer results from affecting a new connection.
+- Strengthened session-data recovery so trusted backups are preserved after write failures and valid temporary data can be recovered.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.3.0] - 2026-08-10
 
 <!-- release-notes:zh-CN:start -->

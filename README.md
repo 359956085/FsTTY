@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.3.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.3.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -57,10 +57,12 @@ FsTTY 目前提供 17 个 MCP 工具：
 | | stdio | Streamable HTTP |
 | --- | --- | --- |
 | 场景 | 本机 Agent | 可信局域网或 VPN 内的 Agent |
-| 地址 | `fstty.exe --mcp-stdio` | `http://<FSTTY_HOST_IP>:37653/mcp`（默认端口） |
+| 地址 | `cmd.exe` 调用应用数据目录中的固定 MCP 启动脚本 | `http://<FSTTY_HOST_IP>:37653/mcp`（默认端口） |
 | 认证 | 本地进程通信 | Windows 凭据库中的 Bearer Token |
 | 本地文件传输 | 使用 MCP 客户端 Roots | 使用 5 分钟传输链接 |
 | 网络暴露 | 无监听端口 | 监听所有 IPv4 接口，明文传输 |
+
+本地 Agent 配置固定指向 `mcp-runtime/fstty-mcp.cmd`；脚本会从原子更新的版本指针启动当前 FsTTY MCP 运行时，因此应用更新后只需重新连接 Agent。
 
 HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Origin` 的请求，不支持浏览器 MCP 客户端或 CORS。
 

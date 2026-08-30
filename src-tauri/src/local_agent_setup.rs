@@ -1,3 +1,4 @@
+use crate::mcp_runtime::{self, McpStdioLaunchSpec};
 use jsonc_parser::cst::CstRootNode;
 use jsonc_parser::{json, ParseOptions};
 use serde::{Deserialize, Serialize};
@@ -63,13 +64,14 @@ pub struct LocalAgentConfigureResult {
     pub message: Option<String>,
 }
 
-pub fn inspect_local_agent_setup() -> Result<Vec<LocalAgentCapability>, String> {
+pub fn inspect_local_agent_setup(app_data_dir: &Path) -> Result<Vec<LocalAgentCapability>, String> {
     let home = user_home_directory()?;
-    let executable = env::current_exe().map_err(|_| "无法获取 FsTTY 程序路径".to_owned())?;
-    Ok(inspect_with_home(&home, &executable))
+    let launch = mcp_runtime::launch_spec(app_data_dir);
+    Ok(inspect_with_home(&home, &launch))
 }
 
 pub fn configure_local_agents(
+    app_data_dir: &Path,
     targets: Vec<LocalAgentTarget>,
     prompt: &str,
 ) -> Result<Vec<LocalAgentConfigureResult>, String> {
@@ -84,15 +86,11 @@ pub fn configure_local_agents(
     }
     let home = user_home_directory()?;
     let executable = env::current_exe().map_err(|_| "无法获取 FsTTY 程序路径".to_owned())?;
-    Ok(configure_with_home(
-        &home,
-        &executable,
-        unique_targets,
-        prompt,
-    ))
+    let launch = mcp_runtime::prepare(app_data_dir, &executable)?;
+    Ok(configure_with_home(&home, &launch, unique_targets, prompt))
 }
 
-fn inspect_with_home(home: &Path, executable: &Path) -> Vec<LocalAgentCapability> {
+fn inspect_with_home(home: &Path, launch: &McpStdioLaunchSpec) -> Vec<LocalAgentCapability> {
     const TARGETS: [LocalAgentTarget; 8] = [
         LocalAgentTarget::Codex,
         LocalAgentTarget::Claude,
@@ -115,7 +113,7 @@ fn inspect_with_home(home: &Path, executable: &Path) -> Vec<LocalAgentCapability
                     detail: Some("未检测到本地安装".to_owned()),
                 };
             }
-            let state = inspect_mcp_state(home, executable, target);
+            let state = inspect_mcp_state(home, launch, target);
             LocalAgentCapability {
                 target,
                 installed,
@@ -128,7 +126,7 @@ fn inspect_with_home(home: &Path, executable: &Path) -> Vec<LocalAgentCapability
 
 fn configure_with_home(
     home: &Path,
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     targets: Vec<LocalAgentTarget>,
     prompt: &str,
 ) -> Vec<LocalAgentConfigureResult> {
@@ -138,46 +136,43 @@ fn configure_with_home(
             if !target_detected(home, target) {
                 return failed_result(target, "未检测到本地安装");
             }
-            configure_target(home, executable, target, prompt)
+            configure_target(home, launch, target, prompt)
         })
         .collect()
 }
 
 fn configure_target(
     home: &Path,
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     target: LocalAgentTarget,
     prompt: &str,
 ) -> LocalAgentConfigureResult {
-    let mcp_state = inspect_mcp_state(home, executable, target);
+    let mcp_state = inspect_mcp_state(home, launch, target);
     if mcp_state == LocalAgentSetupState::Invalid {
         return failed_result(target, "现有 MCP 配置无法解析，未修改文件");
     }
     let mcp_result = match target {
-        LocalAgentTarget::Codex => configure_codex_mcp(home, executable),
-        LocalAgentTarget::Claude => configure_claude_mcp(home, executable),
+        LocalAgentTarget::Codex => configure_codex_mcp(home, launch),
+        LocalAgentTarget::Claude => configure_claude_mcp(home, launch),
         LocalAgentTarget::Cursor => configure_json_mcp(
             &home.join(".cursor").join("mcp.json"),
             "mcpServers",
-            executable,
+            launch,
             false,
         ),
         LocalAgentTarget::VsCode => {
-            configure_json_mcp(&vscode_mcp_path(home), "servers", executable, true)
+            configure_json_mcp(&vscode_mcp_path(home), "servers", launch, true)
         }
         LocalAgentTarget::GeminiCli => configure_json_mcp(
             &home.join(".gemini").join("settings.json"),
             "mcpServers",
-            executable,
+            launch,
             false,
         ),
-        LocalAgentTarget::OpenCode => configure_opencode_mcp(home, executable),
-        LocalAgentTarget::Trae | LocalAgentTarget::TraeCn => configure_json_mcp(
-            &trae_mcp_path(home, target),
-            "mcpServers",
-            executable,
-            false,
-        ),
+        LocalAgentTarget::OpenCode => configure_opencode_mcp(home, launch),
+        LocalAgentTarget::Trae | LocalAgentTarget::TraeCn => {
+            configure_json_mcp(&trae_mcp_path(home, target), "mcpServers", launch, false)
+        }
     };
     let mcp_status = match mcp_result {
         Ok(changed) => {
@@ -245,7 +240,7 @@ fn failed_result(target: LocalAgentTarget, message: &str) -> LocalAgentConfigure
     }
 }
 
-fn configure_codex_mcp(home: &Path, executable: &Path) -> Result<bool, String> {
+fn configure_codex_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool, String> {
     let path = home.join(".codex").join("config.toml");
     let existing = read_optional_text(&path)?;
     let mut document = existing
@@ -262,9 +257,11 @@ fn configure_codex_mcp(home: &Path, executable: &Path) -> Result<bool, String> {
         return Err("Codex 配置中的 mcp_servers.fstty 不是表".to_owned());
     }
     let mut server = Table::new();
-    server["command"] = value(executable.to_string_lossy().as_ref());
+    server["command"] = value(&launch.command);
     let mut args = Array::new();
-    args.push("--mcp-stdio");
+    for argument in &launch.args {
+        args.push(argument.as_str());
+    }
     server["args"] = value(args);
     document["mcp_servers"]["fstty"] = Item::Table(server);
     let next = document.to_string();
@@ -284,7 +281,7 @@ fn ensure_toml_table(document: &mut DocumentMut, key: &str) -> Result<(), String
 fn configure_json_mcp(
     path: &Path,
     root_key: &str,
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     include_type: bool,
 ) -> Result<bool, String> {
     let existing = read_optional_text(path)?;
@@ -310,8 +307,8 @@ fn configure_json_mcp(
         return Err(format!("{} 中的 fstty 配置不是对象", path.display()));
     }
     let mut server = serde_json_value!({
-        "command": executable.to_string_lossy(),
-        "args": ["--mcp-stdio"]
+        "command": launch.command,
+        "args": launch.args
     });
     if include_type {
         server["type"] = Value::String("stdio".to_owned());
@@ -323,7 +320,7 @@ fn configure_json_mcp(
     write_if_changed(path, existing.as_deref(), &next)
 }
 
-fn configure_opencode_mcp(home: &Path, executable: &Path) -> Result<bool, String> {
+fn configure_opencode_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool, String> {
     let path = opencode_config_path(home)?;
     let existing = read_optional_text(&path)?;
     let source = existing.as_deref().unwrap_or("{}");
@@ -356,10 +353,9 @@ fn configure_opencode_mcp(home: &Path, executable: &Path) -> Result<bool, String
             .object_value()
             .ok_or_else(|| format!("{} 无法创建 mcp 对象", path.display()))?,
     };
-    let command = vec![
-        executable.to_string_lossy().into_owned(),
-        "--mcp-stdio".to_owned(),
-    ];
+    let command = std::iter::once(launch.command.clone())
+        .chain(launch.args.iter().cloned())
+        .collect::<Vec<_>>();
     let desired = json!({
         "type": "local",
         "command": command,
@@ -374,9 +370,9 @@ fn configure_opencode_mcp(home: &Path, executable: &Path) -> Result<bool, String
     write_if_changed(&path, existing.as_deref(), &next)
 }
 
-fn configure_claude_mcp(home: &Path, executable: &Path) -> Result<bool, String> {
+fn configure_claude_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool, String> {
     let command = find_command("claude").ok_or_else(|| "未找到 claude 命令".to_owned())?;
-    configure_claude_mcp_with(home, executable, |args| {
+    configure_claude_mcp_with(home, launch, |args| {
         let output = Command::new(&command)
             .args(args)
             .output()
@@ -397,21 +393,18 @@ struct CommandResult {
 
 fn configure_claude_mcp_with(
     home: &Path,
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     mut run: impl FnMut(&[String]) -> Result<CommandResult, String>,
 ) -> Result<bool, String> {
     let desired = serde_json_value!({
         "type": "stdio",
-        "command": executable.to_string_lossy(),
-        "args": ["--mcp-stdio"]
+        "command": launch.command,
+        "args": launch.args
     });
     let desired_text =
         serde_json::to_string(&desired).map_err(|_| "无法生成 Claude 配置".to_owned())?;
     let get = run(&["mcp".to_owned(), "get".to_owned(), "fstty".to_owned()])?;
-    if get.success
-        && String::from_utf8_lossy(&get.stdout).contains(executable.to_string_lossy().as_ref())
-        && String::from_utf8_lossy(&get.stdout).contains("--mcp-stdio")
-    {
+    if get.success && text_contains_launch_spec(&String::from_utf8_lossy(&get.stdout), launch) {
         return Ok(false);
     }
 
@@ -460,33 +453,35 @@ fn command_error(prefix: &str, stderr: &[u8]) -> String {
 
 fn inspect_mcp_state(
     home: &Path,
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     target: LocalAgentTarget,
 ) -> LocalAgentSetupState {
     match target {
-        LocalAgentTarget::Claude => inspect_claude_state(home, executable),
-        LocalAgentTarget::Codex => inspect_codex_state(home, executable),
+        LocalAgentTarget::Claude => inspect_claude_state(home, launch),
+        LocalAgentTarget::Codex => inspect_codex_state(home, launch),
         LocalAgentTarget::Cursor => inspect_json_state(
             &home.join(".cursor").join("mcp.json"),
             "mcpServers",
-            executable,
+            launch,
+            false,
         ),
         LocalAgentTarget::VsCode => {
-            inspect_json_state(&vscode_mcp_path(home), "servers", executable)
+            inspect_json_state(&vscode_mcp_path(home), "servers", launch, true)
         }
         LocalAgentTarget::GeminiCli => inspect_json_state(
             &home.join(".gemini").join("settings.json"),
             "mcpServers",
-            executable,
+            launch,
+            false,
         ),
-        LocalAgentTarget::OpenCode => inspect_opencode_state(home, executable),
+        LocalAgentTarget::OpenCode => inspect_opencode_state(home, launch),
         LocalAgentTarget::Trae | LocalAgentTarget::TraeCn => {
-            inspect_json_state(&trae_mcp_path(home, target), "mcpServers", executable)
+            inspect_json_state(&trae_mcp_path(home, target), "mcpServers", launch, false)
         }
     }
 }
 
-fn inspect_opencode_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
+fn inspect_opencode_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgentSetupState {
     let Ok(path) = opencode_config_path(home) else {
         return LocalAgentSetupState::Invalid;
     };
@@ -513,8 +508,9 @@ fn inspect_opencode_state(home: &Path, executable: &Path) -> LocalAgentSetupStat
     if !server.is_object() {
         return LocalAgentSetupState::Invalid;
     }
-    let executable_text = executable.to_string_lossy();
-    let desired_command = [executable_text.as_ref(), "--mcp-stdio"];
+    let desired_command = std::iter::once(launch.command.as_str())
+        .chain(launch.args.iter().map(String::as_str))
+        .collect::<Vec<_>>();
     let command_current = server
         .get("command")
         .and_then(Value::as_array)
@@ -534,7 +530,7 @@ fn inspect_opencode_state(home: &Path, executable: &Path) -> LocalAgentSetupStat
     }
 }
 
-fn inspect_codex_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
+fn inspect_codex_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgentSetupState {
     let path = home.join(".codex").join("config.toml");
     let Ok(Some(content)) = read_optional_text(&path) else {
         return if path.exists() {
@@ -560,8 +556,14 @@ fn inspect_codex_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
     };
     let command = server.get("command").and_then(Item::as_str);
     let args = server.get("args").and_then(Item::as_array);
-    if command == Some(executable.to_string_lossy().as_ref())
-        && args.is_some_and(|args| args.iter().any(|item| item.as_str() == Some("--mcp-stdio")))
+    if command == Some(launch.command.as_str())
+        && args.is_some_and(|args| {
+            args.len() == launch.args.len()
+                && args
+                    .iter()
+                    .zip(&launch.args)
+                    .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+        })
     {
         LocalAgentSetupState::Current
     } else {
@@ -569,7 +571,12 @@ fn inspect_codex_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
     }
 }
 
-fn inspect_json_state(path: &Path, root_key: &str, executable: &Path) -> LocalAgentSetupState {
+fn inspect_json_state(
+    path: &Path,
+    root_key: &str,
+    launch: &McpStdioLaunchSpec,
+    include_type: bool,
+) -> LocalAgentSetupState {
     let Ok(Some(content)) = read_optional_text(path) else {
         return if path.exists() {
             LocalAgentSetupState::Invalid
@@ -580,35 +587,94 @@ fn inspect_json_state(path: &Path, root_key: &str, executable: &Path) -> LocalAg
     let Ok(root) = serde_json::from_str::<Value>(&content) else {
         return LocalAgentSetupState::Invalid;
     };
-    let Some(server) = root.get(root_key).and_then(|value| value.get("fstty")) else {
+    let Some(root) = root.as_object() else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let Some(servers) = root.get(root_key) else {
+        return LocalAgentSetupState::Missing;
+    };
+    let Some(servers) = servers.as_object() else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let Some(server) = servers.get("fstty") else {
         return LocalAgentSetupState::Missing;
     };
     if !server.is_object() {
         return LocalAgentSetupState::Invalid;
     }
-    let command_current = server.get("command").and_then(Value::as_str)
-        == Some(executable.to_string_lossy().as_ref());
+    let command_current =
+        server.get("command").and_then(Value::as_str) == Some(launch.command.as_str());
+    let type_current = !include_type || server.get("type").and_then(Value::as_str) == Some("stdio");
     let args_current = server
         .get("args")
         .and_then(Value::as_array)
-        .is_some_and(|args| args.iter().any(|item| item.as_str() == Some("--mcp-stdio")));
-    if command_current && args_current {
+        .is_some_and(|args| {
+            args.len() == launch.args.len()
+                && args
+                    .iter()
+                    .zip(&launch.args)
+                    .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+        });
+    if command_current && args_current && type_current {
         LocalAgentSetupState::Current
     } else {
         LocalAgentSetupState::Outdated
     }
 }
 
-fn inspect_claude_state(home: &Path, executable: &Path) -> LocalAgentSetupState {
+fn inspect_claude_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgentSetupState {
     let path = home.join(".claude.json");
     let Ok(Some(content)) = read_optional_text(&path) else {
+        return if path.exists() {
+            LocalAgentSetupState::Invalid
+        } else {
+            LocalAgentSetupState::Missing
+        };
+    };
+    let Ok(root) = serde_json::from_str::<Value>(&content) else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let Some(root) = root.as_object() else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let Some(servers) = root.get("mcpServers") else {
         return LocalAgentSetupState::Missing;
     };
-    if content.contains(executable.to_string_lossy().as_ref()) && content.contains("--mcp-stdio") {
+    let Some(servers) = servers.as_object() else {
+        return LocalAgentSetupState::Invalid;
+    };
+    let Some(server) = servers.get("fstty") else {
+        return LocalAgentSetupState::Missing;
+    };
+    if !server.is_object() {
+        return LocalAgentSetupState::Invalid;
+    }
+    let command_current =
+        server.get("command").and_then(Value::as_str) == Some(launch.command.as_str());
+    let type_current = server.get("type").and_then(Value::as_str) == Some("stdio");
+    let args_current = server
+        .get("args")
+        .and_then(Value::as_array)
+        .is_some_and(|args| {
+            args.len() == launch.args.len()
+                && args
+                    .iter()
+                    .zip(&launch.args)
+                    .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+        });
+    if command_current && args_current && type_current {
         LocalAgentSetupState::Current
     } else {
         LocalAgentSetupState::Outdated
     }
+}
+
+fn text_contains_launch_spec(content: &str, launch: &McpStdioLaunchSpec) -> bool {
+    content.contains(&launch.command)
+        && launch
+            .args
+            .iter()
+            .all(|argument| content.contains(argument))
 }
 
 fn merge_prompt_file(path: &Path, prompt: &str) -> Result<bool, String> {
@@ -886,6 +952,10 @@ mod tests {
         path
     }
 
+    fn test_launch_spec(root: &Path) -> McpStdioLaunchSpec {
+        mcp_runtime::launch_spec(root)
+    }
+
     const PROMPT: &str = "<!-- fstty:begin -->\n\nUse FsTTY MCP.\n\n<!-- fstty:end -->";
 
     #[test]
@@ -897,14 +967,31 @@ mod tests {
             r#"{"mcpServers":{"other":{"command":"other"}},"keep":true}"#,
         )
         .expect("应写入配置");
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
 
-        assert!(configure_json_mcp(&path, "mcpServers", &executable, false).unwrap());
-        assert!(!configure_json_mcp(&path, "mcpServers", &executable, false).unwrap());
+        assert!(configure_json_mcp(&path, "mcpServers", &launch, false).unwrap());
+        assert!(!configure_json_mcp(&path, "mcpServers", &launch, false).unwrap());
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["keep"], true);
         assert_eq!(value["mcpServers"]["other"]["command"], "other");
-        assert_eq!(value["mcpServers"]["fstty"]["args"][0], "--mcp-stdio");
+        assert_eq!(value["mcpServers"]["fstty"]["command"], launch.command);
+        assert_eq!(
+            value["mcpServers"]["fstty"]["args"],
+            serde_json_value!(launch.args)
+        );
+        assert_eq!(
+            inspect_json_state(&path, "mcpServers", &launch, false),
+            LocalAgentSetupState::Current
+        );
+        assert_eq!(
+            inspect_json_state(&path, "mcpServers", &launch, true),
+            LocalAgentSetupState::Outdated
+        );
+        assert!(configure_json_mcp(&path, "mcpServers", &launch, true).unwrap());
+        assert_eq!(
+            inspect_json_state(&path, "mcpServers", &launch, true),
+            LocalAgentSetupState::Current
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -918,14 +1005,14 @@ mod tests {
             "# keep\n[mcp_servers.other]\ncommand = \"other\"\n",
         )
         .unwrap();
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
 
-        assert!(configure_codex_mcp(&root, &executable).unwrap());
+        assert!(configure_codex_mcp(&root, &launch).unwrap());
         let content = fs::read_to_string(codex.join("config.toml")).unwrap();
         assert!(content.contains("# keep"));
         assert!(content.contains("[mcp_servers.other]"));
         assert!(content.contains("[mcp_servers.fstty]"));
-        assert!(!configure_codex_mcp(&root, &executable).unwrap());
+        assert!(!configure_codex_mcp(&root, &launch).unwrap());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -935,7 +1022,7 @@ mod tests {
         let codex = root.join(".codex");
         let path = codex.join("config.toml");
         fs::create_dir_all(&codex).unwrap();
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
 
         for (content, expected) in [
             ("", LocalAgentSetupState::Missing),
@@ -957,20 +1044,23 @@ mod tests {
         ] {
             fs::write(&path, content).unwrap();
             let before = fs::read(&path).unwrap();
-            assert_eq!(inspect_codex_state(&root, &executable), expected);
+            assert_eq!(inspect_codex_state(&root, &launch), expected);
             assert_eq!(fs::read(&path).unwrap(), before);
         }
 
         fs::write(
             &path,
-            format!(
-                "[mcp_servers.fstty]\ncommand = {:?}\nargs = [\"--mcp-stdio\"]\n",
-                executable.to_string_lossy()
-            ),
+            "[mcp_servers.fstty]\ncommand = \"fstty.exe\"\nargs = [\"--mcp-stdio\"]\n",
         )
         .unwrap();
         assert_eq!(
-            inspect_codex_state(&root, &executable),
+            inspect_codex_state(&root, &launch),
+            LocalAgentSetupState::Outdated
+        );
+
+        configure_codex_mcp(&root, &launch).unwrap();
+        assert_eq!(
+            inspect_codex_state(&root, &launch),
             LocalAgentSetupState::Current
         );
         let _ = fs::remove_dir_all(root);
@@ -987,10 +1077,9 @@ mod tests {
             "{\n  // 保留注释\n  \"theme\": \"dark\",\n  \"mcp\": {\n    \"other\": { \"type\": \"remote\" },\n  },\n}\n",
         )
         .unwrap();
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
 
-        let first =
-            configure_with_home(&root, &executable, vec![LocalAgentTarget::OpenCode], PROMPT);
+        let first = configure_with_home(&root, &launch, vec![LocalAgentTarget::OpenCode], PROMPT);
         assert_eq!(first[0].mcp_status, LocalAgentStepStatus::Configured);
         assert_eq!(first[0].prompt_status, LocalAgentStepStatus::Configured);
         let content = fs::read_to_string(&path).unwrap();
@@ -999,15 +1088,14 @@ mod tests {
         assert!(content.contains("\"other\""));
         assert!(content.contains("\"fstty\""));
         assert_eq!(
-            inspect_opencode_state(&root, &executable),
+            inspect_opencode_state(&root, &launch),
             LocalAgentSetupState::Current
         );
         assert!(fs::read_to_string(directory.join("AGENTS.md"))
             .unwrap()
             .contains(PROMPT_BEGIN));
 
-        let second =
-            configure_with_home(&root, &executable, vec![LocalAgentTarget::OpenCode], PROMPT);
+        let second = configure_with_home(&root, &launch, vec![LocalAgentTarget::OpenCode], PROMPT);
         assert_eq!(second[0].mcp_status, LocalAgentStepStatus::Current);
         assert_eq!(second[0].prompt_status, LocalAgentStepStatus::Current);
         let _ = fs::remove_dir_all(root);
@@ -1024,10 +1112,11 @@ mod tests {
         fs::write(&jsonc_path, "{ /* keep */ }\n").unwrap();
         let json_before = fs::read(&json_path).unwrap();
         let jsonc_before = fs::read(&jsonc_path).unwrap();
+        let launch = test_launch_spec(&root);
 
-        assert!(configure_opencode_mcp(&root, Path::new("fstty")).is_err());
+        assert!(configure_opencode_mcp(&root, &launch).is_err());
         assert_eq!(
-            inspect_opencode_state(&root, Path::new("fstty")),
+            inspect_opencode_state(&root, &launch),
             LocalAgentSetupState::Invalid
         );
         assert_eq!(fs::read(&json_path).unwrap(), json_before);
@@ -1036,7 +1125,7 @@ mod tests {
         fs::remove_file(&json_path).unwrap();
         fs::write(&jsonc_path, "{ broken").unwrap();
         let invalid_before = fs::read(&jsonc_path).unwrap();
-        assert!(configure_opencode_mcp(&root, Path::new("fstty")).is_err());
+        assert!(configure_opencode_mcp(&root, &launch).is_err());
         assert_eq!(fs::read(&jsonc_path).unwrap(), invalid_before);
         let _ = fs::remove_dir_all(root);
     }
@@ -1049,17 +1138,21 @@ mod tests {
         assert_eq!(international, root.join("Trae").join("User"));
         assert_eq!(china, root.join("Trae CN").join("User"));
 
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
         for target in [LocalAgentTarget::Trae, LocalAgentTarget::TraeCn] {
             let path = trae_user_directory_from_root(&root, target)
                 .join("settings")
                 .join("mcp.json");
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, r#"{"mcpServers":{"other":{"command":"keep"}}}"#).unwrap();
-            assert!(configure_json_mcp(&path, "mcpServers", &executable, false).unwrap());
+            assert!(configure_json_mcp(&path, "mcpServers", &launch, false).unwrap());
             let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(value["mcpServers"]["other"]["command"], "keep");
-            assert_eq!(value["mcpServers"]["fstty"]["args"][0], "--mcp-stdio");
+            assert_eq!(value["mcpServers"]["fstty"]["command"], launch.command);
+            assert_eq!(
+                value["mcpServers"]["fstty"]["args"],
+                serde_json_value!(launch.args)
+            );
 
             assert!(requires_manual_prompt(target));
         }
@@ -1094,8 +1187,9 @@ mod tests {
         let path = root.join("mcp.json");
         fs::write(&path, "{broken").unwrap();
         let before = fs::read(&path).unwrap();
+        let launch = test_launch_spec(&root);
 
-        assert!(configure_json_mcp(&path, "mcpServers", Path::new("fstty"), false).is_err());
+        assert!(configure_json_mcp(&path, "mcpServers", &launch, false).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
         let _ = fs::remove_dir_all(root);
     }
@@ -1106,12 +1200,71 @@ mod tests {
         let path = root.join("mcp.json");
         fs::write(&path, r#"{"mcpServers":{"fstty":"broken"}}"#).unwrap();
         let before = fs::read(&path).unwrap();
+        let launch = test_launch_spec(&root);
 
-        assert!(configure_json_mcp(&path, "mcpServers", Path::new("fstty"), false).is_err());
+        assert!(configure_json_mcp(&path, "mcpServers", &launch, false).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
         assert_eq!(
-            inspect_json_state(&path, "mcpServers", Path::new("fstty")),
+            inspect_json_state(&path, "mcpServers", &launch, false),
             LocalAgentSetupState::Invalid
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn 旧版直接exe配置在各格式中均为过期() {
+        let root = test_directory("legacy-direct-exe");
+        let launch = test_launch_spec(&root);
+
+        let json_path = root.join("mcp.json");
+        fs::write(
+            &json_path,
+            r#"{"mcpServers":{"fstty":{"command":"fstty.exe","args":["--mcp-stdio"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_json_state(&json_path, "mcpServers", &launch, false),
+            LocalAgentSetupState::Outdated
+        );
+
+        let opencode = root.join(".config").join("opencode");
+        fs::create_dir_all(&opencode).unwrap();
+        fs::write(
+            opencode.join("opencode.json"),
+            r#"{"mcp":{"fstty":{"type":"local","command":["fstty.exe","--mcp-stdio"],"enabled":true}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_opencode_state(&root, &launch),
+            LocalAgentSetupState::Outdated
+        );
+
+        fs::write(
+            root.join(".claude.json"),
+            r#"{"mcpServers":{"fstty":{"type":"stdio","command":"fstty.exe","args":["--mcp-stdio"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_claude_state(&root, &launch),
+            LocalAgentSetupState::Outdated
+        );
+        fs::write(
+            root.join(".claude.json"),
+            serde_json::to_vec(&serde_json_value!({
+                "mcpServers": {
+                    "fstty": {
+                        "type": "stdio",
+                        "command": launch.command,
+                        "args": launch.args
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_claude_state(&root, &launch),
+            LocalAgentSetupState::Current
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -1120,7 +1273,8 @@ mod tests {
     fn claude命令成功配置新服务() {
         let root = test_directory("claude-success");
         let calls = RefCell::new(Vec::<Vec<String>>::new());
-        let changed = configure_claude_mcp_with(&root, Path::new("fstty.exe"), |args| {
+        let launch = test_launch_spec(&root);
+        let changed = configure_claude_mcp_with(&root, &launch, |args| {
             calls.borrow_mut().push(args.to_vec());
             Ok(CommandResult {
                 success: args.get(1).is_some_and(|arg| arg == "add-json"),
@@ -1133,6 +1287,9 @@ mod tests {
         assert!(changed);
         assert_eq!(calls.borrow().len(), 2);
         assert_eq!(calls.borrow()[1][1], "add-json");
+        let desired: Value = serde_json::from_str(&calls.borrow()[1][5]).unwrap();
+        assert_eq!(desired["command"], launch.command);
+        assert_eq!(desired["args"], serde_json_value!(launch.args));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1141,7 +1298,8 @@ mod tests {
         let root = test_directory("claude-rollback");
         let store_path = root.join(".claude.json");
         fs::write(&store_path, b"original").unwrap();
-        let result = configure_claude_mcp_with(&root, Path::new("fstty.exe"), |args| {
+        let launch = test_launch_spec(&root);
+        let result = configure_claude_mcp_with(&root, &launch, |args| {
             match args.get(1).map(String::as_str) {
                 Some("get") => Ok(CommandResult {
                     success: true,
@@ -1176,10 +1334,10 @@ mod tests {
     fn 未检测agent返回失败而不影响其他项() {
         let root = test_directory("partial");
         fs::create_dir_all(root.join(".codex")).unwrap();
-        let executable = root.join("fstty.exe");
+        let launch = test_launch_spec(&root);
         let results = configure_with_home(
             &root,
-            &executable,
+            &launch,
             vec![LocalAgentTarget::Codex, LocalAgentTarget::GeminiCli],
             PROMPT,
         );

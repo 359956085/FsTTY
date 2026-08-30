@@ -4,6 +4,7 @@ mod local_agent_setup;
 mod logging;
 mod mcp;
 mod mcp_command_policy;
+mod mcp_runtime;
 mod mcp_transfer;
 mod models;
 mod services;
@@ -85,7 +86,19 @@ pub fn run() {
             log::info!("FsTTY GUI 启动");
             let state = AppState::new(paths.app_data_dir.clone());
             let startup_state = state.clone();
+            let runtime_app_data = paths.app_data_dir.clone();
             app.manage(state);
+            tauri::async_runtime::spawn_blocking(move || {
+                let result = std::env::current_exe()
+                    .map_err(|error| format!("无法获取 FsTTY 程序路径：{error}"))
+                    .and_then(|executable| {
+                        crate::mcp_runtime::prepare(&runtime_app_data, &executable).map(|_| ())
+                    });
+                match result {
+                    Ok(()) => log::info!("MCP 版本化运行时已准备"),
+                    Err(error) => log::warn!("MCP 版本化运行时准备失败：{error}"),
+                }
+            });
             tauri::async_runtime::spawn(async move {
                 let settings = startup_state
                     .settings_service

@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.3.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.3.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -57,10 +57,12 @@ New session groups are not exposed to MCP. Enabling group access allows session 
 | | stdio | Streamable HTTP |
 | --- | --- | --- |
 | Intended use | Local agents | Agents on a trusted LAN or VPN |
-| Address | `fstty.exe --mcp-stdio` | `http://<FSTTY_HOST_IP>:37653/mcp` (default port) |
+| Address | `cmd.exe` invoking the fixed MCP launcher in the app data directory | `http://<FSTTY_HOST_IP>:37653/mcp` (default port) |
 | Authentication | Local process transport | Bearer Token stored in Windows Credential Manager |
 | Local file transfer | MCP client Roots | Five-minute transfer links |
 | Network exposure | No listening port | All IPv4 interfaces, plaintext transport |
+
+Local agent configurations point to the fixed `mcp-runtime/fstty-mcp.cmd` launcher. It starts the current FsTTY MCP runtime through an atomically updated version pointer, so reconnecting the agent is enough after an app update.
 
 Never expose the HTTP service to the public internet. `/mcp` targets native MCP clients, rejects requests containing `Origin`, and does not support browser MCP clients or CORS.
 

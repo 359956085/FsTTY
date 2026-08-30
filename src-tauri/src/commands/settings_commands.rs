@@ -1,10 +1,11 @@
+use crate::mcp_runtime::McpStdioLaunchSpec;
 use crate::models::{
     AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
     ThemePreference, UpdateSourcePreference,
 };
 use crate::services::AppState;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -366,10 +367,20 @@ fn mcp_http_listen_address(http_port: u16) -> String {
 }
 
 #[tauri::command]
-pub fn get_mcp_stdio_client_config(client_target: McpClientTarget) -> Result<String, AppError> {
-    let executable = std::env::current_exe()
-        .map_err(|_| AppError::Internal("无法获取 FsTTY 程序路径".to_owned()))?;
-    build_mcp_stdio_client_config(&executable, client_target)
+pub async fn get_mcp_stdio_client_config(
+    state: State<'_, AppState>,
+    client_target: McpClientTarget,
+) -> Result<String, AppError> {
+    let app_data_dir = state.app_data_directory.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let executable = std::env::current_exe()
+            .map_err(|_| AppError::Internal("无法获取 FsTTY 程序路径".to_owned()))?;
+        let launch =
+            crate::mcp_runtime::prepare(&app_data_dir, &executable).map_err(AppError::Internal)?;
+        build_mcp_stdio_client_config(&launch, client_target)
+    })
+    .await
+    .map_err(|_| AppError::Internal("MCP 运行时准备任务异常终止".to_owned()))?
 }
 
 #[tauri::command]
@@ -379,20 +390,26 @@ pub fn get_mcp_agent_prompt() -> String {
 
 #[tauri::command]
 pub async fn inspect_local_agent_setup(
+    state: State<'_, AppState>,
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentCapability>, AppError> {
-    tauri::async_runtime::spawn_blocking(crate::local_agent_setup::inspect_local_agent_setup)
-        .await
-        .map_err(|_| AppError::Internal("本地 Agent 检测任务异常终止".to_owned()))?
-        .map_err(AppError::Internal)
+    let app_data_dir = state.app_data_directory.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::local_agent_setup::inspect_local_agent_setup(&app_data_dir)
+    })
+    .await
+    .map_err(|_| AppError::Internal("本地 Agent 检测任务异常终止".to_owned()))?
+    .map_err(AppError::Internal)
 }
 
 #[tauri::command]
 pub async fn configure_local_agents(
+    state: State<'_, AppState>,
     targets: Vec<crate::local_agent_setup::LocalAgentTarget>,
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentConfigureResult>, AppError> {
     let prompt = crate::mcp::mcp_agent_prompt();
+    let app_data_dir = state.app_data_directory.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::local_agent_setup::configure_local_agents(targets, &prompt)
+        crate::local_agent_setup::configure_local_agents(&app_data_dir, targets, &prompt)
     })
     .await
     .map_err(|_| AppError::Internal("本地 Agent 配置任务异常终止".to_owned()))?
@@ -405,21 +422,26 @@ pub fn get_mcp_permission_catalog() -> Vec<crate::mcp::McpPermissionCatalogEntry
 }
 
 fn build_mcp_stdio_client_config(
-    executable: &Path,
+    launch: &McpStdioLaunchSpec,
     client_target: McpClientTarget,
 ) -> Result<String, AppError> {
-    let command = executable.to_string_lossy();
+    let command = &launch.command;
+    let args = &launch.args;
     match client_target {
         McpClientTarget::Codex => Ok(format!(
-            "[mcp_servers.fstty]\ncommand = {}\nargs = [\"--mcp-stdio\"]",
-            toml_string(command.as_ref())
+            "[mcp_servers.fstty]\ncommand = {}\nargs = [{}]",
+            toml_string(command),
+            args.iter()
+                .map(|argument| toml_string(argument))
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
         McpClientTarget::VsCode => pretty_json(&serde_json::json!({
             "servers": {
                 "fstty": {
                     "type": "stdio",
                     "command": command,
-                    "args": ["--mcp-stdio"]
+                    "args": args
                 }
             }
         })),
@@ -430,7 +452,7 @@ fn build_mcp_stdio_client_config(
             "mcpServers": {
                 "fstty": {
                     "command": command,
-                    "args": ["--mcp-stdio"]
+                    "args": args
                 }
             }
         })),
@@ -594,10 +616,24 @@ mod tests {
 
     #[test]
     fn client_configs_follow_agent_specific_shapes() {
-        let executable = Path::new(r"C:\Program Files\FsTTY\fstty.exe");
-        let vscode = build_mcp_stdio_client_config(executable, McpClientTarget::VsCode).unwrap();
+        let launch = McpStdioLaunchSpec {
+            command: r"C:\Windows\System32\cmd.exe".to_owned(),
+            args: vec![
+                "/d".to_owned(),
+                "/s".to_owned(),
+                "/c".to_owned(),
+                "call".to_owned(),
+                r"C:\Users\Test User\AppData\Roaming\FsTTY\mcp-runtime\fstty-mcp.cmd".to_owned(),
+            ],
+        };
+        let vscode = build_mcp_stdio_client_config(&launch, McpClientTarget::VsCode).unwrap();
         let vscode: serde_json::Value = serde_json::from_str(&vscode).unwrap();
         assert_eq!(vscode["servers"]["fstty"]["type"], "stdio");
+        assert_eq!(vscode["servers"]["fstty"]["command"], launch.command);
+        assert_eq!(
+            vscode["servers"]["fstty"]["args"],
+            serde_json::json!(launch.args)
+        );
 
         let gemini =
             build_mcp_http_client_config(37_653, "secret", McpClientTarget::GeminiCli).unwrap();
@@ -607,9 +643,10 @@ mod tests {
             "http://<FSTTY_HOST_IP>:37653/mcp"
         );
 
-        let codex = build_mcp_stdio_client_config(executable, McpClientTarget::Codex).unwrap();
+        let codex = build_mcp_stdio_client_config(&launch, McpClientTarget::Codex).unwrap();
         assert!(codex.contains("[mcp_servers.fstty]"));
-        assert!(codex.contains(r#"command = "C:\\Program Files\\FsTTY\\fstty.exe""#));
+        assert!(codex.contains(r#"command = "C:\\Windows\\System32\\cmd.exe""#));
+        assert!(codex.contains("fstty-mcp.cmd"));
 
         let codex_http =
             build_mcp_http_client_config(37_653, "secret", McpClientTarget::Codex).unwrap();
