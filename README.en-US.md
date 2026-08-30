@@ -79,6 +79,11 @@ A transfer link is its own credential and does not require the Bearer Token. Dow
 
 You can also copy an stdio or HTTP configuration and the agent instructions separately for any other MCP client.
 
+The configuration generator supports dsh (DeepSeek Harness). Install a compatible
+`@deepseek-ai/dsh-mcp-client` in the target profile, then append the generated YAML to
+`$DSH_HOME/profiles/<profile>/cordis.patch.yml`. For a local HTTP connection, replace
+`<FSTTY_HOST_IP>` with `127.0.0.1`.
+
 ## One-click Local Agent Setup
 
 | Agent | MCP configuration | Global instructions |

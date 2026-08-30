@@ -91,6 +91,11 @@ export function McpConfigDialog({
                   {dialog.loading ? t("settings.mcpConfigLoading") : dialog.config}
                 </pre>
               </div>
+              {dialog.target === "dsh" ? (
+                <small className="settings-mcp-config-target-hint">
+                  {t("settings.mcpDshConfigHint")}
+                </small>
+              ) : null}
               {dialog.transport === "http" ? (
                 <small className="settings-mcp-config-secret-hint">
                   {t("settings.mcpConfigSecretHint")}

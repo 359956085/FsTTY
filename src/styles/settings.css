@@ -765,6 +765,12 @@
   line-height: 1.45;
 }
 
+.settings-mcp-config-target-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .settings-mcp-config-dialog .dialog-actions {
   display: flex;
   justify-content: flex-end;

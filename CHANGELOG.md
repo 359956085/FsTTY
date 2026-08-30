@@ -9,10 +9,14 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 <!-- release-notes:zh-CN:start -->
 ### 简体中文
 
+- stdio 与 HTTP 配置生成器新增 dsh（DeepSeek Harness）支持，可生成对应的 profile YAML 补丁。
+
 <!-- release-notes:zh-CN:end -->
 
 <!-- release-notes:en-US:start -->
 ### English
+
+- Added dsh (DeepSeek Harness) to the stdio and HTTP configuration generators, including profile-ready YAML patches.
 
 <!-- release-notes:en-US:end -->
 

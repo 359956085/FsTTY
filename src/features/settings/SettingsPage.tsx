@@ -136,6 +136,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     { value: "cursor", label: "Cursor" },
     { value: "vsCode", label: "VS Code / GitHub Copilot" },
     { value: "geminiCli", label: "Gemini CLI" },
+    { value: "dsh", label: "dsh (DeepSeek Harness)" },
   ] satisfies ReadonlyArray<{ value: McpClientTarget; label: string }>;
   const sectionTitle = {
     about: t("settings.about"),

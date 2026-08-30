@@ -59,4 +59,37 @@ describe("McpConfigDialog", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("dsh 显示 profile 提示且 HTTP 继续显示 Token 警告", () => {
+    const dshDialog: McpConfigDialogState = {
+      ...dialog,
+      target: "dsh",
+      transport: "http",
+    };
+
+    const rendered = render(
+      <McpConfigDialog
+        dialog={dshDialog}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+        onTargetChange={vi.fn()}
+        options={[{ value: "dsh", label: "dsh (DeepSeek Harness)" }]}
+      />,
+    );
+
+    expect(screen.getByText("settings.mcpDshConfigHint")).not.toBeNull();
+    expect(screen.getByText("settings.mcpConfigSecretHint")).not.toBeNull();
+
+    rendered.rerender(
+      <McpConfigDialog
+        dialog={{ ...dshDialog, transport: "stdio" }}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+        onTargetChange={vi.fn()}
+        options={[{ value: "dsh", label: "dsh (DeepSeek Harness)" }]}
+      />,
+    );
+    expect(screen.getByText("settings.mcpDshConfigHint")).not.toBeNull();
+    expect(screen.queryByText("settings.mcpConfigSecretHint")).toBeNull();
+  });
 });

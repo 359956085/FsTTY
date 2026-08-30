@@ -79,6 +79,11 @@ HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Orig
 
 也可以分别复制 stdio 或 HTTP 配置，以及 Agent 使用提示词，手工粘贴到其他 MCP 客户端。
 
+复制配置支持 dsh（DeepSeek Harness）。使用前请在目标 profile 安装兼容版本的
+`@deepseek-ai/dsh-mcp-client`，再将生成的 YAML 追加到
+`$DSH_HOME/profiles/<profile>/cordis.patch.yml`；本机 HTTP 连接可将
+`<FSTTY_HOST_IP>` 替换为 `127.0.0.1`。
+
 ## 一键配置本地 Agent
 
 | Agent | MCP 配置 | 全局提示词 |

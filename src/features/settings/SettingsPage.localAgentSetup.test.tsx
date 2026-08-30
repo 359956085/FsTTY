@@ -17,8 +17,10 @@ const mocks = vi.hoisted(() => ({
     duplicateCount: 0,
     entryCount: 0,
   }),
+  getMcpHttpClientConfig: vi.fn(),
   getMcpAgentPrompt: vi.fn(),
   getMcpPermissionCatalog: vi.fn(),
+  getMcpStdioClientConfig: vi.fn(),
   inspectLocalAgentSetup: vi.fn(),
   importCommandHistory: vi.fn(),
   listSessions: vi.fn(),
@@ -39,8 +41,10 @@ vi.mock("../../shared/api/client", () => ({
     clearCommandHistory: mocks.clearCommandHistory,
     exportCommandHistory: mocks.exportCommandHistory,
     getCommandHistorySettings: mocks.getCommandHistorySettings,
+    getMcpHttpClientConfig: mocks.getMcpHttpClientConfig,
     getMcpAgentPrompt: mocks.getMcpAgentPrompt,
     getMcpPermissionCatalog: mocks.getMcpPermissionCatalog,
+    getMcpStdioClientConfig: mocks.getMcpStdioClientConfig,
     inspectLocalAgentSetup: mocks.inspectLocalAgentSetup,
     importCommandHistory: mocks.importCommandHistory,
     listSessions: mocks.listSessions,
@@ -250,6 +254,45 @@ describe("SettingsPage 本地 Agent 配置", () => {
     expect(
       within(httpPanel!).getByRole("button", { name: "settings.mcpCopyConfig" }),
     ).not.toBeNull();
+  });
+
+  it("stdio 和 HTTP 配置均可选择 dsh 并显示对应提示", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.getMcpStdioClientConfig.mockResolvedValue("dsh stdio config");
+    mocks.getMcpHttpClientConfig.mockResolvedValue("dsh http config");
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    const stdioPanel = screen
+      .getByRole("heading", { name: "settings.mcpEnabled" })
+      .closest("section");
+    const httpPanel = screen.getByRole("heading", { name: "settings.mcpHttp" }).closest("section");
+    expect(stdioPanel).not.toBeNull();
+    expect(httpPanel).not.toBeNull();
+
+    fireEvent.click(
+      within(stdioPanel!).getByRole("button", { name: "settings.mcpCopyConfig" }),
+    );
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "settings.mcpClient" }));
+    fireEvent.click(screen.getByRole("option", { name: "dsh (DeepSeek Harness)" }));
+    await waitFor(() => expect(mocks.getMcpStdioClientConfig).toHaveBeenCalledWith("dsh"));
+    expect(within(dialog).getByText("settings.mcpDshConfigHint")).not.toBeNull();
+    expect(within(dialog).queryByText("settings.mcpConfigSecretHint")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    fireEvent.click(
+      within(httpPanel!).getByRole("button", { name: "settings.mcpCopyConfig" }),
+    );
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "settings.mcpClient" }));
+    fireEvent.click(screen.getByRole("option", { name: "dsh (DeepSeek Harness)" }));
+    await waitFor(() => expect(mocks.getMcpHttpClientConfig).toHaveBeenCalledWith("dsh"));
+    expect(within(dialog).getByText("settings.mcpDshConfigHint")).not.toBeNull();
+    expect(within(dialog).getByText("settings.mcpConfigSecretHint")).not.toBeNull();
   });
 
   it("stdio 和 HTTP 独立复制同一份提示词", async () => {

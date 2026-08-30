@@ -349,6 +349,8 @@ void i18n.use(initReactI18next).init({
           mcpClientGenericJson: "通用 JSON",
           mcpConfigPreview: "配置预览",
           mcpConfigLoading: "正在生成配置...",
+          mcpDshConfigHint:
+            "请先在目标 dsh profile 安装兼容版本的 @deepseek-ai/dsh-mcp-client，再将配置追加到 $DSH_HOME/profiles/<profile>/cordis.patch.yml；本机 HTTP 可将 <FSTTY_HOST_IP> 替换为 127.0.0.1。",
           mcpConfigSecretHint:
             "此配置包含 HTTP 访问令牌。仅粘贴到可信 Agent，不要公开或转发。",
           mcpConfigLoadFailed: "无法生成 MCP 客户端配置",
@@ -791,6 +793,8 @@ void i18n.use(initReactI18next).init({
           mcpClientGenericJson: "Generic JSON",
           mcpConfigPreview: "Config preview",
           mcpConfigLoading: "Generating config...",
+          mcpDshConfigHint:
+            "Install a compatible @deepseek-ai/dsh-mcp-client in the target dsh profile, then append this configuration to $DSH_HOME/profiles/<profile>/cordis.patch.yml. For local HTTP, replace <FSTTY_HOST_IP> with 127.0.0.1.",
           mcpConfigSecretHint:
             "This config contains an HTTP access token. Paste it only into a trusted Agent. Do not publish or share it.",
           mcpConfigLoadFailed: "Unable to generate the MCP client config",

@@ -122,10 +122,11 @@ export type McpClientTarget =
   | "claude"
   | "cursor"
   | "vsCode"
-  | "geminiCli";
+  | "geminiCli"
+  | "dsh";
 
 export type LocalAgentTarget =
-  | Exclude<McpClientTarget, "genericJson">
+  | Exclude<McpClientTarget, "genericJson" | "dsh">
   | "openCode"
   | "trae"
   | "traeCn";

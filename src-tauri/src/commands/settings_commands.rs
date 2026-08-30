@@ -22,6 +22,7 @@ pub enum McpClientTarget {
     Cursor,
     VsCode,
     GeminiCli,
+    Dsh,
 }
 
 #[tauri::command]
@@ -351,6 +352,7 @@ fn build_mcp_http_client_config(
                 }
             }
         })),
+        McpClientTarget::Dsh => build_dsh_http_client_config(&url, &authorization),
         McpClientTarget::GenericJson | McpClientTarget::Cursor => pretty_json(&serde_json::json!({
             "mcpServers": {
                 "fstty": {
@@ -445,6 +447,7 @@ fn build_mcp_stdio_client_config(
                 }
             }
         })),
+        McpClientTarget::Dsh => build_dsh_stdio_client_config(launch),
         McpClientTarget::GenericJson
         | McpClientTarget::Claude
         | McpClientTarget::Cursor
@@ -457,6 +460,27 @@ fn build_mcp_stdio_client_config(
             }
         })),
     }
+}
+
+fn build_dsh_stdio_client_config(launch: &McpStdioLaunchSpec) -> Result<String, AppError> {
+    let command = yaml_json_value(&launch.command)?;
+    let args = yaml_json_value(&launch.args)?;
+    Ok(format!(
+        "- insert:\n    - id: mcp-fstty\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: fstty\n        transport: stdio\n        command: {command}\n        args: {args}"
+    ))
+}
+
+fn build_dsh_http_client_config(url: &str, authorization: &str) -> Result<String, AppError> {
+    let url = yaml_json_value(url)?;
+    let authorization = yaml_json_value(authorization)?;
+    Ok(format!(
+        "- insert:\n    - id: mcp-fstty\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: fstty\n        transport: streamable-http\n        url: {url}\n        headers:\n          Authorization: {authorization}"
+    ))
+}
+
+fn yaml_json_value<T: Serialize + ?Sized>(value: &T) -> Result<String, AppError> {
+    serde_json::to_string(value)
+        .map_err(|_| AppError::Internal("无法生成 dsh MCP 客户端配置".to_owned()))
 }
 
 fn pretty_json(value: &impl Serialize) -> Result<String, AppError> {
@@ -651,6 +675,49 @@ mod tests {
         let codex_http =
             build_mcp_http_client_config(37_653, "secret", McpClientTarget::Codex).unwrap();
         assert!(codex_http.contains("http_headers = { Authorization = \"Bearer secret\" }"));
+    }
+
+    #[test]
+    fn dsh_configs_use_profile_patch_shape_and_safe_yaml_values() {
+        let launch = McpStdioLaunchSpec {
+            command: r"C:\Windows\System32\cmd.exe".to_owned(),
+            args: vec![
+                "/d".to_owned(),
+                "/s".to_owned(),
+                "/c".to_owned(),
+                "call".to_owned(),
+                r"C:\Users\Test User\AppData\Roaming\FsTTY\mcp-runtime\fstty-mcp.cmd".to_owned(),
+            ],
+        };
+
+        let stdio = build_mcp_stdio_client_config(&launch, McpClientTarget::Dsh).unwrap();
+        assert!(stdio.starts_with("- insert:\n"));
+        assert!(stdio.contains("id: mcp-fstty"));
+        assert!(stdio.contains("name: '@deepseek-ai/dsh-mcp-client'"));
+        assert!(stdio.contains("serverName: fstty"));
+        assert!(stdio.contains("transport: stdio"));
+        assert!(stdio.contains(&format!(
+            "command: {}",
+            serde_json::to_string(&launch.command).unwrap()
+        )));
+        assert!(stdio.contains(&format!(
+            "args: {}",
+            serde_json::to_string(&launch.args).unwrap()
+        )));
+
+        let token = r#"secret\"with\\escapes"#;
+        let http = build_mcp_http_client_config(37_653, token, McpClientTarget::Dsh).unwrap();
+        assert!(http.starts_with("- insert:\n"));
+        assert!(http.contains("transport: streamable-http"));
+        assert!(http.contains(&format!(
+            "url: {}",
+            serde_json::to_string("http://<FSTTY_HOST_IP>:37653/mcp").unwrap()
+        )));
+        assert!(http.contains(&format!(
+            "Authorization: {}",
+            serde_json::to_string(&format!("Bearer {token}")).unwrap()
+        )));
+        assert!(!http.contains("transport: sse"));
     }
 
     #[test]
