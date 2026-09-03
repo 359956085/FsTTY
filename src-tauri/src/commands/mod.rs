@@ -1,5 +1,6 @@
 mod clipboard_commands;
 mod command_history_commands;
+mod lightweight_commands;
 mod session_commands;
 mod settings_commands;
 mod update_commands;
@@ -10,13 +11,19 @@ pub use command_history_commands::{
     get_command_history_settings, import_command_history, list_command_history,
     update_command_history_deduplication,
 };
+pub use lightweight_commands::{
+    abort_lightweight_mode, acknowledge_transfer_job, append_lightweight_snapshot_chunk,
+    attach_preserved_terminal, attach_transfer_job, begin_lightweight_mode,
+    commit_lightweight_mode, finish_lightweight_restore, get_lightweight_mode_state,
+    resolve_transfer_job_conflict, start_transfer_job,
+};
 pub use session_commands::{
     cancel_transfer, connect_session, create_remote_directory, create_session, delete_remote_entry,
     delete_session, delete_session_group, disconnect_session, download_file, forget_host_key,
-    get_device_status, list_remote_files, list_sessions, move_remote_entry, rename_remote_entry,
-    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
-    resolve_session_login_save_prompt, set_session_credential, trust_host_key, update_session,
-    upload_file, write_terminal,
+    get_device_metrics_snapshot, get_device_status, list_remote_files, list_sessions,
+    move_remote_entry, rename_remote_entry, rename_session_group, reorder_session,
+    reorder_session_group, resize_terminal, resolve_session_login_save_prompt,
+    set_session_credential, trust_host_key, update_session, upload_file, write_terminal,
 };
 pub use settings_commands::{
     configure_local_agents, export_mcp_command_policy, get_app_settings, get_mcp_agent_prompt,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::lightweight_mode_service::{LightweightTerminalBridge, TerminalBridgeEnd};
 
 impl ConnectionManager {
     pub async fn write_terminal(&self, connection_id: &str, data: String) -> Result<(), AppError> {
@@ -82,13 +83,15 @@ impl ConnectionManager {
         command: &'static str,
     ) -> Result<Vec<u8>, AppError> {
         let entry = self.entry(connection_id).await?;
-        let mut channel = {
+        let channel = {
             let handle = entry.handle.lock().await;
             handle
                 .channel_open_session()
                 .await
                 .map_err(|_| AppError::Connection("无法创建设备信息通道".to_owned()))?
         };
+        let mut managed_channel = DeviceExecChannel(Some(channel));
+        let channel = managed_channel.0.as_mut().expect("设备信息通道已创建");
         channel
             .exec(true, command)
             .await
@@ -117,9 +120,11 @@ impl ConnectionManager {
             }
             Ok(output)
         };
-        time::timeout(EXEC_TIMEOUT, collect)
+        let result = time::timeout(EXEC_TIMEOUT, collect)
             .await
-            .map_err(|_| AppError::Connection("设备信息命令超时".to_owned()))?
+            .map_err(|_| AppError::Connection("设备信息命令超时".to_owned()))?;
+        managed_channel.close().await;
+        result
     }
 
     pub(super) async fn detect_login_shell(&self, connection_id: &str) -> Option<ShellName> {
@@ -189,6 +194,28 @@ impl ConnectionManager {
     }
 }
 
+struct DeviceExecChannel(Option<russh::Channel<client::Msg>>);
+
+impl DeviceExecChannel {
+    async fn close(&mut self) {
+        if let Some(channel) = &self.0 {
+            let _ = time::timeout(Duration::from_secs(1), channel.close()).await;
+        }
+        self.0.take();
+    }
+}
+
+impl Drop for DeviceExecChannel {
+    fn drop(&mut self) {
+        if let Some(channel) = self.0.take() {
+            // russh 原始 Channel 析构不发送关闭；采样超时或取消也必须释放远端通道。
+            tokio::spawn(async move {
+                let _ = time::timeout(Duration::from_secs(1), channel.close()).await;
+            });
+        }
+    }
+}
+
 pub(super) fn parse_shell_name(output: &[u8]) -> Option<ShellName> {
     let value = std::str::from_utf8(output).ok()?.trim().replace('\\', "/");
     match value.rsplit('/').next()?.to_ascii_lowercase().as_str() {
@@ -230,20 +257,14 @@ pub(super) async fn wait_for_channel_success(
 }
 
 pub(super) async fn run_terminal(
-    connection_id: String,
     terminal_reader: russh::ChannelReadHalf,
     terminal_writer: russh::ChannelWriteHalf<client::Msg>,
     controls: mpsc::Receiver<TerminalControl>,
-    events: Channel<TerminalEvent>,
+    bridge: LightweightTerminalBridge,
     pending: VecDeque<ChannelMsg>,
 ) {
     // 拆开读写半通道：写入受远端窗口阻塞时，读取仍会持续推进并释放窗口。
-    let reader = run_terminal_reader(
-        connection_id.clone(),
-        terminal_reader,
-        events.clone(),
-        pending,
-    );
+    let reader = run_terminal_reader(terminal_reader, bridge.clone(), pending);
     let writer = run_terminal_writer(terminal_writer, controls);
     tokio::pin!(reader);
     tokio::pin!(writer);
@@ -253,26 +274,20 @@ pub(super) async fn run_terminal(
     };
     match end {
         TerminalEnd::Disconnected { exit_code, message } => {
-            let _ = events.send(TerminalEvent::Disconnected {
-                connection_id,
-                exit_code,
-                message,
-            });
+            let _ = bridge
+                .emit_end(TerminalBridgeEnd::Disconnected { exit_code, message })
+                .await;
         }
         TerminalEnd::Error(message) => {
-            let _ = events.send(TerminalEvent::Error {
-                connection_id,
-                message,
-            });
+            let _ = bridge.emit_end(TerminalBridgeEnd::Error(message)).await;
         }
         TerminalEnd::ClientGone => {}
     }
 }
 
 async fn run_terminal_reader(
-    connection_id: String,
     mut terminal: russh::ChannelReadHalf,
-    events: Channel<TerminalEvent>,
+    bridge: LightweightTerminalBridge,
     mut pending: VecDeque<ChannelMsg>,
 ) -> TerminalEnd {
     let mut output_batch = TerminalOutputBatch::new();
@@ -283,7 +298,7 @@ async fn run_terminal_reader(
                 tokio::select! {
                     biased;
                     _ = time::sleep_until(deadline) => {
-                        if flush_terminal_output(&connection_id, &events, &mut output_batch).is_err() {
+                        if flush_terminal_output(&bridge, &mut output_batch).await.is_err() {
                             return TerminalEnd::ClientGone;
                         }
                         flush_deadline = None;
@@ -304,7 +319,8 @@ async fn run_terminal_reader(
                     let appended = output_batch.append(remaining);
                     remaining = &remaining[appended..];
                     if output_batch.is_full() {
-                        if flush_terminal_output(&connection_id, &events, &mut output_batch)
+                        if flush_terminal_output(&bridge, &mut output_batch)
+                            .await
                             .is_err()
                         {
                             return TerminalEnd::ClientGone;
@@ -315,7 +331,10 @@ async fn run_terminal_reader(
             }
             message => {
                 // 断线和退出事件必须排在最后一批输出之后，避免终端尾部内容丢失。
-                if flush_terminal_output(&connection_id, &events, &mut output_batch).is_err() {
+                if flush_terminal_output(&bridge, &mut output_batch)
+                    .await
+                    .is_err()
+                {
                     return TerminalEnd::ClientGone;
                 }
                 flush_deadline = None;
@@ -364,20 +383,16 @@ async fn next_terminal_message(
     }
 }
 
-fn flush_terminal_output(
-    connection_id: &str,
-    events: &Channel<TerminalEvent>,
+async fn flush_terminal_output(
+    bridge: &LightweightTerminalBridge,
     output_batch: &mut TerminalOutputBatch,
 ) -> Result<(), ()> {
     if output_batch.is_empty() {
         return Ok(());
     }
-    let result = events.send(TerminalEvent::Data {
-        connection_id: connection_id.to_owned(),
-        data: BASE64_STANDARD.encode(output_batch.as_slice()),
-    });
+    let result = bridge.emit_data(output_batch.as_slice()).await;
     output_batch.clear();
-    result.map_err(|_| ())
+    result
 }
 
 async fn run_terminal_writer(

@@ -12,6 +12,11 @@ import type { AppSettings } from "./shared/api/types";
 import { DEFAULT_SHORTCUTS } from "./shared/shortcuts";
 import { readCachedThemePreference } from "./shared/theme";
 import { useAppTheme } from "./shared/useAppTheme";
+import {
+  enterLightweightMode,
+  getInitialLightweightModeState,
+} from "./features/lightweight/lightweightMode";
+import { Button } from "./shared/ui/Button";
 
 import appIcon from "./assets/brand-icon.png";
 
@@ -37,6 +42,11 @@ export function App() {
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [lightweightDialogOpen, setLightweightDialogOpen] = useState(false);
+  const [lightweightBusy, setLightweightBusy] = useState(false);
+  const [suppressLightweightConfirmation, setSuppressLightweightConfirmation] =
+    useState(() => getInitialLightweightModeState().suppressConfirmation);
+  const [doNotAskAgain, setDoNotAskAgain] = useState(false);
   const resolvedTheme = useAppTheme(settings.theme);
   const updater = useAppUpdater({
     autoUpdate: settings.autoUpdate,
@@ -100,6 +110,35 @@ export function App() {
     }
   }
 
+  async function handleEnterLightweightMode() {
+    if (lightweightBusy) {
+      return;
+    }
+    if (updater.phase === "downloading" || updater.phase === "installing") {
+      setLoadError(t("lightweight.updateBusy"));
+      return;
+    }
+    if (!suppressLightweightConfirmation) {
+      setDoNotAskAgain(false);
+      setLightweightDialogOpen(true);
+      return;
+    }
+    await enterConfirmedLightweightMode(true);
+  }
+
+  async function enterConfirmedLightweightMode(suppressConfirmation: boolean) {
+    setLightweightBusy(true);
+    setLightweightDialogOpen(false);
+    setLoadError(null);
+    try {
+      await enterLightweightMode(suppressConfirmation);
+      setSuppressLightweightConfirmation(suppressConfirmation);
+    } catch (error) {
+      setLoadError(resolveApiError(error, t("errors.unknown")));
+      setLightweightBusy(false);
+    }
+  }
+
   return (
     <div
       className="app-shell"
@@ -137,6 +176,30 @@ export function App() {
         </nav>
         <div aria-hidden="true" className="titlebar-drag-region" data-tauri-drag-region />
         <div className="window-controls">
+          <button
+            aria-label={t("lightweight.enter")}
+            className="lightweight-control"
+            disabled={lightweightBusy}
+            onClick={() => void handleEnterLightweightMode()}
+            title={t("lightweight.enter")}
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              fill="none"
+              height="22"
+              viewBox="0 0 24 24"
+              width="22"
+            >
+              <path
+                d="M19.7 3.3C12.8 3.9 7.1 7.2 5.2 12.1c-.8 2-.7 4 .1 5.6m14.4-14.4c.1 6.4-2.7 12.1-7.6 13.8-2.4.8-4.8.4-6.8.6m0 0L3 20m2.3-2.3c2.4-3.2 5.3-6 8.8-8.2"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.7"
+              />
+            </svg>
+          </button>
           <button
             aria-label={windowLabels.minimize}
             className="window-control"
@@ -188,6 +251,60 @@ export function App() {
         ) : null}
       </main>
       <UpdateDialog updater={updater} />
+      {lightweightDialogOpen ? (
+        <div className="dialog-backdrop lightweight-dialog-backdrop">
+          <form
+            aria-modal="true"
+            aria-label={t("lightweight.title")}
+            className="dialog lightweight-dialog"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !lightweightBusy) {
+                event.preventDefault();
+                setDoNotAskAgain(false);
+                setLightweightDialogOpen(false);
+              }
+            }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void enterConfirmedLightweightMode(doNotAskAgain);
+            }}
+            role="dialog"
+          >
+            <header className="dialog-header">
+              <h2>{t("lightweight.title")}</h2>
+            </header>
+            <div className="lightweight-dialog-body">
+              <p>{t("lightweight.description")}</p>
+              <p>{t("lightweight.backgroundHint")}</p>
+              <p>{t("lightweight.restoreHint")}</p>
+              <label className="lightweight-confirmation-row">
+                <input
+                  checked={doNotAskAgain}
+                  onChange={(event) => setDoNotAskAgain(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>{t("lightweight.doNotAskAgain")}</span>
+              </label>
+            </div>
+            <footer className="dialog-actions">
+              <Button
+                disabled={lightweightBusy}
+                onClick={() => {
+                  setDoNotAskAgain(false);
+                  setLightweightDialogOpen(false);
+                }}
+                type="button"
+                variant="ghost"
+              >
+                {t("sessions.cancel")}
+              </Button>
+              <Button autoFocus disabled={lightweightBusy} type="submit">
+                {t("lightweight.confirm")}
+              </Button>
+            </footer>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

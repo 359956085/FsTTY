@@ -1,7 +1,7 @@
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
-import { readApiError, resolveApiError } from "../../shared/api/errors";
+import { resolveApiError } from "../../shared/api/errors";
 import i18n from "../../shared/i18n";
 import { hasControlCharacter } from "../../shared/validation/text";
 import type {
@@ -9,7 +9,9 @@ import type {
   DeviceStatus,
   FileEntry,
   SshConnection,
+  TransferJobSummary,
 } from "../../shared/api/types";
+import { getInitialLightweightModeState, hasPreservedTerminal } from "../lightweight/lightweightMode";
 import { DEFAULT_REMOTE_PATH } from "./constants";
 import {
   DEVICE_POLL_INTERVAL_MS,
@@ -24,11 +26,11 @@ import {
   type SessionRemoteFilesController,
 } from "./sessionRemoteFiles";
 import { createSessionRuntimeController } from "./sessionRuntimeController";
-import { createTransferChannel, fileNameFromPath } from "./sessionTransfer";
-import { runTransferWithConflictRetry, type TransferAttemptResult } from "./transferConflict";
+import { createTransferJobSubscription } from "./sessionTransferJob";
 
 export interface TransferProgress {
   id: string;
+  connectionId?: string;
   direction: "upload" | "download";
   fileName: string;
   batchIndex?: number;
@@ -47,8 +49,10 @@ export interface SessionRuntime {
   currentPath: string;
   files: FileEntry[];
   filesLoading: boolean;
+  deviceLoading: boolean;
   deviceStatus: DeviceStatus | null;
   deviceHistory: DeviceMetricSample[];
+  deviceWindowEndMs: number;
   transfer: TransferProgress | null;
 }
 
@@ -63,6 +67,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const runtimeControllerRef = useRef(createSessionRuntimeController());
   const remoteFilesControllerRef = useRef<SessionRemoteFilesController | null>(null);
   const devicePollingControllerRef = useRef<SessionDevicePollingController | null>(null);
+  const attachedTransferJobsRef = useRef(new Set<string>());
 
   useEffect(() => {
     runtimesRef.current = runtimes;
@@ -103,7 +108,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   if (!devicePollingControllerRef.current) {
     devicePollingControllerRef.current =
       createSessionDevicePollingController<SessionRuntime>({
-        getDeviceStatus: (connectionId) => api.getDeviceStatus(connectionId),
+        getDeviceMetricsSnapshot: (connectionId) => api.getDeviceMetricsSnapshot(connectionId),
         getRuntime: (sessionId) => runtimesRef.current[sessionId],
         intervalMs: DEVICE_POLL_INTERVAL_MS,
         updateRuntime,
@@ -140,7 +145,6 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const handleConnected = useCallback(
     (sessionId: string, connection: SshConnection) => {
       runtimeControllerRef.current.cancelUploadBatch(sessionId);
-      runtimeControllerRef.current.cancelTransfer(sessionId);
       // 登录提示符可能先于 connectSession 返回 OSC；控制器保证首次目录上报不丢失。
       const currentPath = remoteFilesControllerRef.current!.consumeInitialPath(
         sessionId,
@@ -154,9 +158,16 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         error: null,
         currentPath,
         files: [],
-        deviceStatus: null,
-        deviceHistory: [],
-        transfer: null,
+        deviceStatus:
+          runtime.connection?.connectionId === connection.connectionId ? runtime.deviceStatus : null,
+        deviceHistory:
+          runtime.connection?.connectionId === connection.connectionId ? runtime.deviceHistory : [],
+        deviceWindowEndMs:
+          runtime.connection?.connectionId === connection.connectionId ? runtime.deviceWindowEndMs : 0,
+        transfer:
+          runtime.transfer?.connectionId === connection.connectionId
+            ? runtime.transfer
+            : null,
       }));
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
@@ -168,12 +179,15 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
 
   const handleTerminalState = useCallback(
     (sessionId: string, state: ConnectionState, error: string | null = null) => {
+      const replacingConnection = state === "connecting" && !hasPreservedTerminal(sessionId);
+      const stopDevicePolling = replacingConnection || state === "disconnecting" ||
+        state === "disconnected" || state === "error";
       if (state === "connecting" || state === "disconnected" || state === "error") {
         remoteFilesControllerRef.current!.cancelSession(sessionId);
         runtimeControllerRef.current.cancelUploadBatch(sessionId);
-        runtimeControllerRef.current.cancelTransfer(sessionId);
+        if (replacingConnection) runtimeControllerRef.current.cancelTransfer(sessionId);
       }
-      if (state === "disconnected" || state === "error") {
+      if (stopDevicePolling) {
         devicePollingControllerRef.current!.cancelSession(sessionId);
       }
       updateRuntime(sessionId, (runtime) => ({
@@ -192,6 +206,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           state === "disconnected" || state === "error"
             ? DEFAULT_REMOTE_PATH
             : runtime.currentPath,
+        deviceLoading: stopDevicePolling ? false : runtime.deviceLoading,
         deviceStatus:
           state === "disconnected" || state === "error"
             ? null
@@ -200,8 +215,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           state === "disconnected" || state === "error"
             ? []
             : runtime.deviceHistory,
+        deviceWindowEndMs:
+          state === "disconnected" || state === "error" ? 0 : runtime.deviceWindowEndMs,
         transfer:
-          state === "connecting" || state === "disconnected" || state === "error"
+          replacingConnection
             ? null
             : runtime.transfer,
       }));
@@ -334,6 +351,97 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     }
   }, []);
 
+  const attachTransferJob = useCallback(
+    async (job: TransferJobSummary) => {
+      const generation = runtimeControllerRef.current.beginTransfer(
+        job.runtimeId,
+        job.connectionId,
+        job.jobId,
+      );
+      const isCurrent = () => {
+        const runtime = runtimesRef.current[job.runtimeId];
+        return (
+          runtimeControllerRef.current.isTransferCurrent(
+            job.runtimeId,
+            job.connectionId,
+            job.jobId,
+            generation,
+          ) &&
+          (!runtime?.connection || runtime.connection.connectionId === job.connectionId)
+        );
+      };
+      const subscription = createTransferJobSubscription({
+        jobId: job.jobId,
+        runtimeId: job.runtimeId,
+        connectionId: job.connectionId,
+        isCurrent,
+        onConflict: async (conflictJob) => {
+          const overwrite = await confirm(
+            conflictJob.direction === "upload"
+              ? i18n.t("sessions.remoteOverwriteConfirm", {
+                  name: conflictJob.fileName,
+                })
+              : i18n.t("sessions.localOverwriteConfirm"),
+            {
+              title: i18n.t("sessions.overwriteTitle"),
+              kind: "warning",
+              okLabel: i18n.t("sessions.overwrite"),
+              cancelLabel:
+                conflictJob.direction === "upload"
+                  ? i18n.t("sessions.skip")
+                  : i18n.t("sessions.cancel"),
+            },
+          );
+          if (overwrite) return "overwrite";
+          return conflictJob.direction === "upload" ? "skip" : "cancel";
+        },
+        onTerminal: (terminalJob) => {
+          if (terminalJob.direction !== "upload") return;
+          const runtime = runtimesRef.current[terminalJob.runtimeId];
+          if (runtime?.connection?.connectionId === terminalJob.connectionId) {
+            void loadFiles(
+              terminalJob.runtimeId,
+              terminalJob.connectionId,
+              runtime.currentPath,
+            );
+          }
+        },
+        resolveConflict: (jobId, decision) =>
+          api.resolveTransferJobConflict(jobId, decision),
+        resolveError: (error) => resolveApiError(error, errorFallbackRef.current),
+        updateRuntime,
+      });
+      attachedTransferJobsRef.current.add(job.jobId);
+      await subscription.apply(job);
+      try {
+        // 安装通道会先发送有序摘要；RPC 返回值可能比后续进度旧，不能再次覆盖界面。
+        await api.attachTransferJob(job.jobId, subscription.channel);
+      } catch (error) {
+        attachedTransferJobsRef.current.delete(job.jobId);
+        if (isCurrent()) {
+          updateRuntime(job.runtimeId, (runtime) => ({
+            ...runtime,
+            error: resolveApiError(error, errorFallbackRef.current),
+          }));
+        }
+        throw error;
+      }
+    },
+    [loadFiles, updateRuntime],
+  );
+
+  useEffect(() => {
+    const restoredJobs = getInitialLightweightModeState().transferJobs;
+    const attachedJobs = attachedTransferJobsRef.current;
+    for (const job of restoredJobs) {
+      if (attachedJobs.has(job.jobId)) continue;
+      void attachTransferJob(job).catch(() => undefined);
+    }
+    return () => {
+      restoredJobs.forEach((job) => attachedJobs.delete(job.jobId));
+    };
+  }, [attachTransferJob]);
+
   const uploadFiles = useCallback(
     async (sessionId: string, localPaths: string[]) => {
       const paths = localPaths.filter(Boolean);
@@ -341,129 +449,46 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (
         paths.length === 0 ||
         !runtime?.connection?.sftpAvailable ||
-        runtime.transfer?.state === "running" ||
-        runtimeControllerRef.current.hasUploadBatch(sessionId)
+        runtime.transfer?.state === "running"
       ) {
         return;
       }
-
       const connectionId = runtime.connection.connectionId;
-      const remoteDirectory = runtime.currentPath;
-      const batchToken = crypto.randomUUID();
-      if (!runtimeControllerRef.current.startUploadBatch(sessionId, batchToken)) return;
-      let uploaded = 0;
-      let skipped = 0;
-      let failed = 0;
-      let cancelled = false;
-
-      const batchIsActive = () =>
-        runtimeControllerRef.current.isUploadBatchCurrent(sessionId, batchToken) &&
+      const startToken = crypto.randomUUID();
+      if (!runtimeControllerRef.current.startUploadBatch(sessionId, startToken)) return;
+      const isStartCurrent = () =>
+        runtimeControllerRef.current.isUploadBatchCurrent(sessionId, startToken) &&
         runtimesRef.current[sessionId]?.connection?.connectionId === connectionId;
-      const clearTransfer = (transferId: string) => {
+      try {
+        if (runtime.transfer) {
+          await api.acknowledgeTransferJob(runtime.transfer.id).catch(() => undefined);
+        }
+        const job = await api.startTransferJob({
+          kind: "uploadBatch",
+          runtimeId: sessionId,
+          connectionId,
+          localPaths: paths,
+          remoteDirectory: runtime.currentPath,
+        });
+        // WebView 卸载不撤销 Rust 已接管的任务；仅仍存活的界面负责取消旧连接任务。
+        if (!runtimeControllerRef.current.isActive()) return;
+        if (!isStartCurrent()) {
+          await api.cancelTransfer(job.jobId).catch(() => undefined);
+          return;
+        }
+        await attachTransferJob(job);
+      } catch (error) {
+        if (!isStartCurrent()) return;
         updateRuntime(sessionId, (current) => ({
           ...current,
-          transfer: current.transfer?.id === transferId ? null : current.transfer,
+          transfer: current.transfer?.connectionId === connectionId ? null : current.transfer,
+          error: resolveApiError(error, errorFallback),
         }));
-      };
-
-      try {
-        for (const [index, localPath] of paths.entries()) {
-          if (!batchIsActive()) {
-            cancelled = true;
-            break;
-          }
-          const fileName = fileNameFromPath(localPath);
-          const run = async (
-            overwrite: boolean,
-          ): Promise<TransferAttemptResult<"uploaded">> => {
-            const transferId = crypto.randomUUID();
-            const transferGeneration = runtimeControllerRef.current.beginTransfer(
-              sessionId,
-              connectionId,
-              transferId,
-            );
-            const transferIsCurrent = () =>
-              batchIsActive() &&
-              runtimeControllerRef.current.isTransferCurrent(
-                sessionId,
-                connectionId,
-                transferId,
-                transferGeneration,
-              );
-            const progress = createTransferChannel(
-              sessionId,
-              transferId,
-              "upload",
-              fileName,
-              updateRuntime,
-              transferIsCurrent,
-              index + 1,
-              paths.length,
-            );
-            try {
-              await api.uploadFile(
-                connectionId,
-                transferId,
-                localPath,
-                remoteDirectory,
-                overwrite,
-                progress,
-              );
-              return transferIsCurrent()
-                ? { status: "completed", value: "uploaded" }
-                : { status: "cancelled" };
-            } catch (error) {
-              if (!transferIsCurrent()) return { status: "cancelled" };
-              runtimeControllerRef.current.cancelTransfer(sessionId);
-              clearTransfer(transferId);
-              throw error;
-            }
-          };
-
-          const result = await runTransferWithConflictRetry(run, {
-            isCurrent: batchIsActive,
-            isConflict: (error) => readApiError(error, errorFallback).kind === "conflict",
-            confirmOverwrite: () =>
-              confirm(i18n.t("sessions.remoteOverwriteConfirm", { name: fileName }), {
-                title: i18n.t("sessions.overwriteTitle"),
-                kind: "warning",
-                okLabel: i18n.t("sessions.overwrite"),
-                cancelLabel: i18n.t("sessions.skip"),
-              }),
-          });
-          if (result.kind === "cancelled") {
-            cancelled = true;
-            break;
-          }
-          if (result.kind === "completed") uploaded += 1;
-          if (result.kind === "skipped") skipped += 1;
-          if (result.kind === "failed") failed += 1;
-        }
       } finally {
-        const ownsBatch = runtimeControllerRef.current.endUploadBatch(sessionId, batchToken);
-        if (ownsBatch) runtimeControllerRef.current.cancelTransfer(sessionId);
-        const latest = runtimesRef.current[sessionId];
-        let refreshSucceeded = true;
-        if (
-          (ownsBatch || cancelled) &&
-          latest?.connection?.connectionId === connectionId &&
-          latest.currentPath === remoteDirectory
-        ) {
-          refreshSucceeded = await loadFiles(sessionId, connectionId, remoteDirectory);
-        }
-        if (ownsBatch && refreshSucceeded && (skipped > 0 || failed > 0)) {
-          updateRuntime(sessionId, (current) => ({
-            ...current,
-            error: i18n.t("sessions.batchUploadSummary", {
-              uploaded,
-              skipped,
-              failed,
-            }),
-          }));
-        }
+        runtimeControllerRef.current.endUploadBatch(sessionId, startToken);
       }
     },
-    [errorFallback, loadFiles, updateRuntime],
+    [attachTransferJob, errorFallback, updateRuntime],
   );
 
   const uploadFile = useCallback(
@@ -473,8 +498,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         const runtime = runtimesRef.current[sessionId];
         if (
           !runtime?.connection?.sftpAvailable ||
-          runtime.transfer?.state === "running" ||
-          runtimeControllerRef.current.hasUploadBatch(sessionId)
+          runtime.transfer?.state === "running"
         ) {
           return;
         }
@@ -483,11 +507,15 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
           multiple: false,
           title: i18n.t("sessions.selectUploadFile"),
         });
-        if (selected) {
+        if (
+          selected && runtimeControllerRef.current.isActive() &&
+          runtimesRef.current[sessionId]?.connection?.connectionId === initialConnectionId
+        ) {
           await uploadFiles(sessionId, [selected]);
         }
       } catch (error) {
         if (
+          !runtimeControllerRef.current.isActive() ||
           !initialConnectionId ||
           runtimesRef.current[sessionId]?.connection?.connectionId !== initialConnectionId
         ) {
@@ -506,6 +534,10 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   const downloadFile = useCallback(
     async (sessionId: string, file: FileEntry) => {
       const initialConnectionId = runtimesRef.current[sessionId]?.connection?.connectionId;
+      const startToken = crypto.randomUUID();
+      const isStartCurrent = () =>
+        runtimeControllerRef.current.isUploadBatchCurrent(sessionId, startToken) &&
+        runtimesRef.current[sessionId]?.connection?.connectionId === initialConnectionId;
       try {
         const runtime = runtimesRef.current[sessionId];
         if (
@@ -515,6 +547,7 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         ) {
           return;
         }
+        if (!runtimeControllerRef.current.startUploadBatch(sessionId, startToken)) return;
         const selected = await save({
           defaultPath: file.name,
           title: i18n.t("sessions.saveDownloadFile"),
@@ -524,110 +557,56 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         }
         const selectedRuntime = runtimesRef.current[sessionId];
         if (
-          !runtimeControllerRef.current.isActive() ||
+          !isStartCurrent() ||
           !selectedRuntime?.connection?.sftpAvailable ||
+          selectedRuntime.connection.connectionId !== initialConnectionId ||
           selectedRuntime.transfer?.state === "running"
         ) {
           return;
         }
         const connectionId = selectedRuntime.connection.connectionId;
-
-        const run = async (
-          overwrite: boolean,
-        ): Promise<TransferAttemptResult<void>> => {
-          const transferId = crypto.randomUUID();
-          const transferGeneration = runtimeControllerRef.current.beginTransfer(
-            sessionId,
-            connectionId,
-            transferId,
-          );
-          const transferIsCurrent = () =>
-            runtimeControllerRef.current.isTransferCurrent(
-              sessionId,
-              connectionId,
-              transferId,
-              transferGeneration,
-            ) &&
-            runtimesRef.current[sessionId]?.connection?.connectionId === connectionId;
-          const progress = createTransferChannel(
-            sessionId,
-            transferId,
-            "download",
-            file.name,
-            updateRuntime,
-            transferIsCurrent,
-          );
-          try {
-            await api.downloadFile(
-              connectionId,
-              transferId,
-              file.path,
-              selected,
-              overwrite,
-              progress,
-            );
-            return transferIsCurrent()
-              ? { status: "completed", value: undefined }
-              : { status: "cancelled" };
-          } catch (error) {
-            if (!transferIsCurrent()) return { status: "cancelled" };
-            runtimeControllerRef.current.cancelTransfer(sessionId);
-            updateRuntime(sessionId, (current) => ({
-              ...current,
-              transfer: current.transfer?.id === transferId ? null : current.transfer,
-            }));
-            throw error;
-          }
-        };
-        const result = await runTransferWithConflictRetry(run, {
-          isCurrent: () =>
-            runtimeControllerRef.current.isActive() &&
-            runtimesRef.current[sessionId]?.connection?.connectionId === connectionId,
-          isConflict: (error) => readApiError(error, errorFallback).kind === "conflict",
-          confirmOverwrite: () =>
-            confirm(i18n.t("sessions.localOverwriteConfirm"), {
-              title: i18n.t("sessions.overwriteTitle"),
-              kind: "warning",
-              okLabel: i18n.t("sessions.overwrite"),
-              cancelLabel: i18n.t("sessions.cancel"),
-            }),
-        });
-        if (result.kind === "failed") {
-          throw result.error;
+        if (selectedRuntime.transfer) {
+          await api
+            .acknowledgeTransferJob(selectedRuntime.transfer.id)
+            .catch(() => undefined);
         }
-      } catch (error) {
-        if (
-          !initialConnectionId ||
-          runtimesRef.current[sessionId]?.connection?.connectionId !== initialConnectionId
-        ) {
+        const job = await api.startTransferJob({
+          kind: "download",
+          runtimeId: sessionId,
+          connectionId,
+          remotePath: file.path,
+          localPath: selected,
+        });
+        if (!runtimeControllerRef.current.isActive()) return;
+        if (!isStartCurrent()) {
+          await api.cancelTransfer(job.jobId).catch(() => undefined);
           return;
         }
+        await attachTransferJob(job);
+      } catch (error) {
+        if (!isStartCurrent()) return;
         runtimeControllerRef.current.cancelTransfer(sessionId);
         updateRuntime(sessionId, (runtime) => ({
           ...runtime,
-          transfer: null,
+          transfer:
+            runtime.transfer?.connectionId === initialConnectionId
+              ? null
+              : runtime.transfer,
           error: resolveApiError(error, errorFallback),
         }));
+      } finally {
+        runtimeControllerRef.current.endUploadBatch(sessionId, startToken);
       }
     },
-    [errorFallback, updateRuntime],
+    [attachTransferJob, errorFallback, updateRuntime],
   );
 
   const cancelTransfer = useCallback(
     async (sessionId: string) => {
-      runtimeControllerRef.current.cancelUploadBatch(sessionId);
       const transfer = runtimesRef.current[sessionId]?.transfer;
       if (!transfer || transfer.state !== "running") {
         return;
       }
-      runtimeControllerRef.current.cancelTransfer(sessionId);
-      updateRuntime(sessionId, (runtime) => ({
-        ...runtime,
-        transfer:
-          runtime.transfer?.id === transfer.id
-            ? { ...runtime.transfer, state: "cancelled" }
-            : runtime.transfer,
-      }));
       try {
         await api.cancelTransfer(transfer.id);
       } catch (error) {
@@ -644,18 +623,28 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
   );
 
   const dismissTransfer = useCallback(
-    (sessionId: string) => {
+    async (sessionId: string) => {
       const transfer = runtimesRef.current[sessionId]?.transfer;
-      if (transfer && transfer.state !== "running") {
-        runtimeControllerRef.current.cancelTransfer(sessionId);
+      if (!transfer || transfer.state === "running") return;
+      try {
+        await api.acknowledgeTransferJob(transfer.id);
+      } catch (error) {
+        updateRuntime(sessionId, (runtime) => ({
+          ...runtime,
+          error:
+            runtime.transfer?.id === transfer.id
+              ? resolveApiError(error, errorFallback)
+              : runtime.error,
+        }));
+        return;
       }
+      runtimeControllerRef.current.cancelTransfer(sessionId);
+      attachedTransferJobsRef.current.delete(transfer.id);
       updateRuntime(sessionId, (runtime) =>
-        runtime.transfer?.state === "running"
-          ? runtime
-          : { ...runtime, transfer: null },
+        runtime.transfer?.id === transfer.id ? { ...runtime, transfer: null } : runtime,
       );
     },
-    [updateRuntime],
+    [errorFallback, updateRuntime],
   );
 
   return {
@@ -689,8 +678,10 @@ export function createRuntime(): SessionRuntime {
     currentPath: DEFAULT_REMOTE_PATH,
     files: [],
     filesLoading: false,
+    deviceLoading: false,
     deviceStatus: null,
     deviceHistory: [],
+    deviceWindowEndMs: 0,
     transfer: null,
   };
 }

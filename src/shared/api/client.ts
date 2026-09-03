@@ -9,9 +9,13 @@ import type {
   CommandHistorySettings,
   ConnectResult,
   CreateSessionPayload,
+  DeviceMetricsSnapshot,
   DeviceStatus,
   FileEntry,
   Language,
+  LightweightModeState,
+  LightweightSnapshotKind,
+  LightweightTerminalRequest,
   LocalAgentCapability,
   LocalAgentConfigureResult,
   LocalAgentTarget,
@@ -25,8 +29,14 @@ import type {
   SessionGroup,
   ShortcutSettings,
   TerminalEvent,
+  TerminalResumeEvent,
+  PreservedTerminalAttachment,
+  StartTransferJobRequest,
   ThemePreference,
+  TransferConflictDecision,
   TransferEvent,
+  TransferJobEvent,
+  TransferJobSummary,
   UpdateSourcePreference,
   UpdateSessionPayload,
 } from "./types";
@@ -94,6 +104,62 @@ export const api = {
   disconnectSession(connectionId: string) {
     return invoke<void>("disconnect_session", { connectionId });
   },
+  getLightweightModeState() {
+    return invoke<LightweightModeState>("get_lightweight_mode_state");
+  },
+  beginLightweightMode(
+    terminals: LightweightTerminalRequest[],
+    suppressConfirmation: boolean,
+  ) {
+    return invoke<{ token: string }>("begin_lightweight_mode", {
+      terminals,
+      suppressConfirmation,
+    });
+  },
+  appendLightweightSnapshotChunk(
+    token: string,
+    runtimeId: string,
+    kind: LightweightSnapshotKind,
+    chunkIndex: number,
+    totalChunks: number,
+    data: string,
+  ) {
+    return invoke<void>("append_lightweight_snapshot_chunk", {
+      token,
+      runtimeId,
+      kind,
+      chunkIndex,
+      totalChunks,
+      data,
+    });
+  },
+  commitLightweightMode(token: string) {
+    return invoke<void>("commit_lightweight_mode", { token });
+  },
+  abortLightweightMode(token: string) {
+    return invoke<void>("abort_lightweight_mode", { token });
+  },
+  attachPreservedTerminal(runtimeId: string, onEvent: Channel<TerminalResumeEvent>) {
+    return invoke<PreservedTerminalAttachment>("attach_preserved_terminal", {
+      runtimeId,
+      onEvent,
+    });
+  },
+  finishLightweightRestore(validRuntimeIds: string[]) {
+    return invoke<void>("finish_lightweight_restore", { validRuntimeIds });
+  },
+  startTransferJob(request: StartTransferJobRequest) {
+    return invoke<TransferJobSummary>("start_transfer_job", { request });
+  },
+  attachTransferJob(jobId: string, onEvent: Channel<TransferJobEvent>) {
+    return invoke<TransferJobSummary>("attach_transfer_job", { jobId, onEvent });
+  },
+  resolveTransferJobConflict(jobId: string, decision: TransferConflictDecision) {
+    return invoke<void>("resolve_transfer_job_conflict", { jobId, decision });
+  },
+  acknowledgeTransferJob(jobId: string) {
+    return invoke<void>("acknowledge_transfer_job", { jobId });
+  },
   listRemoteFiles(connectionId: string, path: string) {
     return invoke<FileEntry[]>("list_remote_files", { connectionId, path });
   },
@@ -148,6 +214,9 @@ export const api = {
   },
   getDeviceStatus(connectionId: string) {
     return invoke<DeviceStatus>("get_device_status", { connectionId });
+  },
+  getDeviceMetricsSnapshot(connectionId: string) {
+    return invoke<DeviceMetricsSnapshot>("get_device_metrics_snapshot", { connectionId });
   },
   getSystemClipboardContentKind() {
     return invoke<ClipboardContentKind>("get_system_clipboard_content_kind");

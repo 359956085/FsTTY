@@ -3,7 +3,10 @@ use crate::models::{
 };
 use semver::Version;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -26,6 +29,7 @@ struct PendingAppUpdate {
 #[derive(Clone, Default)]
 pub struct AppUpdateService {
     pending: Arc<Mutex<Option<PendingAppUpdate>>>,
+    installing: Arc<AtomicBool>,
 }
 
 impl AppUpdateService {
@@ -76,15 +80,25 @@ impl AppUpdateService {
     }
 
     pub async fn install(&self, on_progress: Channel<AppUpdateProgress>) -> Result<(), AppError> {
+        if self.installing.swap(true, Ordering::AcqRel) {
+            return Err(AppError::Busy("应用更新正在安装".to_owned()));
+        }
         let pending = self
             .pending
             .lock()
             .await
             .clone()
-            .ok_or_else(|| AppError::NotFound("没有待安装的应用更新".to_owned()))?;
+            .ok_or_else(|| AppError::NotFound("没有待安装的应用更新".to_owned()));
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => {
+                self.installing.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
 
         let mut started = false;
-        pending
+        let result = pending
             .update
             .download_and_install(
                 |chunk_bytes, total_bytes| {
@@ -101,9 +115,15 @@ impl AppUpdateService {
                 },
             )
             .await
-            .map_err(|error| AppError::Internal(format!("下载或安装应用更新失败：{error}")))?;
+            .map_err(|error| AppError::Internal(format!("下载或安装应用更新失败：{error}")));
+        self.installing.store(false, Ordering::Release);
+        result?;
         self.close().await;
         Ok(())
+    }
+
+    pub fn is_installing(&self) -> bool {
+        self.installing.load(Ordering::Acquire)
     }
 
     pub async fn close(&self) {

@@ -29,6 +29,36 @@ pub(super) struct ActiveTransfer {
     pub(super) cancelled: Arc<AtomicBool>,
 }
 
+#[derive(Clone)]
+pub(crate) struct TransferReporter {
+    send: Arc<dyn Fn(TransferEvent) + Send + Sync>,
+    cancellation: Arc<AtomicBool>,
+}
+
+impl TransferReporter {
+    pub(crate) fn channel(channel: Channel<TransferEvent>) -> Self {
+        Self::new(move |event| {
+            let _ = channel.send(event);
+        })
+    }
+
+    pub(crate) fn new(send: impl Fn(TransferEvent) + Send + Sync + 'static) -> Self {
+        Self {
+            send: Arc::new(send),
+            cancellation: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(crate) fn with_cancellation(mut self, cancellation: Arc<AtomicBool>) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
+    pub(crate) fn emit(&self, event: TransferEvent) {
+        (self.send)(event);
+    }
+}
+
 impl ConnectionManager {
     pub async fn upload_file_quiet(
         &self,
@@ -322,7 +352,30 @@ impl ConnectionManager {
         overwrite: bool,
         progress: Channel<TransferEvent>,
     ) -> Result<(), AppError> {
-        let cancelled = self.begin_transfer(connection_id, transfer_id).await?;
+        self.upload_file_reported(
+            connection_id,
+            transfer_id,
+            local_path,
+            remote_directory,
+            overwrite,
+            TransferReporter::channel(progress),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn upload_file_reported(
+        &self,
+        connection_id: &str,
+        transfer_id: &str,
+        local_path: &str,
+        remote_directory: &str,
+        overwrite: bool,
+        progress: TransferReporter,
+    ) -> Result<(), AppError> {
+        let cancelled = self
+            .begin_transfer(connection_id, transfer_id, progress.cancellation.clone())
+            .await?;
         let result = self
             .upload_file_inner(
                 connection_id,
@@ -346,7 +399,7 @@ impl ConnectionManager {
         local_path: &str,
         remote_directory: &str,
         overwrite: bool,
-        progress: Channel<TransferEvent>,
+        progress: TransferReporter,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), AppError> {
         let local_path = validate_upload_source(local_path).await?;
@@ -400,7 +453,7 @@ impl ConnectionManager {
             if cancelled.load(Ordering::Relaxed) {
                 let _ = destination.shutdown().await;
                 let _ = sftp.remove_file(temp).await;
-                let _ = progress.send(TransferEvent::Cancelled {
+                progress.emit(TransferEvent::Cancelled {
                     transfer_id: transfer_id.to_owned(),
                     transferred_bytes: transferred,
                     total_bytes: total,
@@ -434,7 +487,7 @@ impl ConnectionManager {
             return Err(AppError::Sftp("提交远程临时文件失败".to_owned()));
         }
         finalize_remote_file(&sftp, &temp, &target, &backup, target_exists).await?;
-        let _ = progress.send(TransferEvent::Completed {
+        progress.emit(TransferEvent::Completed {
             transfer_id: transfer_id.to_owned(),
             transferred_bytes: transferred,
             total_bytes: total,
@@ -451,7 +504,30 @@ impl ConnectionManager {
         overwrite: bool,
         progress: Channel<TransferEvent>,
     ) -> Result<(), AppError> {
-        let cancelled = self.begin_transfer(connection_id, transfer_id).await?;
+        self.download_file_reported(
+            connection_id,
+            transfer_id,
+            remote_path,
+            local_path,
+            overwrite,
+            TransferReporter::channel(progress),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn download_file_reported(
+        &self,
+        connection_id: &str,
+        transfer_id: &str,
+        remote_path: &str,
+        local_path: &str,
+        overwrite: bool,
+        progress: TransferReporter,
+    ) -> Result<(), AppError> {
+        let cancelled = self
+            .begin_transfer(connection_id, transfer_id, progress.cancellation.clone())
+            .await?;
         let result = self
             .download_file_inner(
                 connection_id,
@@ -475,7 +551,7 @@ impl ConnectionManager {
         remote_path: &str,
         local_path: &str,
         overwrite: bool,
-        progress: Channel<TransferEvent>,
+        progress: TransferReporter,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), AppError> {
         let remote_path = normalize_remote_path(remote_path)?;
@@ -525,7 +601,7 @@ impl ConnectionManager {
             if cancelled.load(Ordering::Relaxed) {
                 drop(destination);
                 let _ = tokio::fs::remove_file(&temp).await;
-                let _ = progress.send(TransferEvent::Cancelled {
+                progress.emit(TransferEvent::Cancelled {
                     transfer_id: transfer_id.to_owned(),
                     transferred_bytes: transferred,
                     total_bytes: total,
@@ -561,7 +637,7 @@ impl ConnectionManager {
         }
         drop(destination);
         finalize_local_file(&temp, &local_path, &backup, overwrite).await?;
-        let _ = progress.send(TransferEvent::Completed {
+        progress.emit(TransferEvent::Completed {
             transfer_id: transfer_id.to_owned(),
             transferred_bytes: transferred,
             total_bytes: total,
@@ -583,6 +659,7 @@ impl ConnectionManager {
         &self,
         connection_id: &str,
         transfer_id: &str,
+        cancelled: Arc<AtomicBool>,
     ) -> Result<Arc<AtomicBool>, AppError> {
         Uuid::parse_str(transfer_id)
             .map_err(|_| AppError::Validation("传输 ID 无效".to_owned()))?;
@@ -597,7 +674,7 @@ impl ConnectionManager {
         {
             return Err(AppError::Busy("当前会话已有文件传输".to_owned()));
         }
-        let cancelled = Arc::new(AtomicBool::new(false));
+        // 与后台任务共用取消标记，取消发生在登记前也不会丢失。
         transfers.insert(
             transfer_id.to_owned(),
             ActiveTransfer {
@@ -770,12 +847,12 @@ pub(super) async fn finalize_local_file(
 }
 
 pub(super) fn send_progress(
-    progress: &Channel<TransferEvent>,
+    progress: &TransferReporter,
     transfer_id: &str,
     transferred_bytes: u64,
     total_bytes: u64,
 ) {
-    let _ = progress.send(TransferEvent::Progress {
+    progress.emit(TransferEvent::Progress {
         transfer_id: transfer_id.to_owned(),
         transferred_bytes,
         total_bytes,

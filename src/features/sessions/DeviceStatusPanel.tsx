@@ -20,12 +20,13 @@ interface DeviceStatusPanelProps {
   status: DeviceStatus | null;
   history: readonly DeviceMetricSample[];
   connected: boolean;
+  loading: boolean;
+  windowEndMs: number;
 }
 
-export function DeviceStatusPanel({ connected, history, status }: DeviceStatusPanelProps) {
+export function DeviceStatusPanel({ connected, history, loading, status, windowEndMs }: DeviceStatusPanelProps) {
   const { t } = useTranslation();
   const latestSample = history[history.length - 1];
-  const chartWindowEndMs = Math.max(latestSample?.sampledAtMs ?? 0, performance.now());
 
   return (
     <section className="status-panel">
@@ -46,7 +47,7 @@ export function DeviceStatusPanel({ connected, history, status }: DeviceStatusPa
             history={history}
             metric="cpuPercent"
             percent={status.cpuPercent}
-            windowEndMs={chartWindowEndMs}
+            windowEndMs={windowEndMs}
           />
           <MetricRow
             detail={formatCapacity(status.memoryUsedGb, status.memoryTotalGb)}
@@ -55,7 +56,7 @@ export function DeviceStatusPanel({ connected, history, status }: DeviceStatusPa
             history={history}
             metric="memoryPercent"
             percent={status.memoryPercent}
-            windowEndMs={chartWindowEndMs}
+            windowEndMs={windowEndMs}
           />
           <MetricRow
             detail={formatCapacity(status.diskUsedGb, status.diskTotalGb)}
@@ -90,9 +91,11 @@ export function DeviceStatusPanel({ connected, history, status }: DeviceStatusPa
         </div>
       ) : (
         <p className="empty-message">
-          {connected
-            ? t("sessions.deviceUnavailable")
-            : t("sessions.connectForDevice")}
+          {!connected
+            ? t("sessions.connectForDevice")
+            : loading
+              ? t("common.loading")
+              : t("sessions.deviceUnavailable")}
         </p>
       )}
     </section>

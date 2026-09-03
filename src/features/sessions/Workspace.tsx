@@ -15,6 +15,7 @@ import { TerminalPane } from "./TerminalPane";
 import type { SessionRuntime } from "./useSessionConnections";
 import type { OpenSessionTab } from "./useSessionsPageState";
 import type { ResolvedTheme } from "../../shared/theme";
+import { getPreservedRuntimeIds } from "../lightweight/lightweightMode";
 
 interface WorkspaceProps {
   allowRemoteClipboardWrite: boolean;
@@ -22,6 +23,7 @@ interface WorkspaceProps {
   activeRuntime: SessionRuntime;
   connectionStates: Readonly<Record<string, ConnectionState>>;
   error: string | null;
+  onRetryRestore?: () => void;
   loading: boolean;
   openTabs: OpenSessionTab[];
   rightCollapsed: boolean;
@@ -65,6 +67,7 @@ export function Workspace({
   activeTabId,
   connectionStates,
   error,
+  onRetryRestore,
   loading,
   onCancelTransfer,
   onDismissTransfer,
@@ -101,7 +104,13 @@ export function Workspace({
     tabId: string;
   } | null>(null);
   const [initializedTerminalIds, setInitializedTerminalIds] = useState<ReadonlySet<string>>(
-    () => new Set(activeTabId ? [activeTabId] : []),
+    () => {
+      const ids = getPreservedRuntimeIds();
+      if (activeTabId) {
+        ids.add(activeTabId);
+      }
+      return ids;
+    },
   );
 
   useEffect(() => {
@@ -190,7 +199,12 @@ export function Workspace({
       <section className="terminal-panel">
         <div className="terminal-stage">
           {activeError ? (
-            <div className="workspace-notice error-banner">{activeError}</div>
+            <div className="workspace-notice error-banner">
+              {activeError}
+              {onRetryRestore ? (
+                <button type="button" onClick={onRetryRestore}>{t("lightweight.retryRestore")}</button>
+              ) : null}
+            </div>
           ) : null}
           {loading ? (
             <div className="workspace-notice loading-banner">{t("sessions.loading")}</div>
@@ -214,6 +228,7 @@ export function Workspace({
                     allowRemoteClipboardWrite={allowRemoteClipboardWrite}
                     autoConnect={tab.autoConnect}
                     connectionState={runtime?.connectionState ?? "disconnected"}
+                    currentPath={runtime?.currentPath ?? "/"}
                     onConnected={onConnected}
                     onCredentialSaved={onCredentialSaved}
                     onDirectoryChange={onDirectoryChange}
@@ -293,7 +308,9 @@ export function Workspace({
           <DeviceStatusPanel
             connected={activeRuntime.connectionState === "connected"}
             history={activeRuntime.deviceHistory}
+            loading={activeRuntime.deviceLoading}
             status={activeRuntime.deviceStatus}
+            windowEndMs={activeRuntime.deviceWindowEndMs}
           />
         </aside>
       )}

@@ -1,6 +1,7 @@
 use crate::models::{
-    AppError, ConnectResult, CreateSessionPayload, DeviceStatus, FileEntry, LoginSaveDecision,
-    SessionGroup, SessionProfile, TerminalEvent, TransferEvent, UpdateSessionPayload,
+    AppError, ConnectResult, CreateSessionPayload, DeviceMetricsSnapshot, DeviceStatus, FileEntry,
+    LoginSaveDecision, SessionGroup, SessionProfile, TerminalEvent, TransferEvent,
+    UpdateSessionPayload,
 };
 use crate::services::{AppState, OneTimeLogin};
 use tauri::{ipc::Channel, State};
@@ -206,6 +207,7 @@ pub async fn connect_session(
     one_time_credential: Option<Zeroizing<String>>,
     one_time_username: Option<String>,
 ) -> Result<ConnectResult, AppError> {
+    let _activity = state.lightweight_mode_service.try_gui_activity()?;
     let session = state.session_service.lock().await.find(&session_id)?;
     state
         .connection_manager
@@ -275,6 +277,10 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), AppError> {
+    state
+        .transfer_job_service
+        .cancel_connection(&state.connection_manager, &connection_id)
+        .await;
     state.connection_manager.disconnect(&connection_id).await
 }
 
@@ -394,6 +400,13 @@ pub async fn cancel_transfer(
     state: State<'_, AppState>,
     transfer_id: String,
 ) -> Result<bool, AppError> {
+    if state
+        .transfer_job_service
+        .cancel(&state.connection_manager, &transfer_id)
+        .await
+    {
+        return Ok(true);
+    }
     Ok(state.connection_manager.cancel_transfer(&transfer_id).await)
 }
 
@@ -405,5 +418,16 @@ pub async fn get_device_status(
     state
         .device_service
         .status(&state.connection_manager, &connection_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_device_metrics_snapshot(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<DeviceMetricsSnapshot, AppError> {
+    state
+        .connection_manager
+        .device_metrics_snapshot(&connection_id)
         .await
 }

@@ -3,12 +3,15 @@ mod command_history_service;
 mod connection_manager;
 mod connection_paths;
 mod credential_service;
+mod device_metrics_service;
 mod device_service;
+mod lightweight_mode_service;
 mod mcp_command_policy_service;
 mod mcp_support_service;
 mod session_service;
 mod session_structure;
 mod settings_service;
+mod transfer_job_service;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -18,10 +21,12 @@ pub use app_update_service::AppUpdateService;
 pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
+pub use lightweight_mode_service::LightweightModeService;
 pub use mcp_command_policy_service::McpCommandPolicyService;
 pub use mcp_support_service::{McpAuditService, McpOperationLock, McpOperationLockService};
 pub use session_service::SessionService;
 pub use settings_service::SettingsService;
+pub use transfer_job_service::TransferJobService;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -33,7 +38,9 @@ pub struct AppState {
     pub credential_service: CredentialService,
     pub connection_manager: ConnectionManager,
     pub device_service: DeviceService,
+    pub lightweight_mode_service: LightweightModeService,
     pub settings_service: Arc<StdMutex<SettingsService>>,
+    pub transfer_job_service: TransferJobService,
     pub mcp_command_policy_service: Arc<StdMutex<McpCommandPolicyService>>,
     pub mcp_http_runtime: crate::mcp::McpHttpRuntime,
     pub mcp_audit_service: McpAuditService,
@@ -62,7 +69,9 @@ impl AppState {
             credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new(&app_data_dir),
             device_service: DeviceService,
+            lightweight_mode_service: LightweightModeService::load(&app_data_dir),
             settings_service: Arc::new(StdMutex::new(settings_service)),
+            transfer_job_service: TransferJobService::default(),
             mcp_command_policy_service: Arc::new(StdMutex::new(policy_service)),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),
             mcp_audit_service: McpAuditService::new(&log_directory),

@@ -14,6 +14,7 @@ import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
 import type { ShortcutSettings } from "../../shared/api/types";
 import type { ResolvedTheme } from "../../shared/theme";
+import { useLightweightRestore } from "../lightweight/useLightweightRestore";
 
 interface SessionsPageProps {
   allowRemoteClipboardWrite: boolean;
@@ -49,10 +50,11 @@ export function SessionsPage({
     () => new Set(sessionsState.openSessionTabs.map((tab) => tab.id)),
     [sessionsState.openSessionTabs],
   );
+  const restore = useLightweightRestore(validRuntimeIds, sessionsState.sessionsReady, t("errors.unknown"));
 
   useEffect(() => {
-    pruneRuntimes(validRuntimeIds);
-  }, [pruneRuntimes, validRuntimeIds]);
+    if (sessionsState.sessionsReady) pruneRuntimes(validRuntimeIds);
+  }, [pruneRuntimes, validRuntimeIds, sessionsState.sessionsReady]);
 
   const connectionStates = useMemo(
     () =>
@@ -163,10 +165,11 @@ export function SessionsPage({
         activeRuntime={activeRuntime}
         activeTabId={sessionsState.activeTabId}
         connectionStates={connectionStates}
-        error={sessionsState.error}
+        error={restore.error ?? sessionsState.error}
+        onRetryRestore={restore.error ? restore.retry : undefined}
         loading={sessionsState.loading}
         onCancelTransfer={(sessionId) => void connections.cancelTransfer(sessionId)}
-        onDismissTransfer={connections.dismissTransfer}
+        onDismissTransfer={(sessionId) => void connections.dismissTransfer(sessionId)}
         onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={connections.handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}

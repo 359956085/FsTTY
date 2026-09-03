@@ -283,6 +283,62 @@ export type TerminalEvent =
     }
   | { kind: "error"; connectionId: string; message: string };
 
+export type LightweightModePhase = "normal" | "preparing" | "detached";
+export type LightweightSnapshotKind = "full" | "viewport";
+
+export interface LightweightTerminalRequest {
+  runtimeId: string;
+  connection: SshConnection;
+  currentPath: string;
+  columns: number;
+  rows: number;
+  shellIntegrationToken?: string | null;
+}
+
+export interface PreservedTerminalSummary {
+  runtimeId: string;
+  connectionId: string;
+  sessionId: string;
+  currentPath: string;
+}
+
+export interface LightweightModeState {
+  active: boolean;
+  suppressConfirmation: boolean;
+  phase: LightweightModePhase;
+  terminals: PreservedTerminalSummary[];
+  transferJobs: TransferJobSummary[];
+}
+
+export interface PreservedTerminalAttachment {
+  runtimeId: string;
+  connection: SshConnection;
+  currentPath: string;
+  columns: number;
+  rows: number;
+  truncated: boolean;
+  shellIntegrationToken?: string | null;
+}
+
+export type TerminalResumeEvent =
+  | {
+      kind: "snapshot";
+      connectionId: string;
+      data: string;
+      chunkIndex: number;
+      totalChunks: number;
+      truncated: boolean;
+    }
+  | { kind: "data"; connectionId: string; data: string }
+  | {
+      kind: "disconnected";
+      connectionId: string;
+      exitCode?: number | null;
+      message: string;
+    }
+  | { kind: "error"; connectionId: string; message: string }
+  | { kind: "ready"; connectionId: string; truncated: boolean };
+
 export interface FileEntry {
   name: string;
   path: string;
@@ -312,6 +368,21 @@ export interface DeviceStatus {
   networkTransmittedBytes?: number | null;
 }
 
+export interface DeviceMetricSample {
+  sampledAtMs: number;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  networkDownloadBytesPerSecond: number | null;
+  networkUploadBytesPerSecond: number | null;
+}
+
+export interface DeviceMetricsSnapshot {
+  connectionId: string;
+  status: DeviceStatus | null;
+  history: DeviceMetricSample[];
+  windowEndMs: number;
+}
+
 export type TransferEvent =
   | {
       kind: "progress";
@@ -331,3 +402,48 @@ export type TransferEvent =
       transferredBytes: number;
       totalBytes: number;
     };
+
+export type TransferJobDirection = "upload" | "download";
+export type TransferJobState =
+  | "running"
+  | "waitingForConflict"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export type StartTransferJobRequest =
+  | {
+      kind: "uploadBatch";
+      runtimeId: string;
+      connectionId: string;
+      localPaths: string[];
+      remoteDirectory: string;
+    }
+  | {
+      kind: "download";
+      runtimeId: string;
+      connectionId: string;
+      remotePath: string;
+      localPath: string;
+    };
+
+export interface TransferJobSummary {
+  jobId: string;
+  runtimeId: string;
+  connectionId: string;
+  direction: TransferJobDirection;
+  fileName: string;
+  batchIndex: number;
+  batchTotal: number;
+  transferredBytes: number;
+  totalBytes: number;
+  state: TransferJobState;
+  message?: string | null;
+  uploaded: number;
+  skipped: number;
+  failed: number;
+}
+
+export type TransferConflictDecision = "overwrite" | "skip" | "cancel";
+
+export type TransferJobEvent = { kind: "updated"; job: TransferJobSummary };

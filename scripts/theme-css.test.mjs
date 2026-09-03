@@ -18,6 +18,19 @@ function expectRuleUses(css, selector, declaration) {
 }
 
 describe("主题样式契约", () => {
+  it("轻量叶子按钮固定点击区且所有状态无边框背景或阴影", () => {
+    expectRuleUses(baseCss, ".lightweight-control", "width: 46px");
+    expectRuleUses(baseCss, ".lightweight-control", "height: 52px");
+    expectRuleUses(baseCss, ".lightweight-control", "border: 0");
+    expectRuleUses(baseCss, ".lightweight-control", "background: transparent");
+    expectRuleUses(baseCss, ".lightweight-control:focus-visible", "outline: 0");
+    expectRuleUses(baseCss, ".lightweight-control:focus-visible", "background: transparent");
+    expectRuleUses(baseCss, ".lightweight-control:disabled", "opacity: 1");
+    const leafRules = baseCss.match(/[^{}]*\.lightweight-control[^{}]*\{[^}]*\}/g) ?? [];
+    expect(leafRules.length).toBeGreaterThan(2);
+    expect(leafRules.join("\n")).not.toMatch(/box-shadow|drop-shadow|filter:/);
+  });
+
   it("应用外壳和页面根节点只使用语义背景", () => {
     expect(baseCss).toContain("--app-shell-bg: #f7f9fb;");
     expect(baseCss).toContain("--page-bg: #f7f9fb;");

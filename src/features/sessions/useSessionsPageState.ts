@@ -60,6 +60,7 @@ export function useSessionsPageState({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [listMutationPending, setListMutationPending] = useState(false);
+  const [sessionsReady, setSessionsReady] = useState(false);
   const initialized = useRef(false);
   const requestId = useRef(0);
   const groupsRef = useRef<SessionGroup[]>([]);
@@ -176,6 +177,7 @@ export function useSessionsPageState({
       setGroups(nextGroups);
       applyCollapsedGroups(validCollapsedGroupNames);
       applyPreferences(validTabs, candidateActiveTabId, validFavoriteIds);
+      setSessionsReady(true);
     } catch (nextError) {
       if (requestId.current === nextRequestId) {
         setError(resolveApiError(nextError, errorFallback));
@@ -546,6 +548,7 @@ export function useSessionsPageState({
     saveSession,
     selectTab,
     sessions,
+    sessionsReady,
     setDialogState: changeDialogState,
     setFilter,
     setQuery,

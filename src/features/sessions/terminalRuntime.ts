@@ -1,4 +1,5 @@
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
+import type { SerializeAddon as XTermSerializeAddon } from "@xterm/addon-serialize";
 import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
 import type { ResolvedTheme } from "../../shared/theme";
 import { StrictClipboardBase64, TauriClipboardProvider } from "./terminalClipboard";
@@ -17,6 +18,7 @@ interface InstallTerminalRuntimeOptions {
 export interface InstalledTerminalRuntime {
   dispose(): void;
   fitAddon: XTermFitAddon;
+  serializeAddon: XTermSerializeAddon;
   terminal: XTerm;
 }
 
@@ -74,10 +76,12 @@ export async function installTerminalRuntime({
   onClipboardWriteError,
   theme,
 }: InstallTerminalRuntimeOptions): Promise<InstalledTerminalRuntime | null> {
-  const [{ Terminal }, { FitAddon }, { ClipboardAddon }] = await Promise.all([
+  const [{ Terminal }, { FitAddon }, { ClipboardAddon }, { SerializeAddon }] =
+    await Promise.all([
     import("@xterm/xterm"),
     import("@xterm/addon-fit"),
     import("@xterm/addon-clipboard"),
+    import("@xterm/addon-serialize"),
   ]);
   if (isCancelled()) {
     return null;
@@ -95,7 +99,9 @@ export async function installTerminalRuntime({
     theme: getTerminalTheme(theme),
   });
   const fitAddon = new FitAddon();
+  const serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
+  terminal.loadAddon(serializeAddon);
   terminal.loadAddon(
     new ClipboardAddon(
       new StrictClipboardBase64(),
@@ -117,6 +123,7 @@ export async function installTerminalRuntime({
 
   return {
     fitAddon,
+    serializeAddon,
     terminal,
     dispose() {
       if (disposed) {

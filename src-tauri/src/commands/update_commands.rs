@@ -17,6 +17,7 @@ pub async fn install_app_update(
     state: State<'_, AppState>,
     on_progress: Channel<AppUpdateProgress>,
 ) -> Result<(), AppError> {
+    let _activity = state.lightweight_mode_service.try_gui_activity()?;
     state.app_update_service.install(on_progress).await
 }
 

@@ -93,6 +93,21 @@ export function createTerminalShellIntegration(options: TerminalShellIntegration
   };
 
   return {
+    snapshotToken() {
+      return managedIntegration?.token ?? null;
+    },
+    restore(token: string | null | undefined) {
+      // 远端钩子仍在运行；恢复只接回原令牌，禁止向 Vim 等前台程序重新注入命令。
+      managedAttempted = true;
+      if (token && /^[a-f0-9]{32}$/i.test(token)) {
+        const suffix = token.slice(0, 16);
+        managedIntegration = {
+          functionName: `__fstty_cwd_${suffix}`,
+          historyFunctionName: `__fstty_command_${suffix}`,
+          token,
+        };
+      }
+    },
     activate(shellName: ManagedShellName | null | undefined) {
       if (!shellName || nativeCommandCapability || managedAttempted) return false;
       managedAttempted = true;

@@ -265,6 +265,35 @@ textarea:focus-visible,
   margin-left: auto;
 }
 
+.lightweight-control {
+  display: grid;
+  width: 46px;
+  height: 52px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.lightweight-control:hover,
+.lightweight-control:active,
+.lightweight-control:focus,
+.lightweight-control:focus-visible {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #58a9f8;
+}
+
+.lightweight-control:disabled {
+  background: transparent;
+  color: var(--muted);
+  cursor: wait;
+  opacity: 1;
+}
+
 .window-control {
   display: grid;
   width: 46px;
@@ -281,6 +310,46 @@ textarea:focus-visible,
 .window-control-close:hover {
   background: #c42b1c;
   color: #fff;
+}
+
+.dialog-backdrop.lightweight-dialog-backdrop {
+  z-index: 160;
+}
+
+.lightweight-dialog {
+  width: min(520px, calc(100vw - 40px));
+}
+
+.lightweight-dialog-body {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px 4px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.lightweight-dialog-body p {
+  margin: 0;
+}
+
+.lightweight-confirmation-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 4px;
+  color: var(--text-strong);
+}
+
+.lightweight-confirmation-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #318be4;
+}
+
+.lightweight-dialog .dialog-actions {
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .app-main {
@@ -859,6 +928,7 @@ textarea:focus-visible,
 
 :root[data-theme="light"] .titlebar-nav-item,
 :root[data-theme="light"] .window-control,
+:root[data-theme="light"] .lightweight-control,
 :root[data-theme="light"] .session-group-title,
 :root[data-theme="light"] .session-name,
 :root[data-theme="light"] .collapsed-rail button {
@@ -881,6 +951,13 @@ textarea:focus-visible,
 
 :root[data-theme="light"] .window-control:hover {
   background: var(--surface-hover);
+}
+
+:root[data-theme="light"] .lightweight-control:hover,
+:root[data-theme="light"] .lightweight-control:active,
+:root[data-theme="light"] .lightweight-control:focus-visible {
+  background: transparent;
+  color: #1668c7;
 }
 
 :root[data-theme="light"] .window-control-close:hover {

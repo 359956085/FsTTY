@@ -1,5 +1,3 @@
-import type { DeviceNetworkCounterSample } from "./deviceMetrics";
-
 export interface SessionRuntimeController {
   activate: () => void;
   beginTransfer: (sessionId: string, connectionId: string, transferId: string) => number;
@@ -9,10 +7,8 @@ export interface SessionRuntimeController {
   cancelUploadBatch: (sessionId: string) => void;
   cancelTransfer: (sessionId: string) => void;
   clearDeviceTimer: (sessionId: string) => void;
-  deleteDeviceCounter: (sessionId: string) => void;
   dispose: () => void;
   endUploadBatch: (sessionId: string, token: string) => boolean;
-  getDeviceCounter: (sessionId: string) => DeviceNetworkCounterSample | null;
   hasUploadBatch: (sessionId: string) => boolean;
   isDevicePollCurrent: (sessionId: string, pollId: number) => boolean;
   isDeviceRequestCurrent: (sessionId: string, requestId: number) => boolean;
@@ -26,10 +22,6 @@ export interface SessionRuntimeController {
   ) => boolean;
   isActive: () => boolean;
   removeSession: (sessionId: string) => void;
-  setDeviceCounter: (
-    sessionId: string,
-    counter: DeviceNetworkCounterSample,
-  ) => void;
   setDeviceTimer: (sessionId: string, timer: number) => void;
   startDevicePoll: (sessionId: string) => number;
   startUploadBatch: (sessionId: string, token: string) => boolean;
@@ -42,7 +34,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
   const deviceRequests = new Map<string, number>();
   const devicePolls = new Map<string, number>();
   const deviceTimers = new Map<string, number>();
-  const deviceCounters = new Map<string, DeviceNetworkCounterSample>();
   const uploadBatches = new Map<string, string>();
   const transferGenerations = new Map<string, number>();
   const activeTransfers = new Map<
@@ -68,7 +59,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
     clearDeviceTimer(sessionId);
     advance(deviceRequests, sessionId);
     advance(devicePolls, sessionId);
-    deviceCounters.delete(sessionId);
   };
 
   const cancelTransfer = (sessionId: string) => {
@@ -82,7 +72,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
     advance(fileRequests, sessionId);
     advance(deviceRequests, sessionId);
     advance(devicePolls, sessionId);
-    deviceCounters.delete(sessionId);
     uploadBatches.delete(sessionId);
     cancelTransfer(sessionId);
   };
@@ -106,9 +95,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
     },
     cancelTransfer,
     clearDeviceTimer,
-    deleteDeviceCounter: (sessionId) => {
-      deviceCounters.delete(sessionId);
-    },
     dispose: () => {
       active = false;
       // 递增代次而非只清空映射，确保卸载前启动的异步结果永久失效。
@@ -117,7 +103,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
       for (const timer of deviceTimers.values()) window.clearTimeout(timer);
       deviceTimers.clear();
       devicePolls.clear();
-      deviceCounters.clear();
       uploadBatches.clear();
       for (const sessionId of transferGenerations.keys()) cancelTransfer(sessionId);
       activeTransfers.clear();
@@ -127,7 +112,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
       uploadBatches.delete(sessionId);
       return true;
     },
-    getDeviceCounter: (sessionId) => deviceCounters.get(sessionId) ?? null,
     hasUploadBatch: (sessionId) => uploadBatches.has(sessionId),
     isDevicePollCurrent: (sessionId, pollId) => active && devicePolls.get(sessionId) === pollId,
     isDeviceRequestCurrent: (sessionId, requestId) =>
@@ -146,9 +130,6 @@ export function createSessionRuntimeController(): SessionRuntimeController {
     },
     isActive: () => active,
     removeSession,
-    setDeviceCounter: (sessionId, counter) => {
-      deviceCounters.set(sessionId, counter);
-    },
     setDeviceTimer: (sessionId, timer) => {
       clearDeviceTimer(sessionId);
       deviceTimers.set(sessionId, timer);

@@ -21,6 +21,7 @@ import type {
   SshConnection,
   ShortcutSettings,
   TerminalEvent,
+  TerminalResumeEvent,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
@@ -51,6 +52,7 @@ import {
   type TerminalActivityController,
 } from "./terminalActivity";
 import { createTerminalConnectionLifecycle } from "./terminalConnectionLifecycle";
+import { createTerminalResumeStream } from "./terminalResumeStream";
 import {
   createTerminalInputController,
   type TerminalInputController,
@@ -67,6 +69,14 @@ import {
 } from "./terminalShellIntegration";
 import { useTerminalAuthDialogs } from "./useTerminalAuthDialogs";
 import { createTerminalInteractionCoordinator } from "./terminalInteractionCoordinator";
+import {
+  getInitialLightweightModeState,
+  hasPreservedTerminal,
+  isLightweightTransitioning,
+  markPreservedTerminalAttached,
+  markPreservedTerminalFailed,
+  registerLightweightTerminal,
+} from "../lightweight/lightweightMode";
 
 const CLIPBOARD_MESSAGE_KEYS = {
   nonText: "sessions.clipboardNonText",
@@ -88,6 +98,12 @@ interface TemporaryLogin {
   username?: string;
 }
 
+interface LightweightBarrierWait {
+  cancelled: boolean;
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
 interface TerminalPaneProps {
   active: boolean;
   allowRemoteClipboardWrite: boolean;
@@ -98,6 +114,7 @@ interface TerminalPaneProps {
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
   connectionState: ConnectionState;
+  currentPath?: string;
   onConnected: (sessionId: string, connection: SshConnection) => void;
   onCredentialSaved: () => Promise<void> | void;
   onDirectoryChange: (sessionId: string, path: string) => void;
@@ -113,6 +130,7 @@ export const TerminalPane = memo(function TerminalPane({
   allowRemoteClipboardWrite,
   autoConnect,
   connectionState,
+  currentPath = "/",
   onConnected,
   onCredentialSaved,
   onDirectoryChange,
@@ -128,7 +146,10 @@ export const TerminalPane = memo(function TerminalPane({
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<XTermFitAddon | null>(null);
   const connectionLifecycleRef = useRef(
-    createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>(),
+    createTerminalConnectionLifecycle<
+      SshConnection,
+      Channel<TerminalEvent> | Channel<TerminalResumeEvent>
+    >(),
   );
   const interactionCoordinatorRef = useRef(createTerminalInteractionCoordinator());
   const inputControllerRef = useRef<TerminalInputController | null>(null);
@@ -146,6 +167,7 @@ export const TerminalPane = memo(function TerminalPane({
   const handleTerminalLoginDataRef = useRef<(data: string) => boolean>(() => false);
   const mountedRef = useRef(true);
   const sessionIdRef = useRef(session.id);
+  const currentPathRef = useRef(currentPath);
   const onDirectoryChangeRef = useRef(onDirectoryChange);
   const onCredentialSavedRef = useRef(onCredentialSaved);
   const shellIntegrationRef = useRef<ReturnType<
@@ -171,9 +193,14 @@ export const TerminalPane = memo(function TerminalPane({
   const pasteTerminalClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const shortcutsRef = useRef(shortcuts);
   const themeRef = useRef(theme);
+  const lightweightBlockedRef = useRef(false);
+  const lightweightBarrierRef = useRef<LightweightBarrierWait | null>(null);
+  const restoringRef = useRef(false);
+  const resumeStreamRef = useRef<ReturnType<typeof createTerminalResumeStream> | null>(null);
   shortcutsRef.current = shortcuts;
   themeRef.current = theme;
   sessionIdRef.current = session.id;
+  currentPathRef.current = currentPath;
   const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
   const {
     credentialPrompt,
@@ -202,6 +229,15 @@ export const TerminalPane = memo(function TerminalPane({
   const hostKeyChallengeRef = useRef(hostKeyChallenge);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
+  lightweightBlockedRef.current =
+    connectionState === "connecting" ||
+    Boolean(
+      credentialPrompt ||
+        hostKeyChallenge ||
+        hostKeyChange ||
+        loginSavePrompt ||
+        terminalLoginPrompt,
+    );
 
   shellIntegrationRef.current ??= createTerminalShellIntegration({
     addHistory: (command) => api.addCommandHistory(command),
@@ -397,6 +433,8 @@ export const TerminalPane = memo(function TerminalPane({
     const fitAddon = fitAddonRef.current;
     const container = containerRef.current;
     if (
+      isLightweightTransitioning() ||
+      restoringRef.current ||
       !activeRef.current ||
       !visibleRef.current ||
       !terminal ||
@@ -440,7 +478,10 @@ export const TerminalPane = memo(function TerminalPane({
     resizeTimerRef.current = window.setTimeout(() => {
       resizeTimerRef.current = null;
       const currentConnection = connectionLifecycleRef.current.connection();
-      if (currentConnection && activeRef.current && visibleRef.current) {
+      if (
+        currentConnection && activeRef.current && visibleRef.current &&
+        !isLightweightTransitioning() && !restoringRef.current
+      ) {
         void api
           .resizeTerminal(
             currentConnection.connectionId,
@@ -529,8 +570,10 @@ export const TerminalPane = memo(function TerminalPane({
   useEffect(() => {
     let disposed = false;
     // StrictMode 会重放 Effect；每次安装必须拥有独立控制器，不能复用上次清理时已销毁的实例。
-    const connectionLifecycle =
-      createTerminalConnectionLifecycle<SshConnection, Channel<TerminalEvent>>();
+    const connectionLifecycle = createTerminalConnectionLifecycle<
+      SshConnection,
+      Channel<TerminalEvent> | Channel<TerminalResumeEvent>
+    >();
     const interactionCoordinator = createTerminalInteractionCoordinator();
     connectionLifecycleRef.current = connectionLifecycle;
     interactionCoordinatorRef.current = interactionCoordinator;
@@ -543,6 +586,7 @@ export const TerminalPane = memo(function TerminalPane({
     let disposeImeListeners: (() => void) | null = null;
     let remoteMouseListenersAttached = false;
     let resizeObserverActive = false;
+    let unregisterLightweightTerminal: (() => void) | null = null;
     const terminalLoginInput = terminalLoginInputRef.current;
 
     async function mountTerminal() {
@@ -948,6 +992,28 @@ export const TerminalPane = memo(function TerminalPane({
       });
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
+      unregisterLightweightTerminal = registerLightweightTerminal(runtimeId, {
+        cancelPreparation: cancelLightweightPreparation,
+        capture: () => captureLightweightSnapshot(runtime),
+        describe: () => {
+          const connection = connectionLifecycleRef.current.connection();
+          if (!connection) {
+            return null;
+          }
+          return {
+            runtimeId,
+            connection,
+            currentPath: currentPathRef.current,
+            columns: Math.max(1, terminal.cols),
+            rows: Math.max(1, terminal.rows),
+            shellIntegrationToken: shellIntegrationRef.current?.snapshotToken(),
+          };
+        },
+        isBlocked: () =>
+          lightweightBlockedRef.current || restoringRef.current ||
+          connectionLifecycleRef.current.isConnecting(),
+        prepareBarrier: prepareLightweightBarrier,
+      });
       observer = new ResizeObserver(fitAndResize);
       const resizeObserverActivity = {
         start: () => {
@@ -978,13 +1044,17 @@ export const TerminalPane = memo(function TerminalPane({
         resizeObserverActivity.start();
         fitAndResize();
       }
-      if (autoConnectRef.current && !disposed) {
+      const restored = await restorePreservedTerminal(runtime);
+      if (!restored && autoConnectRef.current && !disposed) {
         void connectTerminalRef.current();
       }
     }
 
     void mountTerminal().catch(() => {
-      reportStateRef.current("error", translateRef.current("sessions.terminalNotReady"));
+      if (!disposed) {
+        markPreservedTerminalFailed(runtimeId);
+        reportStateRef.current("error", translateRef.current("sessions.terminalNotReady"));
+      }
     });
     return () => {
       disposed = true;
@@ -1011,12 +1081,18 @@ export const TerminalPane = memo(function TerminalPane({
       disposeImeListeners = null;
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
+      unregisterLightweightTerminal?.();
+      unregisterLightweightTerminal = null;
+      cancelLightweightPreparation();
+      resumeStreamRef.current?.dispose();
+      resumeStreamRef.current = null;
+      restoringRef.current = false;
       const wasConnecting = connectionLifecycle.isConnecting();
       const connection = connectionLifecycle.dispose();
       interactionCoordinator.dispose();
-      if (connection) {
+      if (connection && !isLightweightTransitioning()) {
         void api.disconnectSession(connection.connectionId).catch(() => undefined);
-      } else if (wasConnecting) {
+      } else if (wasConnecting && !isLightweightTransitioning()) {
         // 卸载发生在后端返回连接 ID 前，使用会话 ID 取消连接尝试，避免迟到注册。
         void api.disconnectSession(sessionIdRef.current).catch(() => undefined);
       }
@@ -1024,6 +1100,8 @@ export const TerminalPane = memo(function TerminalPane({
       fitAddonRef.current = null;
       runtimeInstance?.dispose();
     };
+    // 终端运行时只安装一次；恢复函数与运行时 ID 均按组件实例固定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1059,6 +1137,8 @@ export const TerminalPane = memo(function TerminalPane({
   async function connectTerminal(options: ConnectTerminalOptions = {}) {
     const { fromCredentialPrompt = false, oneTimeCredential } = options;
     if (
+      isLightweightTransitioning() ||
+      restoringRef.current ||
       connectionState === "connecting" ||
       !connectionLifecycleRef.current.canConnect()
     ) {
@@ -1116,6 +1196,9 @@ export const TerminalPane = memo(function TerminalPane({
           return;
         }
         if (event.kind === "data") {
+          if (consumeLightweightBarrier(event.data)) {
+            return;
+          }
           terminalRef.current?.write(decodeBase64(event.data));
           return;
         }
@@ -1300,6 +1383,181 @@ export const TerminalPane = memo(function TerminalPane({
       if (interactionCoordinatorRef.current.finish("credential", generation)) {
         setCredentialSubmitting(false);
       }
+    }
+  }
+
+  function prepareLightweightBarrier() {
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+    let resolve!: () => void;
+    const promise = new Promise<void>((nextResolve) => {
+      resolve = nextResolve;
+    });
+    lightweightBarrierRef.current = { cancelled: false, promise, resolve };
+  }
+
+  function consumeLightweightBarrier(data: string) {
+    const barrier = lightweightBarrierRef.current;
+    if (data !== "" || !barrier) {
+      return false;
+    }
+    barrier.resolve();
+    return true;
+  }
+
+  function cancelLightweightPreparation() {
+    const barrier = lightweightBarrierRef.current;
+    if (!barrier) {
+      return;
+    }
+    barrier.cancelled = true;
+    barrier.resolve();
+    lightweightBarrierRef.current = null;
+  }
+
+  async function captureLightweightSnapshot(runtime: InstalledTerminalRuntime) {
+    const barrier = lightweightBarrierRef.current;
+    if (!barrier) {
+      throw new Error("终端快照屏障未建立");
+    }
+    let timer: number | null = null;
+    try {
+      return await Promise.race([
+        (async () => {
+          await barrier.promise;
+          if (barrier.cancelled) throw new Error("终端快照已取消");
+          // 写队列排空也受同一超时约束，避免失效 WebView 永久卡住切换按钮。
+          await new Promise<void>((resolve) => runtime.terminal.write("", resolve));
+          if (barrier.cancelled || terminalRef.current !== runtime.terminal) {
+            throw new Error("终端快照已取消");
+          }
+          return {
+            full: runtime.serializeAddon.serialize({ scrollback: 10_000 }),
+            viewport: runtime.serializeAddon.serialize({ scrollback: 0 }),
+          };
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error("等待终端快照屏障超时")), 55_000);
+        }),
+      ]);
+    } finally {
+      barrier.cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      if (lightweightBarrierRef.current === barrier) {
+        lightweightBarrierRef.current = null;
+      }
+    }
+  }
+
+  async function restorePreservedTerminal(runtime: InstalledTerminalRuntime) {
+    if (!hasPreservedTerminal(runtimeId)) {
+      return false;
+    }
+    const preserved = getInitialLightweightModeState().terminals.find(
+      (terminal) => terminal.runtimeId === runtimeId,
+    );
+    if (!preserved) return false;
+    const lifecycle = connectionLifecycleRef.current;
+    const attemptId = lifecycle.beginConnect();
+    if (attemptId === null) return true;
+    const isCurrent = () =>
+      mountedRef.current && terminalRef.current === runtime.terminal &&
+      connectionLifecycleRef.current === lifecycle && lifecycle.isCurrent(attemptId);
+    restoringRef.current = true;
+    reportStateRef.current("connecting");
+    const channel = new Channel<TerminalResumeEvent>();
+    lifecycle.attachChannel(attemptId, channel);
+    const stream = createTerminalResumeStream({
+      connectionId: preserved.connectionId,
+      isCurrent,
+      write: (data, callback) => runtime.terminal.write(data, callback),
+      consumeBarrier: consumeLightweightBarrier,
+      onEnd: (event) => {
+        markPreservedTerminalAttached(runtimeId);
+        lifecycle.reset();
+        restoringRef.current = false;
+        clearPendingInput();
+        resetShellIntegration();
+        runtime.terminal.writeln(`\r\n[FsTTY] ${event.message}`);
+        reportStateRef.current(event.kind === "error" ? "error" : "disconnected", event.message);
+      },
+    });
+    resumeStreamRef.current = stream;
+    channel.onmessage = stream.push;
+    let restoreTimer: number | null = null;
+    try {
+      const result = await Promise.race([
+        (async () => {
+          const attachment = await api.attachPreservedTerminal(runtimeId, channel);
+          if (!isCurrent()) {
+            if (!isLightweightTransitioning()) {
+              await api.disconnectSession(attachment.connection.connectionId).catch(() => undefined);
+            }
+            return null;
+          }
+          if (
+            attachment.runtimeId !== runtimeId ||
+            attachment.connection.connectionId !== preserved.connectionId ||
+            attachment.connection.sessionId !== session.id
+          ) {
+            throw new Error("终端恢复状态已失效");
+          }
+          runtime.terminal.reset();
+          runtime.terminal.resize(attachment.columns, attachment.rows);
+          lifecycle.setConnection(attemptId, attachment.connection);
+          shellIntegrationRef.current?.restore(attachment.shellIntegrationToken);
+          onDirectoryChangeRef.current(runtimeId, attachment.currentPath);
+          onConnected(runtimeId, attachment.connection);
+          stream.start();
+          return { attachment, truncated: await stream.ready };
+        })(),
+        new Promise<never>((_, reject) => {
+          restoreTimer = window.setTimeout(() => reject(new Error("终端恢复超时")), 30_000);
+        }),
+      ]);
+      if (!result || !isCurrent()) return true;
+      const { attachment, truncated } = result;
+      markPreservedTerminalAttached(runtimeId);
+      restoringRef.current = false;
+      flushInput();
+      const oldColumns = attachment.columns;
+      const oldRows = attachment.rows;
+      fitAndResize();
+      const finalColumns = runtime.terminal.cols;
+      const finalRows = runtime.terminal.rows;
+      if (truncated && finalColumns === oldColumns && finalRows === oldRows) {
+        const temporaryColumns = finalColumns > 1 ? finalColumns - 1 : finalColumns + 1;
+        await api
+          .resizeTerminal(attachment.connection.connectionId, temporaryColumns, finalRows)
+          .catch(() => undefined);
+        if (isCurrent()) {
+          await api.resizeTerminal(attachment.connection.connectionId, finalColumns, finalRows)
+            .catch(() => undefined);
+        }
+      }
+      return true;
+    } catch (error) {
+      if (isCurrent()) {
+        lifecycle.reset();
+        markPreservedTerminalFailed(runtimeId);
+        stream.dispose();
+        clearPendingInput();
+        resetShellIntegration();
+        void api.disconnectSession(preserved.connectionId).catch(() => undefined);
+        reportStateRef.current(
+          "error",
+          resolveApiError(error, translateRef.current("errors.unknown")),
+        );
+      }
+      return true;
+    } finally {
+      if (restoreTimer !== null) window.clearTimeout(restoreTimer);
+      if (connectionLifecycleRef.current === lifecycle) restoringRef.current = false;
+      lifecycle.finishConnect(attemptId);
     }
   }
 

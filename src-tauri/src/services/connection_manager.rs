@@ -15,7 +15,6 @@ use crate::models::{
     ShellName, SshConnection, StoredSession, TerminalEvent,
 };
 use crate::services::CredentialService;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use russh::client;
 #[cfg(test)]
 use russh::keys::load_secret_key;
@@ -39,10 +38,13 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 mod authentication;
+mod device_metrics;
 mod remote_files;
 mod terminal_io;
 mod transfer;
 
+use super::device_metrics_service::DeviceMetricsMonitor;
+use super::lightweight_mode_service::LightweightTerminalBridge;
 use authentication::{
     authenticate, key_algorithm, key_fingerprint, remove_known_host, HostObservation, SshClient,
 };
@@ -60,6 +62,7 @@ use terminal_io::{run_terminal, validate_terminal_size, wait_for_channel_success
 #[cfg(test)]
 use transfer::finalize_local_file;
 use transfer::ActiveTransfer;
+pub(crate) use transfer::TransferReporter;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -112,6 +115,7 @@ struct ConnectionManagerInner {
     connecting_sessions: Mutex<HashMap<String, Vec<Arc<ConnectCancellation>>>>,
     challenges: Mutex<HashMap<String, PendingHostKey>>,
     transfers: Mutex<HashMap<String, ActiveTransfer>>,
+    device_metrics_stopped: AtomicBool,
 }
 
 #[derive(Default)]
@@ -125,6 +129,8 @@ struct ConnectionEntry {
     username: String,
     handle: Arc<Mutex<client::Handle<SshClient>>>,
     terminal_tx: Option<mpsc::Sender<TerminalControl>>,
+    terminal_bridge: Option<LightweightTerminalBridge>,
+    device_metrics: Option<DeviceMetricsMonitor>,
     browser_sftp: Option<Arc<SftpSession>>,
 }
 
@@ -290,6 +296,7 @@ impl ConnectionManager {
                 connecting_sessions: Mutex::new(HashMap::new()),
                 challenges: Mutex::new(HashMap::new()),
                 transfers: Mutex::new(HashMap::new()),
+                device_metrics_stopped: AtomicBool::new(false),
             }),
         }
     }
@@ -388,6 +395,10 @@ impl ConnectionManager {
                 connecting.remove(session_id);
             }
         }
+    }
+
+    pub async fn has_connecting_sessions(&self) -> bool {
+        !self.inner.connecting_sessions.lock().await.is_empty()
     }
 
     async fn register_connection(&self, connection_id: String, entry: Arc<ConnectionEntry>) {
@@ -609,12 +620,15 @@ impl ConnectionManager {
 
         let connection_id = Uuid::new_v4().to_string();
         let (terminal_tx, terminal_rx) = mpsc::channel(128);
+        let terminal_bridge = LightweightTerminalBridge::new(connection_id.clone(), events);
         let handle = Arc::new(Mutex::new(handle));
         let entry = Arc::new(ConnectionEntry {
             session_id: session.id.clone(),
             username: session.username.clone(),
             handle,
             terminal_tx: Some(terminal_tx),
+            terminal_bridge: Some(terminal_bridge.clone()),
+            device_metrics: Some(DeviceMetricsMonitor::new(connection_id.clone())),
             browser_sftp: browser_sftp.clone(),
         });
         // 与删除/关键字段更新共用连接门闩，避免取消后旧连接晚到并重新写回。
@@ -630,11 +644,10 @@ impl ConnectionManager {
         let worker_connection_id = connection_id.clone();
         tokio::spawn(async move {
             run_terminal(
-                worker_connection_id.clone(),
                 terminal_reader,
                 terminal_writer,
                 terminal_rx,
-                events,
+                terminal_bridge,
                 pending_terminal_messages.messages,
             )
             .await;
@@ -650,6 +663,7 @@ impl ConnectionManager {
             return Err(AppError::Connection("连接已取消".to_owned()));
         }
 
+        self.start_device_metrics(&connection_id).await;
         Ok(ConnectResult::Connected {
             connection: SshConnection {
                 connection_id,
@@ -716,6 +730,8 @@ impl ConnectionManager {
             username: session.username.clone(),
             handle: Arc::new(Mutex::new(handle)),
             terminal_tx: None,
+            terminal_bridge: None,
+            device_metrics: None,
             browser_sftp: browser_sftp.clone(),
         });
         if !self
@@ -823,6 +839,33 @@ impl ConnectionManager {
         Ok(self.entry(connection_id).await?.session_id.clone())
     }
 
+    pub(super) async fn lightweight_terminal_bridge(
+        &self,
+        connection_id: &str,
+        session_id: &str,
+    ) -> Result<LightweightTerminalBridge, AppError> {
+        let entry = self.entry(connection_id).await?;
+        if entry.session_id != session_id {
+            return Err(AppError::Validation("终端不属于目标会话".to_owned()));
+        }
+        entry
+            .terminal_bridge
+            .clone()
+            .ok_or_else(|| AppError::Validation("当前连接没有交互终端".to_owned()))
+    }
+
+    pub(super) async fn lightweight_connection_ids(&self) -> HashSet<String> {
+        self.inner
+            .registry
+            .read()
+            .await
+            .connections
+            .iter()
+            .filter(|(_, entry)| entry.terminal_bridge.is_some())
+            .map(|(connection_id, _)| connection_id.clone())
+            .collect()
+    }
+
     async fn entry(&self, connection_id: &str) -> Result<Arc<ConnectionEntry>, AppError> {
         validate_uuid("连接 ID", connection_id)?;
         self.inner
@@ -839,6 +882,9 @@ impl ConnectionManager {
         let mut registry = self.inner.registry.write().await;
         let entry = registry.connections.remove(connection_id);
         if let Some(entry) = &entry {
+            if let Some(metrics) = &entry.device_metrics {
+                let _ = metrics.stop();
+            }
             if let Some(connection_ids) = registry.session_connections.get_mut(&entry.session_id) {
                 connection_ids.remove(connection_id);
                 if connection_ids.is_empty() {
@@ -915,6 +961,7 @@ fn validate_uuid(label: &str, value: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::services::DeviceService;
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use russh_sftp::protocol::Status;
     use std::sync::atomic::AtomicBool;
     use zeroize::Zeroizing;
@@ -1544,7 +1591,7 @@ mod tests {
                 cancelled_source.to_str().expect("测试路径无效"),
                 &connection.home_path,
                 false,
-                Channel::<TransferEvent>::new(|_| Ok(())),
+                TransferReporter::channel(Channel::<TransferEvent>::new(|_| Ok(()))),
                 Arc::new(AtomicBool::new(true)),
             )
             .await

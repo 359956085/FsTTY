@@ -22,6 +22,34 @@ function createController() {
 }
 
 describe("terminalShellIntegration", () => {
+  it("轻量恢复沿用原钩子令牌且绝不向前台程序注入命令", async () => {
+    const original = createController();
+    original.controller.activate("bash");
+    const restored = createController();
+    restored.controller.restore(original.controller.snapshotToken());
+    expect(restored.controller.activate("bash")).toBe(false);
+    restored.controller.handleOsc(
+      777, "fstty-cwd:0123456789abcdef0123456789abcdef:/srv/app",
+    );
+    restored.controller.handleOsc(
+      777, "fstty-command:0123456789abcdef0123456789abcdef:ZWNobyBvaw==",
+    );
+    await Promise.resolve();
+    expect(restored.onDirectoryChange).toHaveBeenCalledWith("/srv/app");
+    expect(restored.addHistory).toHaveBeenCalledWith("echo ok");
+    expect(restored.send).not.toHaveBeenCalled();
+  });
+
+  it("无钩子或非法令牌恢复也不会补发初始化文本", () => {
+    for (const token of [null, "invalid-token"]) {
+      const { controller, send } = createController();
+      controller.restore(token);
+      expect(controller.activate("bash")).toBe(false);
+      expect(controller.snapshotToken()).toBeNull();
+      expect(send).not.toHaveBeenCalled();
+    }
+  });
+
   it("注册标准协议和受控私有协议", () => {
     expect(SHELL_OSC_IDENTIFIERS).toEqual([7, 133, 633, 777]);
   });

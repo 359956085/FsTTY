@@ -19,3 +19,23 @@ pub struct DeviceStatus {
     pub network_received_bytes: Option<u64>,
     pub network_transmitted_bytes: Option<u64>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceMetricSample {
+    pub sampled_at_ms: u64,
+    pub cpu_percent: Option<u8>,
+    pub memory_percent: Option<u8>,
+    pub network_download_bytes_per_second: Option<f64>,
+    pub network_upload_bytes_per_second: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceMetricsSnapshot {
+    pub connection_id: String,
+    pub status: Option<DeviceStatus>,
+    pub history: Vec<DeviceMetricSample>,
+    // 与样本使用同一个 Rust 单调时钟，不能与 WebView 的 performance.now 混用。
+    pub window_end_ms: u64,
+}
