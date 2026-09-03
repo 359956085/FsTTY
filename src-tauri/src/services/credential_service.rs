@@ -83,6 +83,36 @@ impl CredentialService {
         Self { sender }
     }
 
+    #[cfg(test)]
+    pub(crate) fn memory_for_test() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        // 事务测试只需要普通令牌，不能因此访问真实系统凭据库。
+        std::thread::spawn(move || {
+            let mut values = std::collections::HashMap::<String, Zeroizing<String>>::new();
+            while let Ok(request) = receiver.recv() {
+                match request {
+                    CredentialRequest::Get { account, response } => {
+                        let _ = response.send(Ok(values.get(&account).cloned()));
+                    }
+                    CredentialRequest::Set {
+                        account,
+                        value,
+                        response,
+                    } => {
+                        values.insert(account, value);
+                        let _ = response.send(Ok(()));
+                    }
+                    CredentialRequest::Delete { account, response } => {
+                        values.remove(&account);
+                        let _ = response.send(Ok(()));
+                    }
+                    _ => panic!("内存令牌适配器不支持私钥操作"),
+                }
+            }
+        });
+        Self { sender }
+    }
+
     pub async fn get(&self, session_id: &str) -> CredentialResult<Option<Zeroizing<String>>> {
         let (response, receiver) = oneshot::channel();
         self.sender

@@ -6,6 +6,8 @@ import type {
   ThemePreference,
 } from "../../shared/api/types";
 import { Select } from "../../shared/ui/Select";
+import { Button } from "../../shared/ui/Button";
+import { useAutostartSettings } from "./useAutostartSettings";
 import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
@@ -50,6 +52,7 @@ export function GeneralSettingsPanel({
   settings,
 }: GeneralSettingsPanelProps) {
   const { t } = useTranslation();
+  const autostart = useAutostartSettings(t);
 
   return (
     <>
@@ -86,6 +89,34 @@ export function GeneralSettingsPanel({
             value={settings.theme}
           />
         </div>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label className="settings-row-label" htmlFor="autostart-enabled">
+              {t("settings.autostart")}
+            </label>
+            <small>{t("settings.autostartHint")}</small>
+            {!autostart.confirmed && !autostart.loading ? <small>{t("settings.autostartUnknown")}</small> : null}
+          </div>
+          <input
+            aria-label={t("settings.autostart")}
+            aria-busy={autostart.loading || autostart.saving}
+            checked={autostart.enabled}
+            className="settings-auto-update-toggle"
+            disabled={autostart.loading || autostart.saving || !autostart.confirmed}
+            id="autostart-enabled"
+            onChange={(event) => void autostart.save(event.target.checked)}
+            role="switch"
+            type="checkbox"
+          />
+        </div>
+        {autostart.error ? (
+          <div className="form-error settings-error" role="alert">
+            {autostart.error}
+            <Button disabled={autostart.loading || autostart.saving} onClick={() => void autostart.refresh()} variant="ghost">
+              {t("settings.autostartRetry")}
+            </Button>
+          </div>
+        ) : null}
         <div className="settings-row settings-clipboard-row">
           <div className="settings-row-copy">
             <label className="settings-row-label" htmlFor="remote-clipboard-write">

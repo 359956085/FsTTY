@@ -8,6 +8,7 @@ import type {
   LocalAgentSetupState,
   LocalAgentStepStatus,
   LocalAgentTarget,
+  McpTransport,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 
@@ -15,16 +16,18 @@ interface LocalAgentSetupDialogProps {
   capabilities: LocalAgentCapability[];
   configuring: boolean;
   error: string | null;
+  httpPort?: number;
   loading: boolean;
   onClose: () => void;
   onConfigure: (targets: LocalAgentTarget[]) => void;
   open: boolean;
   results: LocalAgentConfigureResult[];
+  transport?: McpTransport;
 }
 
 const targetLabels: Record<LocalAgentTarget, string> = {
   codex: "Codex",
-  claude: "Claude",
+  claude: "Claude Code",
   cursor: "Cursor",
   vsCode: "VS Code / GitHub Copilot",
   geminiCli: "Gemini CLI",
@@ -65,11 +68,13 @@ export function LocalAgentSetupDialog({
   capabilities,
   configuring,
   error,
+  httpPort = 37653,
   loading,
   onClose,
   onConfigure,
   open,
   results,
+  transport = "stdio",
 }: LocalAgentSetupDialogProps) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<LocalAgentTarget>>(new Set());
@@ -119,8 +124,8 @@ export function LocalAgentSetupDialog({
           >
             <header className="dialog-header">
               <div>
-                <h2 id="local-agent-dialog-title">{t("settings.localAgentTitle")}</h2>
-                <small>{t("settings.localAgentHint")}</small>
+                <h2 id="local-agent-dialog-title">{t(transport === "http" ? "settings.localAgentHttpTitle" : "settings.localAgentTitle")}</h2>
+                <small>{t(transport === "http" ? "settings.localAgentHttpHint" : "settings.localAgentHint")}</small>
               </div>
               <button
                 aria-label={t("sessions.close")}
@@ -134,6 +139,14 @@ export function LocalAgentSetupDialog({
             </header>
 
             <div className="settings-local-agent-body">
+              {transport === "http" ? (
+                <div className="settings-row-copy" role="note">
+                  <small>{t("settings.localAgentHttpAddress", { url: `http://127.0.0.1:${httpPort}/mcp` })}</small>
+                  <small>{t("settings.localAgentHttpSecretHint")}</small>
+                  <small>{t("settings.localAgentHttpRuntimeHint")}</small>
+                  <small className="settings-mcp-risk-hint">{t("settings.localAgentHttpNetworkHint")}</small>
+                </div>
+              ) : null}
               {loading ? (
                 <div className="settings-local-agent-loading">
                   <LoaderCircle aria-hidden="true" className="spin" size={18} />
@@ -197,6 +210,9 @@ export function LocalAgentSetupDialog({
                 <div className="form-error settings-local-agent-error" role="alert">
                   {error}
                 </div>
+              ) : null}
+              {transport === "http" && results.some((result) => result.mcpStatus !== "failed") ? (
+                <small className="settings-local-agent-message" role="status">{t("settings.localAgentHttpCompletedHint")}</small>
               ) : null}
             </div>
 

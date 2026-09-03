@@ -103,7 +103,7 @@ impl McpHttpRuntime {
         }
 
         // 先绑定新端口。绑定失败时保留旧监听，避免设置保存失败连带中断现有客户端。
-        let listener = tokio::net::TcpListener::bind(http_bind_address(port))
+        let listener = bind_http_listener(port)
             .await
             .map_err(|_| AppError::Connection("MCP HTTP 端口被占用".to_owned()))?;
         let cancellation = CancellationToken::new();
@@ -175,6 +175,40 @@ pub(super) fn http_bind_address(port: u16) -> std::net::SocketAddr {
     std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port))
 }
 
+async fn bind_http_listener(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{
+            setsockopt, WSAGetLastError, SOCKET_ERROR, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+        };
+
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        let exclusive = 1i32;
+        // Windows 默认允许通配监听与同用户的回环监听共存；本地客户端可能连到别的服务。
+        // 套接字和选项值在调用期间有效，独占设置须在 bind 前完成，失败时拒绝继续启动。
+        let result = unsafe {
+            setsockopt(
+                socket.as_raw_socket() as _,
+                SOL_SOCKET,
+                SO_EXCLUSIVEADDRUSE,
+                std::ptr::from_ref(&exclusive).cast(),
+                std::mem::size_of_val(&exclusive) as i32,
+            )
+        };
+        if result == SOCKET_ERROR {
+            return Err(std::io::Error::from_raw_os_error(unsafe {
+                WSAGetLastError()
+            }));
+        }
+        socket.bind(http_bind_address(port))?;
+        // 与原 TcpListener::bind 使用的 Mio 默认积压队列一致。
+        socket.listen(128)
+    }
+    #[cfg(not(windows))]
+    tokio::net::TcpListener::bind(http_bind_address(port)).await
+}
+
 pub(super) fn http_server_config(
     cancellation_token: CancellationToken,
 ) -> StreamableHttpServerConfig {
@@ -204,8 +238,12 @@ pub(super) fn validate_http_headers(
     }
 }
 
+pub async fn get_http_token(state: &AppState) -> Result<Option<Zeroizing<String>>, AppError> {
+    state.credential_service.get(MCP_TOKEN_ACCOUNT).await
+}
+
 pub async fn get_or_create_http_token(state: &AppState) -> Result<Zeroizing<String>, AppError> {
-    if let Some(token) = state.credential_service.get(MCP_TOKEN_ACCOUNT).await? {
+    if let Some(token) = get_http_token(state).await? {
         return Ok(token);
     }
     rotate_http_token(state).await
@@ -222,4 +260,34 @@ pub async fn rotate_http_token(state: &AppState) -> Result<Zeroizing<String>, Ap
         .set(MCP_TOKEN_ACCOUNT, Zeroizing::new(token.to_string()))
         .await?;
     Ok(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn 回环已有监听时拒绝全地址监听() {
+        let existing = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        assert!(bind_http_listener(existing.local_addr().unwrap().port())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn 全地址监听独占回环且关闭后可重新绑定() {
+        let listener = bind_http_listener(0).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        assert!(address.ip().is_unspecified());
+        assert!(
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, address.port()))
+                .await
+                .is_err()
+        );
+        drop(listener);
+        let reopened = bind_http_listener(address.port()).await.unwrap();
+        assert_eq!(reopened.local_addr().unwrap(), address);
+    }
 }

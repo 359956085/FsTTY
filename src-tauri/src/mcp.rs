@@ -52,7 +52,7 @@ use catalog::permission_guide_response;
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
 pub(crate) use catalog::{mcp_agent_prompt, permission_catalog, McpPermissionCatalogEntry};
 use connection_cache::{CacheLookup, ConnectionCache};
-pub use http::{get_or_create_http_token, rotate_http_token, McpHttpRuntime};
+pub use http::{get_http_token, get_or_create_http_token, rotate_http_token, McpHttpRuntime};
 #[cfg(test)]
 use http::{http_bind_address, http_server_config, validate_http_headers, RunningMcpHttp};
 use result::{

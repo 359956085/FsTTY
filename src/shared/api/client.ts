@@ -25,6 +25,7 @@ import type {
   McpGroupPermission,
   McpHttpStatus,
   McpPermissionCatalogEntry,
+  McpTransport,
   Session,
   SessionGroup,
   ShortcutSettings,
@@ -224,6 +225,12 @@ export const api = {
   getAppSettings() {
     return invoke<AppSettings>("get_app_settings");
   },
+  getAutostartState() {
+    return invoke<boolean>("get_autostart_state");
+  },
+  setAutostartEnabled(enabled: boolean) {
+    return invoke<boolean>("set_autostart_enabled", { enabled });
+  },
   checkAppUpdate(proxy: string, source: UpdateSourcePreference) {
     return invoke<AppUpdateInfo | null>("check_app_update", { proxy, source });
   },
@@ -319,11 +326,11 @@ export const api = {
   getMcpAgentPrompt() {
     return invoke<string>("get_mcp_agent_prompt");
   },
-  inspectLocalAgentSetup() {
-    return invoke<LocalAgentCapability[]>("inspect_local_agent_setup");
+  inspectLocalAgentSetup(transport?: McpTransport) {
+    return invoke<LocalAgentCapability[]>("inspect_local_agent_setup", transport ? { transport } : undefined);
   },
-  configureLocalAgents(targets: LocalAgentTarget[]) {
-    return invoke<LocalAgentConfigureResult[]>("configure_local_agents", { targets });
+  configureLocalAgents(targets: LocalAgentTarget[], transport?: McpTransport) {
+    return invoke<LocalAgentConfigureResult[]>("configure_local_agents", transport ? { targets, transport } : { targets });
   },
   getMcpPermissionCatalog() {
     return invoke<McpPermissionCatalogEntry[]>("get_mcp_permission_catalog");

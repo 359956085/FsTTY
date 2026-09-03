@@ -262,8 +262,8 @@ describe("设置状态控制器", () => {
       useMcpSettings({ onChange, settings, translate: (key) => key }),
     );
 
-    let firstSave!: Promise<void>;
-    let duplicateSave!: Promise<void>;
+    let firstSave!: Promise<boolean>;
+    let duplicateSave!: Promise<boolean>;
     act(() => {
       firstSave = result.current.save("stdio", false);
       duplicateSave = result.current.save("stdio", true);
@@ -289,7 +289,7 @@ describe("设置状态控制器", () => {
       useMcpSettings({ onChange, settings, translate: (key) => key }),
     );
 
-    let save!: Promise<void>;
+    let save!: Promise<boolean>;
     act(() => {
       save = result.current.save("stdio", false);
     });

@@ -20,7 +20,7 @@ FsTTY securely exposes your saved SSH sessions to agents such as Codex, Claude, 
 - **Least privilege**: control access, file reads, file transfers, commands, edits, and deletion per session group.
 - **Reuse proven SSH capabilities**: FsTTY owns terminals, SFTP, host-key verification, and credential storage.
 - **Local and remote access**: use local stdio or Streamable HTTP on a trusted LAN or VPN.
-- **One-click agent setup**: detect local agents and merge MCP configuration and global instructions without overwriting unrelated settings.
+- **One-click agent setup**: detect local agents, choose stdio or local HTTP, and merge MCP configuration and global instructions without overwriting unrelated settings.
 - **Production diagnostics**: search remote logs, read file windows, execute commands, write atomically, and transfer files under explicit permissions.
 - **Auditable operations**: record tool, session, result, and duration, with optional redacted tool inputs.
 
@@ -46,7 +46,7 @@ New session groups are not exposed to MCP. Enabling group access allows session 
 
 - Saved permissions apply to the next stdio or HTTP request without reconnecting.
 - Command execution may bypass edit and deletion restrictions. Grant it only to trusted agents.
-- Agents cannot read passwords, private-key content, private-key passphrases, or the HTTP Bearer Token.
+- FsTTY MCP tools never return passwords, private-key content, private-key passphrases, or the HTTP Bearer Token.
 - New or changed host keys must be reviewed and accepted in the FsTTY UI.
 - File writes use a temporary file and atomic replacement. Upload, rename, and move operations never overwrite an existing target.
 - Deletion has no recycle bin and is marked as destructive in the tool metadata.
@@ -56,25 +56,35 @@ New session groups are not exposed to MCP. Enabling group access allows session 
 
 | | stdio | Streamable HTTP |
 | --- | --- | --- |
-| Intended use | Local agents | Agents on a trusted LAN or VPN |
+| Intended use | Local agents | Local agents or agents on a trusted LAN or VPN |
 | Address | `cmd.exe` invoking the fixed MCP launcher in the app data directory | `http://<FSTTY_HOST_IP>:37653/mcp` (default port) |
 | Authentication | Local process transport | Bearer Token stored in Windows Credential Manager |
 | Local file transfer | MCP client Roots | Five-minute transfer links |
 | Network exposure | No listening port | All IPv4 interfaces, plaintext transport |
 
-Local agent configurations point to the fixed `mcp-runtime/fstty-mcp.cmd` launcher. It starts the current FsTTY MCP runtime through an atomically updated version pointer, so reconnecting the agent is enough after an app update.
+Local stdio configurations point to the fixed `mcp-runtime/fstty-mcp.cmd` launcher. It starts the current FsTTY MCP runtime through an atomically updated version pointer, so reconnecting the agent is enough after an app update.
+
+HTTP one-click local setup writes `http://127.0.0.1:<saved port>/mcp` without preparing or starting a separate stdio runtime. FsTTY must stay running; lightweight mode is supported.
 
 Never expose the HTTP service to the public internet. `/mcp` targets native MCP clients, rejects requests containing `Origin`, and does not support browser MCP clients or CORS.
 
 A transfer link is its own credential and does not require the Bearer Token. Downloads support a single byte range for resuming. An upload link expires after its first successful upload and never overwrites an existing remote file.
 
+## Start at Login
+
+Enable **Start at login** under **Settings → General → General settings** to start FsTTY when the current Windows user signs in. It is off by default and follows the last normal/lightweight mode: normal mode shows the main window; lightweight mode shows only the tray. It does not reconnect SSH or start a separate MCP stdio process.
+
+The switch reads the actual system registration, not a duplicate app preference. It is disabled while loading or saving, refreshes when you return to General settings or refocus the window, and allows retry after a failure. Autostart and HTTP setup are independent; no system service or scheduled task is created.
+
+Normal, minimized, maximized, and lightweight modes share one GUI instance per login session. Launching FsTTY again restores the existing window without creating another tray or HTTP service. MCP stdio remains independent, and WebView2 may still use multiple system processes.
+
 ## Quick Start
 
 1. Install FsTTY from [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) or [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
 2. Create an SSH session and complete the initial host-key verification.
-3. Open **Settings → MCP** and enable `stdio`.
+3. Open **Settings → MCP**.
 4. Enable the required session groups under **Permissions**, then grant only the needed tool categories.
-5. Select **One-click setup**, choose the installed local agents, and apply the configuration.
+5. Select **One-click setup** under stdio or **One-click local setup** under HTTP, choose the installed local agents, and apply. The required MCP switches are enabled automatically.
 6. Ask the agent to call `list_sessions` first and use the returned session ID for other tools.
 
 You can also copy an stdio or HTTP configuration and the agent instructions separately for any other MCP client.
@@ -89,7 +99,7 @@ The configuration generator supports dsh (DeepSeek Harness). Install a compatibl
 | Agent | MCP configuration | Global instructions |
 | --- | --- | --- |
 | Codex | Merged automatically | Merged into `AGENTS.md` |
-| Claude | Configured through the official CLI at user scope | Merged into `CLAUDE.md` |
+| Claude Code | Official CLI for stdio; direct merge into user-level `.claude.json` for HTTP | Merged into `CLAUDE.md` |
 | Cursor | Merged automatically | Copied for manual paste into User Rules |
 | VS Code / GitHub Copilot | Merged into the default user profile | Written to a dedicated instructions file |
 | Gemini CLI | Merged automatically | Merged into `GEMINI.md` |
@@ -97,7 +107,15 @@ The configuration generator supports dsh (DeepSeek Harness). Install a compatibl
 | Trae | Merged automatically | Copied for manual paste into User Rules |
 | Trae CN | Merged automatically | Copied for manual paste into User Rules |
 
-Automatic setup changes only the FsTTY-owned node or the `fstty:begin/end` marked block. A damaged configuration, an OpenCode dual-file conflict, or one failed agent leaves that agent unchanged while other selected agents continue. Repeated runs update existing FsTTY configuration without duplicate blocks.
+Automatic setup replaces only the selected client's `fstty` node and the `fstty:begin/end` instruction block. Old transport fields are removed; other servers and user settings are preserved. Damaged files, unknown structures, OpenCode dual-file conflicts, and detected external edits are not overwritten. A failed atomic commit preserves the original file and removes the temporary file. Individual failures do not roll back other successful steps, and repeated runs do not duplicate content.
+
+Opening the HTTP dialog only inspects clients. Applying first waits for the port to be saved, then enables MCP and HTTP, and writes client files only after the listener starts successfully. Saved permissions are reused without granting additional access. Port changes, token operations, and local configuration writes share a serialized transaction; closing the window does not release an in-progress file write early.
+
+Windows HTTP listeners use exclusive port binding so an existing loopback listener cannot cause a false successful startup. The listener still covers all IPv4 interfaces; see [Microsoft's socket exclusivity reference](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse).
+
+HTTP setup stores the Bearer Token in third-party client configuration files. Rust reads and writes it without returning it through the one-click setup IPC, command-line arguments, logs, or the clipboard. Claude HTTP setup does not pass credentials through its CLI. Configuration formats follow the [Codex MCP reference](https://developers.openai.com/codex/mcp/) and [Claude Code HTTP reference](https://code.claude.com/docs/en/mcp).
+
+Reload the client after success. Run setup again after changing the port or rotating the token. Existing stdio processes are not terminated, and autostart is not enabled. “Local setup” only selects a loopback client URL: HTTP still listens on all IPv4 interfaces, with no automatic firewall changes. Do not expose it to the public internet.
 
 ## MCP Audit Logs
 
@@ -155,6 +173,7 @@ npm run tauri dev
 
 ```bash
 npm run verify:all
+cargo audit --file src-tauri/Cargo.lock
 ```
 
 ## Acknowledgements

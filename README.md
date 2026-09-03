@@ -20,7 +20,7 @@ FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor �
 - **最小权限**：按会话分组分别控制访问、文件读取、文件传输、命令、编辑和删除。
 - **复用 SSH 能力**：终端、SFTP、主机密钥校验和系统凭据库由 FsTTY 统一处理。
 - **本地与远程接入**：支持本机 stdio，以及可信局域网或 VPN 内的 Streamable HTTP。
-- **一键配置 Agent**：自动检测本机 Agent，合并 MCP 配置和全局提示词，不覆盖无关设置。
+- **一键配置 Agent**：自动检测本机 Agent，支持 stdio 或本地 HTTP，合并 MCP 配置和全局提示词，不覆盖无关设置。
 - **适合生产排障**：支持远程日志搜索、分段读取、命令执行、原子写入和受控文件传输。
 - **可审计**：独立记录工具、会话、结果和耗时；可选记录脱敏后的工具输入。
 
@@ -46,7 +46,7 @@ FsTTY 目前提供 17 个 MCP 工具：
 
 - 权限保存后对下一次 stdio 或 HTTP 请求立即生效，无需重连。
 - 命令权限可能绕过编辑和删除限制，只应授予可信 Agent。
-- Agent 无法读取密码、私钥正文、私钥口令或 HTTP Bearer Token。
+- FsTTY MCP 工具不会返回密码、私钥正文、私钥口令或 HTTP Bearer Token。
 - 首次出现或发生变化的主机密钥必须先在 FsTTY 界面核对并确认。
 - 文件写入采用临时文件和原子替换；上传、重命名和移动不会覆盖已有目标。
 - 删除没有回收站，FsTTY 会在工具描述中将其标记为破坏性操作。
@@ -56,13 +56,15 @@ FsTTY 目前提供 17 个 MCP 工具：
 
 | | stdio | Streamable HTTP |
 | --- | --- | --- |
-| 场景 | 本机 Agent | 可信局域网或 VPN 内的 Agent |
+| 场景 | 本机 Agent | 本机、可信局域网或 VPN 内的 Agent |
 | 地址 | `cmd.exe` 调用应用数据目录中的固定 MCP 启动脚本 | `http://<FSTTY_HOST_IP>:37653/mcp`（默认端口） |
 | 认证 | 本地进程通信 | Windows 凭据库中的 Bearer Token |
 | 本地文件传输 | 使用 MCP 客户端 Roots | 使用 5 分钟传输链接 |
 | 网络暴露 | 无监听端口 | 监听所有 IPv4 接口，明文传输 |
 
-本地 Agent 配置固定指向 `mcp-runtime/fstty-mcp.cmd`；脚本会从原子更新的版本指针启动当前 FsTTY MCP 运行时，因此应用更新后只需重新连接 Agent。
+stdio 本地配置固定指向 `mcp-runtime/fstty-mcp.cmd`；脚本会从原子更新的版本指针启动当前 FsTTY MCP 运行时，因此应用更新后只需重新连接 Agent。
+
+HTTP 的“一键本地配置”写入 `http://127.0.0.1:<已保存端口>/mcp`，不准备或启动独立 stdio 运行时。FsTTY 必须保持运行，轻量模式同样可用。
 
 HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Origin` 的请求，不支持浏览器 MCP 客户端或 CORS。
 
@@ -73,6 +75,12 @@ HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Orig
 同一登录会话内，普通、最小化、最大化和轻量模式共用一个 GUI 主实例。再次启动 FsTTY 会唤回已有窗口；最小化窗口先还原，最大化窗口保持最大化，轻量模式重建主窗口并恢复原有会话。不会启动第二套托盘或 MCP HTTP 服务。
 
 `--mcp-stdio` 仍按客户端独立运行，不受 GUI 单实例限制；WebView2 也可能产生多个系统进程。单实例不等于任务管理器中只有一个进程，不会自动结束旧版本进程。
+
+## 开机自启
+
+在“设置 → 常规 → 通用设置”开启“开机自启”，当前 Windows 用户登录后启动 FsTTY，默认关闭。普通模式显示主窗口；上次处于轻量模式时仅显示托盘。沿用 GUI 单实例检查，不自动重连 SSH，也不另行启动 MCP stdio 进程。
+
+开关直接读取系统登记，不在应用配置中重复保存。加载和保存期间禁止重复操作；返回设置页或窗口重新获得焦点时刷新，失败可重新读取或重试。自启与 HTTP 一键配置独立控制，不创建系统服务或计划任务。
 
 ## 轻量模式
 
@@ -86,9 +94,9 @@ CPU、内存曲线在轻量期间继续采样，恢复后显示最近 10 分钟�
 
 1. 从 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases) 或 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
 2. 创建 SSH 会话并完成首次主机密钥确认。
-3. 打开“设置 → MCP”，启用 `stdio`。
+3. 打开“设置 → MCP”。
 4. 在“权限”中开启需要暴露的会话分组，并按需授权工具类别。
-5. 点击“一键设置”，选择本机 Agent 并完成配置。
+5. 点击 stdio 区域的“一键设置”，或 HTTP 区域的“一键本地配置”，选择本机 Agent 并完成配置；所需 MCP 开关会自动启用。
 6. 让 Agent 先调用 `list_sessions`，再按返回的会话 ID 使用其他工具。
 
 也可以分别复制 stdio 或 HTTP 配置，以及 Agent 使用提示词，手工粘贴到其他 MCP 客户端。
@@ -103,7 +111,7 @@ CPU、内存曲线在轻量期间继续采样，恢复后显示最近 10 分钟�
 | Agent | MCP 配置 | 全局提示词 |
 | --- | --- | --- |
 | Codex | 自动合并 | 自动合并 `AGENTS.md` |
-| Claude | 使用官方 CLI 配置用户级 MCP | 自动合并 `CLAUDE.md` |
+| Claude Code | stdio 使用官方 CLI；HTTP 直接合并用户级 `.claude.json` | 自动合并 `CLAUDE.md` |
 | Cursor | 自动合并 | 复制后手工粘贴到 User Rules |
 | VS Code / GitHub Copilot | 自动合并默认用户 Profile | 写入独立 instructions 文件 |
 | Gemini CLI | 自动合并 | 自动合并 `GEMINI.md` |
@@ -111,7 +119,15 @@ CPU、内存曲线在轻量期间继续采样，恢复后显示最近 10 分钟�
 | Trae | 自动合并 | 复制后手工粘贴到 User Rules |
 | Trae CN | 自动合并 | 复制后手工粘贴到 User Rules |
 
-自动配置只修改 FsTTY 自有节点或 `fstty:begin/end` 标记区块。配置损坏、OpenCode 双配置冲突或单个 Agent 配置失败时，该 Agent 保持原文件不变，其他 Agent 继续处理。重复运行会更新配置，不会重复追加内容。
+自动配置只替换所选客户端的同名 `fstty` 节点及 `fstty:begin/end` 提示词标记区块，清除旧传输字段，保留其他服务和用户设置。配置损坏、未知结构、OpenCode 双配置冲突或检测到外部修改时拒绝覆盖；原子提交失败保留原文件并清理临时文件。单项失败不会回滚其他成功项，重复运行不会重复追加内容。
+
+HTTP 弹窗打开时只检测；点击配置后先确认端口保存成功，再启用 MCP 总开关和 HTTP，确认监听成功后才写客户端文件。沿用已保存权限，不扩大访问范围。端口、Token 和本地配置写入串行处理，关闭窗口不会提前释放正在写入的事务锁。
+
+Windows HTTP 监听启用端口独占，避免回环地址已有其他监听时误判启动成功；仍监听所有 IPv4 接口。参照 [Microsoft 套接字独占说明](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse)。
+
+HTTP 配置会把 Bearer Token 保存在第三方客户端配置文件中。令牌由 Rust 获取和写入，不通过一键配置的 IPC 结果、命令行、日志或剪贴板传递；Claude HTTP 不调用携带凭据的 CLI。配置格式遵循 [Codex MCP 配置](https://developers.openai.com/codex/mcp/)和 [Claude Code HTTP 配置](https://code.claude.com/docs/en/mcp)。
+
+成功后重载客户端。后续修改端口或轮换 Token，需要重新执行一键配置；不会自动终止已有 stdio 进程，也不会开启开机自启。“本地配置”仅指客户端使用回环地址，HTTP 仍监听所有 IPv4 接口，不自动修改防火墙；不要暴露到公网。
 
 ## MCP 审计日志
 
@@ -169,6 +185,7 @@ npm run tauri dev
 
 ```bash
 npm run verify:all
+cargo audit --file src-tauri/Cargo.lock
 ```
 
 ## 社区鸣谢

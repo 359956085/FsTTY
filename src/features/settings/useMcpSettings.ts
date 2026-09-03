@@ -18,12 +18,13 @@ import { useMcpPromptCopy } from "./useMcpPromptCopy";
 type McpSaveScope = "http" | "httpPort" | "permissions" | "stdio";
 
 interface UseMcpSettingsOptions {
+  configurationBusyRef?: { current: boolean };
   onChange: (settings: AppSettings) => void;
   settings: AppSettings;
   translate: (key: string) => string;
 }
 
-export function useMcpSettings({ onChange, settings, translate }: UseMcpSettingsOptions) {
+export function useMcpSettings({ configurationBusyRef, onChange, settings, translate }: UseMcpSettingsOptions) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [permissionCatalog, setPermissionCatalog] = useState<McpPermissionCatalogEntry[]>([]);
   const [permissionCatalogFailed, setPermissionCatalogFailed] = useState(false);
@@ -31,8 +32,11 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
   const [savedPermissions, setSavedPermissions] = useState(settings.mcpGroupPermissions);
   const savedPermissionsRef = useRef(settings.mcpGroupPermissions);
   const [port, setPort] = useState(String(settings.mcpHttpPort));
+  const portRef = useRef(String(settings.mcpHttpPort));
+  const settingsRef = useRef(settings);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const pendingMutationRef = useRef<Promise<boolean> | null>(null);
   const [stdioError, setStdioError] = useState<string | null>(null);
   const [httpError, setHttpError] = useState<string | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -69,7 +73,14 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     savedPermissionsRef.current = settings.mcpGroupPermissions;
     setSavedPermissions(settings.mcpGroupPermissions);
   }, [groups, settings.mcpGroupPermissions]);
-  useEffect(() => setPort(String(settings.mcpHttpPort)), [settings.mcpHttpPort]);
+  useEffect(() => {
+    const previousPort = settingsRef.current.mcpHttpPort;
+    settingsRef.current = settings;
+    if (portRef.current === String(previousPort)) {
+      portRef.current = String(settings.mcpHttpPort);
+      setPort(portRef.current);
+    }
+  }, [settings]);
   useEffect(() => {
     let active = true;
     void api
@@ -135,18 +146,51 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     [permissions],
   );
 
+  const applyBackendSettings = useCallback((next: AppSettings) => {
+    if (!mountedRef.current) return;
+    // 只同步仍等于旧保存值的草稿，迟到响应不能覆盖用户刚输入的新端口。
+    if (portRef.current === String(settingsRef.current.mcpHttpPort)) {
+      portRef.current = String(next.mcpHttpPort);
+      setPort(portRef.current);
+    }
+    settingsRef.current = next;
+    onChange(next);
+  }, [onChange]);
+
+  const changePort = useCallback((next: string) => {
+    portRef.current = next;
+    setPort(next);
+  }, []);
+
+  const beginMutation = useCallback((duringLocalSetup = false) => {
+    if (!mountedRef.current || savingRef.current || (configurationBusyRef?.current && !duringLocalSetup)) return null;
+    savingRef.current = true;
+    setSaving(true);
+    let resolveCompletion!: (success: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => { resolveCompletion = resolve; });
+    pendingMutationRef.current = pending;
+    return (success: boolean) => {
+      resolveCompletion(success);
+      if (pendingMutationRef.current === pending) {
+        pendingMutationRef.current = null;
+        savingRef.current = false;
+        if (mountedRef.current) setSaving(false);
+      }
+    };
+  }, [configurationBusyRef]);
+
   const save = useCallback(
     async (
       scope: McpSaveScope,
-      enabled = settings.mcpEnabled,
-      httpEnabled = settings.mcpHttpEnabled,
-      httpPort = settings.mcpHttpPort,
+      enabled = settingsRef.current.mcpEnabled,
+      httpEnabled = settingsRef.current.mcpHttpEnabled,
+      httpPort = settingsRef.current.mcpHttpPort,
+      duringLocalSetup = false,
     ) => {
-      if (savingRef.current) {
-        return;
-      }
-      savingRef.current = true;
-      setSaving(true);
+      const finish = beginMutation(duringLocalSetup);
+      if (!finish) return false;
+      let succeeded = false;
+      const requestedPort = portRef.current;
       if (scope === "stdio") setStdioError(null);
       else if (scope === "http" || scope === "httpPort") setHttpError(null);
       else {
@@ -160,28 +204,30 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
           httpPort,
           scope === "permissions" ? permissions : savedPermissionsRef.current,
         );
-        if (!mountedRef.current) return;
-        onChange(next);
+        succeeded = true;
+        if (!mountedRef.current) return false;
+        applyBackendSettings(next);
         if (scope === "permissions") {
           savedPermissionsRef.current = next.mcpGroupPermissions;
           setSavedPermissions(next.mcpGroupPermissions);
           setPermissions(next.mcpGroupPermissions);
           setPermissionSaveSucceeded(true);
-        } else if (scope === "httpPort") {
-          setPort(String(next.mcpHttpPort));
+        } else if (scope === "httpPort" && portRef.current === requestedPort) {
+          changePort(String(next.mcpHttpPort));
         }
+        return true;
       } catch (nextError) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current) return false;
         const message = resolveApiError(nextError, translate("settings.mcpSaveFailed"));
         if (scope === "stdio") setStdioError(message);
         else if (scope === "http" || scope === "httpPort") setHttpError(message);
         else setPermissionError(message);
+        return false;
       } finally {
-        savingRef.current = false;
-        if (mountedRef.current) setSaving(false);
+        finish(succeeded);
       }
     },
-    [onChange, permissions, settings, translate],
+    [applyBackendSettings, beginMutation, changePort, permissions, translate],
   );
 
   const loadConfig = useCallback(
@@ -254,36 +300,49 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
   }, [closeConfigDialog, configDialog, translate]);
 
   const rotateToken = useCallback(async () => {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
+    const finish = beginMutation();
+    if (!finish) return;
+    let succeeded = false;
     setHttpError(null);
     try {
       await api.rotateMcpHttpToken();
+      succeeded = true;
     } catch (nextError) {
       if (mountedRef.current) {
         setHttpError(resolveApiError(nextError, translate("errors.unknown")));
       }
     } finally {
-      savingRef.current = false;
-      if (mountedRef.current) setSaving(false);
+      finish(succeeded);
     }
-  }, [translate]);
+  }, [beginMutation, translate]);
 
-  const savePort = useCallback(async () => {
-    const parsedPort = validateMcpPort(port);
+  const savePort = useCallback(async (duringLocalSetup = false) => {
+    const parsedPort = validateMcpPort(portRef.current);
     if (parsedPort === null) {
       setHttpError(translate("settings.mcpInvalidPort"));
-      return;
+      return false;
     }
-    if (parsedPort === settings.mcpHttpPort) {
+    const current = settingsRef.current;
+    if (parsedPort === current.mcpHttpPort) {
       setHttpError(null);
-      return;
+      return true;
     }
-    await save("httpPort", settings.mcpEnabled, settings.mcpHttpEnabled, parsedPort);
-  }, [port, save, settings, translate]);
+    return save("httpPort", current.mcpEnabled, current.mcpHttpEnabled, parsedPort, duringLocalSetup);
+  }, [save, translate]);
+
+  const prepareLocalAgentSetup = useCallback(async (transport: McpTransport) => {
+    // 点击按钮时输入框的 blur 保存可能仍在进行；必须等结果，不能使用旧端口。
+    const pending = pendingMutationRef.current;
+    if (pending && !(await pending)) throw new Error(translate("settings.localAgentSettingsSaveFailed"));
+    if (!mountedRef.current) throw new Error(translate("settings.localAgentConfigureCancelled"));
+    if (transport === "http" && !(await savePort(true))) {
+      throw new Error(translate("settings.localAgentSettingsSaveFailed"));
+    }
+    return settingsRef.current;
+  }, [savePort, translate]);
 
   return {
+    applyBackendSettings,
     clearHttpError: () => setHttpError(null),
     closeConfigDialog,
     commandPolicyGroup,
@@ -305,6 +364,7 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     permissionSaveSucceeded,
     permissionTooltip,
     port,
+    prepareLocalAgentSetup,
     promptCopied,
     promptError,
     rotateToken,
@@ -313,7 +373,7 @@ export function useMcpSettings({ onChange, settings, translate }: UseMcpSettings
     saving,
     setCommandPolicyGroup,
     setPermissionTooltip,
-    setPort,
+    setPort: changePort,
     showPermissionTooltip,
     stdioError,
     updatePermission,

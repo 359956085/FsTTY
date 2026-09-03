@@ -2,11 +2,11 @@ import { Copy, X } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import type { McpClientTarget } from "../../shared/api/types";
+import type { McpClientTarget, McpTransport } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 
-export type McpTransport = "http" | "stdio";
+export type { McpTransport } from "../../shared/api/types";
 
 export interface McpConfigDialogState {
   config: string;

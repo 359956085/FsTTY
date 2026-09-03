@@ -19,18 +19,18 @@ use commands::{
     create_remote_directory, create_session, delete_remote_entry, delete_session,
     delete_session_group, disconnect_session, download_file, export_command_history,
     export_mcp_command_policy, finish_lightweight_restore, forget_host_key, get_app_settings,
-    get_command_history_settings, get_device_metrics_snapshot, get_device_status,
-    get_lightweight_mode_state, get_mcp_agent_prompt, get_mcp_http_client_config,
-    get_mcp_http_status, get_mcp_permission_catalog, get_mcp_stdio_client_config,
-    get_system_clipboard_content_kind, import_command_history, import_mcp_command_policy,
-    inspect_local_agent_setup, install_app_update, list_command_history, list_remote_files,
-    list_sessions, move_remote_entry, open_log_directory, open_project_link, rename_remote_entry,
-    rename_session_group, reorder_session, reorder_session_group, resize_terminal,
-    resolve_session_login_save_prompt, resolve_transfer_job_conflict, rotate_mcp_http_token,
-    set_ignored_update_version, set_language, set_session_credential, set_theme,
-    start_transfer_job, trust_host_key, update_app_settings, update_command_history_deduplication,
-    update_log_settings, update_mcp_settings, update_session, update_shortcut_settings,
-    upload_file, write_terminal,
+    get_autostart_state, get_command_history_settings, get_device_metrics_snapshot,
+    get_device_status, get_lightweight_mode_state, get_mcp_agent_prompt,
+    get_mcp_http_client_config, get_mcp_http_status, get_mcp_permission_catalog,
+    get_mcp_stdio_client_config, get_system_clipboard_content_kind, import_command_history,
+    import_mcp_command_policy, inspect_local_agent_setup, install_app_update, list_command_history,
+    list_remote_files, list_sessions, move_remote_entry, open_log_directory, open_project_link,
+    rename_remote_entry, rename_session_group, reorder_session, reorder_session_group,
+    resize_terminal, resolve_session_login_save_prompt, resolve_transfer_job_conflict,
+    rotate_mcp_http_token, set_autostart_enabled, set_ignored_update_version, set_language,
+    set_session_credential, set_theme, start_transfer_job, trust_host_key, update_app_settings,
+    update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
+    update_shortcut_settings, upload_file, write_terminal,
 };
 use gui_lifecycle::{create_main_window, request_app_exit, request_main_window, GuiLifecycle};
 use gui_startup::GuiStartupGuard;
@@ -139,6 +139,7 @@ pub fn run() {
                 }
             });
             tauri::async_runtime::spawn(async move {
+                let _configuration = startup_state.mcp_configuration_lock.lock().await;
                 let settings = startup_state
                     .settings_service
                     .lock()
@@ -251,6 +252,8 @@ pub fn run() {
             export_command_history,
             clear_command_history,
             get_app_settings,
+            get_autostart_state,
+            set_autostart_enabled,
             set_ignored_update_version,
             set_language,
             set_theme,

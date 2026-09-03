@@ -5,7 +5,7 @@ import {
   RotateCcw,
   Settings2,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AppSettings, McpClientTarget } from "../../shared/api/types";
 import { TextInput } from "../../shared/ui/TextInput";
@@ -33,6 +33,7 @@ type SettingsSection = "about" | "general" | "mcp";
 export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
+  const configurationBusyRef = useRef(false);
   const {
     changeLanguage: handleLanguageChange,
     changeTheme: handleThemeChange,
@@ -52,6 +53,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     setProxy,
   } = useGeneralSettings({ onChange, settings, translate: t, updater });
   const {
+    applyBackendSettings,
     clearHttpError,
     closeConfigDialog: closeMcpConfigDialog,
     commandPolicyGroup: mcpCommandPolicyGroup,
@@ -73,6 +75,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     permissionSaveSucceeded: mcpPermissionSaveSucceeded,
     permissionTooltip: mcpPermissionTooltip,
     port: mcpPort,
+    prepareLocalAgentSetup,
     promptCopied: mcpPromptCopied,
     promptError: mcpPromptError,
     rotateToken: rotateMcpToken,
@@ -85,7 +88,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     showPermissionTooltip: showMcpPermissionTooltip,
     stdioError: mcpStdioError,
     updatePermission,
-  } = useMcpSettings({ onChange, settings, translate: t });
+  } = useMcpSettings({ configurationBusyRef, onChange, settings, translate: t });
   const {
     capabilities: localAgentCapabilities,
     cancel: closeLocalAgentDialog,
@@ -96,10 +99,12 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
     loading: loadingLocalAgents,
     open: openLocalAgentDialog,
     results: localAgentResults,
+    transport: localAgentTransport,
   } = useLocalAgentSetup({
+    configurationBusyRef,
     getSavedPermissions: getSavedMcpPermissions,
-    onChange,
-    settings,
+    onChange: applyBackendSettings,
+    prepareConfiguration: prepareLocalAgentSetup,
     translate: t,
   });
   const status = (() => {
@@ -305,6 +310,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 <SettingsIconAction
                   activeTooltipKey={mcpPermissionTooltip?.key ?? null}
                   label={t("settings.localAgentOpen")}
+                  disabled={configuringLocalAgents}
                   onActivate={() => void openLocalAgentDialog()}
                   onHideTooltip={() => setMcpPermissionTooltip(null)}
                   onShowTooltip={showMcpPermissionTooltip}
@@ -336,7 +342,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 <input
                   checked={settings.mcpHttpEnabled}
                   className="settings-auto-update-toggle"
-                  disabled={savingMcp || !settings.mcpEnabled}
+                  disabled={savingMcp || configuringLocalAgents || !settings.mcpEnabled}
                   id="mcp-http-enabled"
                   onChange={(event) =>
                     void saveMcpSettings(
@@ -358,7 +364,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 </div>
                 <TextInput
                   className="settings-mcp-port-input"
-                  disabled={savingMcp}
+                  disabled={savingMcp || configuringLocalAgents}
                   id="mcp-http-port"
                   inputMode="numeric"
                   onBlur={() => void saveHttpPort()}
@@ -382,7 +388,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 </div>
                 <SettingsIconAction
                   activeTooltipKey={mcpPermissionTooltip?.key ?? null}
-                  disabled={savingMcp}
+                  disabled={savingMcp || configuringLocalAgents}
                   label={t("settings.mcpResetToken")}
                   onActivate={() => void rotateMcpToken()}
                   onHideTooltip={() => setMcpPermissionTooltip(null)}
@@ -402,6 +408,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 <SettingsIconAction
                   activeTooltipKey={mcpPermissionTooltip?.key ?? null}
                   label={t("settings.mcpCopyConfig")}
+                  disabled={savingMcp || configuringLocalAgents}
                   onActivate={() => openMcpConfigDialog("http")}
                   onHideTooltip={() => setMcpPermissionTooltip(null)}
                   onShowTooltip={showMcpPermissionTooltip}
@@ -410,7 +417,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <Copy aria-hidden="true" size={16} />
                 </SettingsIconAction>
               </div>
-              <div className="settings-row settings-mcp-last-row">
+              <div className="settings-row">
                 <div className="settings-row-copy">
                   <span className="settings-row-label">{t("settings.mcpAgentPrompt")}</span>
                   <small
@@ -435,6 +442,23 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                   <Copy aria-hidden="true" size={16} />
                 </SettingsIconAction>
               </div>
+              <div className="settings-row settings-mcp-last-row">
+                <div className="settings-row-copy">
+                  <span className="settings-row-label">{t("settings.localAgentSetup")}</span>
+                  <small>{t("settings.localAgentHttpSetupHint")}</small>
+                </div>
+                <SettingsIconAction
+                  activeTooltipKey={mcpPermissionTooltip?.key ?? null}
+                  disabled={configuringLocalAgents}
+                  label={t("settings.localAgentHttpOpen")}
+                  onActivate={() => void openLocalAgentDialog("http")}
+                  onHideTooltip={() => setMcpPermissionTooltip(null)}
+                  onShowTooltip={showMcpPermissionTooltip}
+                  tooltipKey="http-local-agent-setup"
+                >
+                  <Settings2 aria-hidden="true" size={16} />
+                </SettingsIconAction>
+              </div>
               {mcpHttpError ? (
                 <div className="form-error settings-mcp-feedback" role="alert">
                   {mcpHttpError}
@@ -455,7 +479,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
               onUpdate={updatePermission}
               permissions={mcpPermissions}
               saveSucceeded={mcpPermissionSaveSucceeded}
-              saving={savingMcp}
+              saving={savingMcp || configuringLocalAgents}
               tooltipKey={mcpPermissionTooltip?.key ?? null}
             />
           </>
@@ -488,11 +512,13 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
         capabilities={localAgentCapabilities}
         configuring={configuringLocalAgents}
         error={localAgentError}
+        httpPort={settings.mcpHttpPort}
         loading={loadingLocalAgents}
         onClose={closeLocalAgentDialog}
         onConfigure={(targets) => void configureSelectedLocalAgents(targets)}
         open={localAgentDialogOpen}
         results={localAgentResults}
+        transport={localAgentTransport}
       />
     </section>
   );

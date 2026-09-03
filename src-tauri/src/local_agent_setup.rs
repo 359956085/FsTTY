@@ -1,5 +1,5 @@
 use crate::mcp_runtime::{self, McpStdioLaunchSpec};
-use jsonc_parser::cst::CstRootNode;
+use jsonc_parser::cst::{CstInputValue, CstRootNode};
 use jsonc_parser::{json, ParseOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{json as serde_json_value, Map, Value};
@@ -11,8 +11,33 @@ use std::process::Command;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 use uuid::Uuid;
 
+mod http;
+pub use http::LocalAgentHttpConfig;
+
 const PROMPT_BEGIN: &str = "<!-- fstty:begin -->";
 const PROMPT_END: &str = "<!-- fstty:end -->";
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LocalAgentTransport {
+    #[default]
+    Stdio,
+    Http,
+}
+
+enum LocalAgentConnection<'a> {
+    Stdio(&'a McpStdioLaunchSpec),
+    Http(&'a LocalAgentHttpConfig),
+}
+
+impl LocalAgentConnection<'_> {
+    fn inspect(&self, home: &Path, target: LocalAgentTarget) -> LocalAgentSetupState {
+        match self {
+            Self::Stdio(launch) => inspect_mcp_state(home, launch, target),
+            Self::Http(config) => http::inspect(home, config, target),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,16 +89,24 @@ pub struct LocalAgentConfigureResult {
     pub message: Option<String>,
 }
 
-pub fn inspect_local_agent_setup(app_data_dir: &Path) -> Result<Vec<LocalAgentCapability>, String> {
+pub fn inspect_local_agent_setup(
+    app_data_dir: &Path,
+    http: Option<LocalAgentHttpConfig>,
+) -> Result<Vec<LocalAgentCapability>, String> {
     let home = user_home_directory()?;
     let launch = mcp_runtime::launch_spec(app_data_dir);
-    Ok(inspect_with_home(&home, &launch))
+    let connection = match http.as_ref() {
+        Some(config) => LocalAgentConnection::Http(config),
+        None => LocalAgentConnection::Stdio(&launch),
+    };
+    Ok(inspect_with_home(&home, &connection))
 }
 
 pub fn configure_local_agents(
     app_data_dir: &Path,
     targets: Vec<LocalAgentTarget>,
     prompt: &str,
+    http: Option<LocalAgentHttpConfig>,
 ) -> Result<Vec<LocalAgentConfigureResult>, String> {
     if targets.is_empty() {
         return Err("请至少选择一个本地 Agent".to_owned());
@@ -85,12 +118,29 @@ pub fn configure_local_agents(
         }
     }
     let home = user_home_directory()?;
+    if let Some(config) = http {
+        // HTTP 客户端只连已有 GUI 服务，不复制可执行文件或创建 stdio 启动器。
+        return Ok(configure_with_home(
+            &home,
+            &LocalAgentConnection::Http(&config),
+            unique_targets,
+            prompt,
+        ));
+    }
     let executable = env::current_exe().map_err(|_| "无法获取 FsTTY 程序路径".to_owned())?;
     let launch = mcp_runtime::prepare(app_data_dir, &executable)?;
-    Ok(configure_with_home(&home, &launch, unique_targets, prompt))
+    Ok(configure_with_home(
+        &home,
+        &LocalAgentConnection::Stdio(&launch),
+        unique_targets,
+        prompt,
+    ))
 }
 
-fn inspect_with_home(home: &Path, launch: &McpStdioLaunchSpec) -> Vec<LocalAgentCapability> {
+fn inspect_with_home(
+    home: &Path,
+    connection: &LocalAgentConnection<'_>,
+) -> Vec<LocalAgentCapability> {
     const TARGETS: [LocalAgentTarget; 8] = [
         LocalAgentTarget::Codex,
         LocalAgentTarget::Claude,
@@ -113,7 +163,7 @@ fn inspect_with_home(home: &Path, launch: &McpStdioLaunchSpec) -> Vec<LocalAgent
                     detail: Some("未检测到本地安装".to_owned()),
                 };
             }
-            let state = inspect_mcp_state(home, launch, target);
+            let state = connection.inspect(home, target);
             LocalAgentCapability {
                 target,
                 installed,
@@ -126,7 +176,7 @@ fn inspect_with_home(home: &Path, launch: &McpStdioLaunchSpec) -> Vec<LocalAgent
 
 fn configure_with_home(
     home: &Path,
-    launch: &McpStdioLaunchSpec,
+    connection: &LocalAgentConnection<'_>,
     targets: Vec<LocalAgentTarget>,
     prompt: &str,
 ) -> Vec<LocalAgentConfigureResult> {
@@ -136,43 +186,46 @@ fn configure_with_home(
             if !target_detected(home, target) {
                 return failed_result(target, "未检测到本地安装");
             }
-            configure_target(home, launch, target, prompt)
+            configure_target(home, connection, target, prompt)
         })
         .collect()
 }
 
 fn configure_target(
     home: &Path,
-    launch: &McpStdioLaunchSpec,
+    connection: &LocalAgentConnection<'_>,
     target: LocalAgentTarget,
     prompt: &str,
 ) -> LocalAgentConfigureResult {
-    let mcp_state = inspect_mcp_state(home, launch, target);
+    let mcp_state = connection.inspect(home, target);
     if mcp_state == LocalAgentSetupState::Invalid {
         return failed_result(target, "现有 MCP 配置无法解析，未修改文件");
     }
-    let mcp_result = match target {
-        LocalAgentTarget::Codex => configure_codex_mcp(home, launch),
-        LocalAgentTarget::Claude => configure_claude_mcp(home, launch),
-        LocalAgentTarget::Cursor => configure_json_mcp(
-            &home.join(".cursor").join("mcp.json"),
-            "mcpServers",
-            launch,
-            false,
-        ),
-        LocalAgentTarget::VsCode => {
-            configure_json_mcp(&vscode_mcp_path(home), "servers", launch, true)
-        }
-        LocalAgentTarget::GeminiCli => configure_json_mcp(
-            &home.join(".gemini").join("settings.json"),
-            "mcpServers",
-            launch,
-            false,
-        ),
-        LocalAgentTarget::OpenCode => configure_opencode_mcp(home, launch),
-        LocalAgentTarget::Trae | LocalAgentTarget::TraeCn => {
-            configure_json_mcp(&trae_mcp_path(home, target), "mcpServers", launch, false)
-        }
+    let mcp_result = match connection {
+        LocalAgentConnection::Http(config) => http::configure(home, config, target),
+        LocalAgentConnection::Stdio(launch) => match target {
+            LocalAgentTarget::Codex => configure_codex_mcp(home, launch),
+            LocalAgentTarget::Claude => configure_claude_mcp(home, launch),
+            LocalAgentTarget::Cursor => configure_json_mcp(
+                &home.join(".cursor").join("mcp.json"),
+                "mcpServers",
+                launch,
+                false,
+            ),
+            LocalAgentTarget::VsCode => {
+                configure_json_mcp(&vscode_mcp_path(home), "servers", launch, true)
+            }
+            LocalAgentTarget::GeminiCli => configure_json_mcp(
+                &home.join(".gemini").join("settings.json"),
+                "mcpServers",
+                launch,
+                false,
+            ),
+            LocalAgentTarget::OpenCode => configure_opencode_mcp(home, launch),
+            LocalAgentTarget::Trae | LocalAgentTarget::TraeCn => {
+                configure_json_mcp(&trae_mcp_path(home, target), "mcpServers", launch, false)
+            }
+        },
     };
     let mcp_status = match mcp_result {
         Ok(changed) => {
@@ -241,6 +294,17 @@ fn failed_result(target: LocalAgentTarget, message: &str) -> LocalAgentConfigure
 }
 
 fn configure_codex_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool, String> {
+    let mut server = Table::new();
+    server["command"] = value(&launch.command);
+    let mut args = Array::new();
+    for argument in &launch.args {
+        args.push(argument.as_str());
+    }
+    server["args"] = value(args);
+    write_codex_mcp(home, server)
+}
+
+fn write_codex_mcp(home: &Path, server: Table) -> Result<bool, String> {
     let path = home.join(".codex").join("config.toml");
     let existing = read_optional_text(&path)?;
     let mut document = existing
@@ -256,13 +320,6 @@ fn configure_codex_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool,
     {
         return Err("Codex 配置中的 mcp_servers.fstty 不是表".to_owned());
     }
-    let mut server = Table::new();
-    server["command"] = value(&launch.command);
-    let mut args = Array::new();
-    for argument in &launch.args {
-        args.push(argument.as_str());
-    }
-    server["args"] = value(args);
     document["mcp_servers"]["fstty"] = Item::Table(server);
     let next = document.to_string();
     write_if_changed(&path, existing.as_deref(), &next)
@@ -284,6 +341,17 @@ fn configure_json_mcp(
     launch: &McpStdioLaunchSpec,
     include_type: bool,
 ) -> Result<bool, String> {
+    let mut server = serde_json_value!({
+        "command": launch.command,
+        "args": launch.args
+    });
+    if include_type {
+        server["type"] = Value::String("stdio".to_owned());
+    }
+    write_json_mcp(path, root_key, server)
+}
+
+fn write_json_mcp(path: &Path, root_key: &str, server: Value) -> Result<bool, String> {
     let existing = read_optional_text(path)?;
     let mut root = match existing.as_deref() {
         Some(content) => serde_json::from_str::<Value>(content)
@@ -306,13 +374,6 @@ fn configure_json_mcp(
     {
         return Err(format!("{} 中的 fstty 配置不是对象", path.display()));
     }
-    let mut server = serde_json_value!({
-        "command": launch.command,
-        "args": launch.args
-    });
-    if include_type {
-        server["type"] = Value::String("stdio".to_owned());
-    }
     servers.insert("fstty".to_owned(), server);
     let next = serde_json::to_string_pretty(&root)
         .map_err(|_| format!("无法生成 {}", path.display()))?
@@ -321,6 +382,20 @@ fn configure_json_mcp(
 }
 
 fn configure_opencode_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bool, String> {
+    let command = std::iter::once(launch.command.clone())
+        .chain(launch.args.iter().cloned())
+        .collect::<Vec<_>>();
+    write_opencode_mcp(
+        home,
+        json!({
+            "type": "local",
+            "command": command,
+            "enabled": true
+        }),
+    )
+}
+
+fn write_opencode_mcp(home: &Path, desired: CstInputValue) -> Result<bool, String> {
     let path = opencode_config_path(home)?;
     let existing = read_optional_text(&path)?;
     let source = existing.as_deref().unwrap_or("{}");
@@ -338,6 +413,13 @@ fn configure_opencode_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bo
     {
         return Err(format!("{} 中的 mcp.fstty 不是对象", path.display()));
     }
+    if object
+        .get("mcp")
+        .and_then(Value::as_object)
+        .is_some_and(unsupported_opencode_layout)
+    {
+        return Err("OpenCode MCP 配置结构不受支持，未修改配置".to_owned());
+    }
 
     let root = CstRootNode::parse(source, &ParseOptions::default())
         .map_err(|_| format!("{} 无法解析", path.display()))?;
@@ -353,14 +435,6 @@ fn configure_opencode_mcp(home: &Path, launch: &McpStdioLaunchSpec) -> Result<bo
             .object_value()
             .ok_or_else(|| format!("{} 无法创建 mcp 对象", path.display()))?,
     };
-    let command = std::iter::once(launch.command.clone())
-        .chain(launch.args.iter().cloned())
-        .collect::<Vec<_>>();
-    let desired = json!({
-        "type": "local",
-        "command": command,
-        "enabled": true
-    });
     if let Some(property) = mcp_object.get("fstty") {
         property.set_value(desired);
     } else {
@@ -442,13 +516,9 @@ fn configure_claude_mcp_with(
     Err(command_error("Claude MCP 配置失败", &added.stderr))
 }
 
-fn command_error(prefix: &str, stderr: &[u8]) -> String {
-    let detail = String::from_utf8_lossy(stderr).trim().to_owned();
-    if detail.is_empty() {
-        prefix.to_owned()
-    } else {
-        format!("{prefix}：{detail}")
-    }
+fn command_error(prefix: &str, _stderr: &[u8]) -> String {
+    // 客户端可能把旧 HTTP 配置及 Token 写入错误输出；只返回固定操作原因。
+    prefix.to_owned()
 }
 
 fn inspect_mcp_state(
@@ -502,6 +572,13 @@ fn inspect_opencode_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgen
     if object.get("mcp").is_some_and(|value| !value.is_object()) {
         return LocalAgentSetupState::Invalid;
     }
+    if object
+        .get("mcp")
+        .and_then(Value::as_object)
+        .is_some_and(unsupported_opencode_layout)
+    {
+        return LocalAgentSetupState::Invalid;
+    }
     let Some(server) = root.get("mcp").and_then(|value| value.get("fstty")) else {
         return LocalAgentSetupState::Missing;
     };
@@ -523,7 +600,7 @@ fn inspect_opencode_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgen
         });
     let type_current = server.get("type").and_then(Value::as_str) == Some("local");
     let enabled_current = server.get("enabled").and_then(Value::as_bool) == Some(true);
-    if command_current && type_current && enabled_current {
+    if command_current && type_current && enabled_current && !has_http_fields(server) {
         LocalAgentSetupState::Current
     } else {
         LocalAgentSetupState::Outdated
@@ -557,6 +634,14 @@ fn inspect_codex_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgentSe
     let command = server.get("command").and_then(Item::as_str);
     let args = server.get("args").and_then(Item::as_array);
     if command == Some(launch.command.as_str())
+        && [
+            "url",
+            "http_headers",
+            "env_http_headers",
+            "bearer_token_env_var",
+        ]
+        .iter()
+        .all(|key| !server.contains_key(key))
         && args.is_some_and(|args| {
             args.len() == launch.args.len()
                 && args
@@ -615,7 +700,7 @@ fn inspect_json_state(
                     .zip(&launch.args)
                     .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
         });
-    if command_current && args_current && type_current {
+    if command_current && args_current && type_current && !has_http_fields(server) {
         LocalAgentSetupState::Current
     } else {
         LocalAgentSetupState::Outdated
@@ -662,7 +747,7 @@ fn inspect_claude_state(home: &Path, launch: &McpStdioLaunchSpec) -> LocalAgentS
                     .zip(&launch.args)
                     .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
         });
-    if command_current && args_current && type_current {
+    if command_current && args_current && type_current && !has_http_fields(server) {
         LocalAgentSetupState::Current
     } else {
         LocalAgentSetupState::Outdated
@@ -675,6 +760,27 @@ fn text_contains_launch_spec(content: &str, launch: &McpStdioLaunchSpec) -> bool
             .args
             .iter()
             .all(|argument| content.contains(argument))
+}
+
+fn has_http_fields(server: &Value) -> bool {
+    [
+        "url",
+        "httpUrl",
+        "headers",
+        "http_headers",
+        "env_http_headers",
+        "bearer_token_env_var",
+    ]
+    .iter()
+    .any(|key| server.get(key).is_some())
+}
+
+fn unsupported_opencode_layout(servers: &Map<String, Value>) -> bool {
+    // 不把新版嵌套 servers 布局误当成旧版平铺配置；用户需先手工确认迁移。
+    servers
+        .get("servers")
+        .and_then(Value::as_object)
+        .is_some_and(|nested| !nested.contains_key("type"))
 }
 
 fn merge_prompt_file(path: &Path, prompt: &str) -> Result<bool, String> {
@@ -731,14 +837,40 @@ fn merge_prompt(existing: &str, prompt: &str) -> Result<String, String> {
 }
 
 fn write_if_changed(path: &Path, existing: Option<&str>, next: &str) -> Result<bool, String> {
+    check_configuration_snapshot(path, existing.map(str::as_bytes))?;
     if existing == Some(next) {
         return Ok(false);
     }
-    atomic_write(path, next.as_bytes())?;
+    atomic_write_checked(
+        path,
+        next.as_bytes(),
+        Some(existing.map(str::as_bytes)),
+        mcp_runtime::replace_file,
+    )?;
     Ok(true)
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
+    atomic_write_checked(path, content, None, mcp_runtime::replace_file)
+}
+
+fn check_configuration_snapshot(path: &Path, expected: Option<&[u8]>) -> Result<(), String> {
+    let actual = read_optional_text(path)?;
+    if actual.as_deref().map(str::as_bytes) != expected {
+        return Err(format!(
+            "配置已被其他程序修改，请重新检测后重试：{}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn atomic_write_checked(
+    path: &Path,
+    content: &[u8],
+    expected: Option<Option<&[u8]>>,
+    commit: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     if path
         .symlink_metadata()
         .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -751,51 +883,44 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|_| format!("无法创建目录：{}", parent.display()))?;
     let suffix = Uuid::new_v4();
     let temp = parent.join(format!(".fstty-{suffix}.tmp"));
-    let backup = parent.join(format!(".fstty-{suffix}.bak"));
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&temp)
         .map_err(|_| format!("无法创建临时文件：{}", temp.display()))?;
-    if file
-        .write_all(content)
-        .and_then(|_| file.sync_all())
-        .is_err()
-    {
+    let written = file.write_all(content).and_then(|_| file.sync_all());
+    drop(file);
+    if written.is_err() {
         let _ = fs::remove_file(&temp);
         return Err(format!("无法写入临时文件：{}", temp.display()));
     }
-    let had_target = path.exists();
-    if had_target && fs::rename(path, &backup).is_err() {
-        let _ = fs::remove_file(&temp);
-        return Err(format!("无法备份配置：{}", path.display()));
-    }
-    if fs::rename(&temp, path).is_err() {
-        if had_target {
-            let _ = fs::rename(&backup, path);
+    if let Some(expected) = expected {
+        // 文件生成期间 Agent 可能保存了其他设置；提交前再次检查，不能覆盖新内容。
+        if let Err(error) = check_configuration_snapshot(path, expected) {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
         }
+    }
+    // 原子替换始终保留原文件到提交时，不产生主文件缺失窗口或残留含令牌备份。
+    if commit(&temp, path).is_err() {
         let _ = fs::remove_file(&temp);
         return Err(format!("无法提交配置：{}", path.display()));
-    }
-    if had_target {
-        let _ = fs::remove_file(backup);
     }
     Ok(())
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
     if path
         .symlink_metadata()
         .is_ok_and(|metadata| metadata.file_type().is_symlink())
     {
         return Err(format!("拒绝读取符号链接：{}", path.display()));
     }
-    fs::read_to_string(path)
-        .map(Some)
-        .map_err(|_| format!("无法读取配置：{}", path.display()))
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(format!("无法读取配置：{}", path.display())),
+    }
 }
 
 fn prompt_path(home: &Path, target: LocalAgentTarget) -> PathBuf {
@@ -1079,7 +1204,12 @@ mod tests {
         .unwrap();
         let launch = test_launch_spec(&root);
 
-        let first = configure_with_home(&root, &launch, vec![LocalAgentTarget::OpenCode], PROMPT);
+        let first = configure_with_home(
+            &root,
+            &LocalAgentConnection::Stdio(&launch),
+            vec![LocalAgentTarget::OpenCode],
+            PROMPT,
+        );
         assert_eq!(first[0].mcp_status, LocalAgentStepStatus::Configured);
         assert_eq!(first[0].prompt_status, LocalAgentStepStatus::Configured);
         let content = fs::read_to_string(&path).unwrap();
@@ -1095,7 +1225,12 @@ mod tests {
             .unwrap()
             .contains(PROMPT_BEGIN));
 
-        let second = configure_with_home(&root, &launch, vec![LocalAgentTarget::OpenCode], PROMPT);
+        let second = configure_with_home(
+            &root,
+            &LocalAgentConnection::Stdio(&launch),
+            vec![LocalAgentTarget::OpenCode],
+            PROMPT,
+        );
         assert_eq!(second[0].mcp_status, LocalAgentStepStatus::Current);
         assert_eq!(second[0].prompt_status, LocalAgentStepStatus::Current);
         let _ = fs::remove_dir_all(root);
@@ -1337,7 +1472,7 @@ mod tests {
         let launch = test_launch_spec(&root);
         let results = configure_with_home(
             &root,
-            &launch,
+            &LocalAgentConnection::Stdio(&launch),
             vec![LocalAgentTarget::Codex, LocalAgentTarget::GeminiCli],
             PROMPT,
         );
@@ -1345,5 +1480,83 @@ mod tests {
         assert_eq!(results[0].mcp_status, LocalAgentStepStatus::Configured);
         assert_eq!(results[1].mcp_status, LocalAgentStepStatus::Failed);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn 外部配置变更阻止过期内容覆盖() {
+        let root = test_directory("concurrent-change");
+        let path = root.join("mcp.json");
+        fs::write(&path, "用户刚保存的新内容").unwrap();
+        let error = write_if_changed(&path, Some("旧内容"), "FsTTY 新内容").unwrap_err();
+        assert!(error.contains("其他程序修改"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "用户刚保存的新内容");
+        assert!(write_if_changed(&path, None, "FsTTY 新内容").is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(write_if_changed(&path, Some("旧内容"), "FsTTY 新内容").is_err());
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn 提交失败保留原文件并清理含令牌临时文件() {
+        let root = test_directory("commit-failure");
+        let path = root.join("mcp.json");
+        fs::write(&path, "original").unwrap();
+        let error = atomic_write_checked(
+            &path,
+            b"Bearer dummy-test-token",
+            Some(Some(b"original")),
+            |temp, destination| {
+                assert!(temp.is_file());
+                assert_eq!(fs::read(destination).unwrap(), b"original");
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            },
+        )
+        .unwrap_err();
+        assert!(!error.contains("dummy-test-token"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        assert!(write_if_changed(&path, Some("original"), "recovered").unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "recovered");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn 提交前再次检测外部修改并清理临时文件() {
+        let root = test_directory("precommit-recheck");
+        let path = root.join("mcp.json");
+        fs::write(&path, "new external content").unwrap();
+        let error = atomic_write_checked(
+            &path,
+            b"Bearer dummy-test-token",
+            Some(Some(b"old")),
+            |_, _| panic!("不应提交过期快照"),
+        )
+        .unwrap_err();
+        assert!(error.contains("其他程序修改"));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new external content");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn 客户端错误原文不暴露令牌或私钥() {
+        assert_eq!(
+            command_error(
+                "Claude MCP 配置失败",
+                b"Authorization: Bearer secret; private_key=secret"
+            ),
+            "Claude MCP 配置失败"
+        );
+    }
+
+    #[test]
+    fn 本地配置协议仅接受已知枚举且默认stdio() {
+        assert_eq!(LocalAgentTransport::default(), LocalAgentTransport::Stdio);
+        assert_eq!(
+            serde_json::from_str::<LocalAgentTransport>("\"http\"").unwrap(),
+            LocalAgentTransport::Http
+        );
+        assert!(serde_json::from_str::<LocalAgentTransport>("\"sse\"").is_err());
     }
 }

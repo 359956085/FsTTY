@@ -116,6 +116,8 @@ export interface McpHttpStatus {
   address: string;
 }
 
+export type McpTransport = "stdio" | "http";
+
 export type McpClientTarget =
   | "genericJson"
   | "codex"

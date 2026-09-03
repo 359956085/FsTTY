@@ -1,3 +1,4 @@
+use crate::local_agent_setup::{LocalAgentHttpConfig, LocalAgentTransport};
 use crate::mcp_runtime::McpStdioLaunchSpec;
 use crate::models::{
     AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
@@ -162,6 +163,18 @@ pub async fn update_mcp_settings(
     http_port: u16,
     group_permissions: Vec<McpGroupPermission>,
 ) -> Result<AppSettings, AppError> {
+    let _configuration = state.mcp_configuration_lock.lock().await;
+    update_mcp_settings_locked(&state, enabled, http_enabled, http_port, group_permissions).await
+}
+
+// 调用者须持有配置事务锁；本地 HTTP 配置与普通设置使用同一套提交和回滚流程。
+async fn update_mcp_settings_locked(
+    state: &AppState,
+    enabled: bool,
+    http_enabled: bool,
+    http_port: u16,
+    group_permissions: Vec<McpGroupPermission>,
+) -> Result<AppSettings, AppError> {
     let previous = state
         .settings_service
         .lock()
@@ -178,10 +191,10 @@ pub async fn update_mcp_settings(
         .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
         .replace_all(group_permissions)?;
     let http_token = if enabled && http_enabled {
-        match crate::mcp::get_or_create_http_token(&state).await {
+        match crate::mcp::get_or_create_http_token(state).await {
             Ok(token) => Some(token),
             Err(error) => {
-                restore_mcp_permissions(&state, previous_permissions.clone())?;
+                restore_mcp_permissions(state, previous_permissions.clone())?;
                 return Err(error);
             }
         }
@@ -198,7 +211,7 @@ pub async fn update_mcp_settings(
     let mut settings = match settings_result {
         Ok(settings) => settings,
         Err(error) => {
-            restore_mcp_permissions(&state, previous_permissions.clone())?;
+            restore_mcp_permissions(state, previous_permissions.clone())?;
             return Err(error);
         }
     };
@@ -218,21 +231,13 @@ pub async fn update_mcp_settings(
                 } else {
                     state
                         .mcp_http_runtime
-                        .start(
-                            state.inner().clone(),
-                            settings.mcp_http_port,
-                            token.to_string(),
-                        )
+                        .start(state.clone(), settings.mcp_http_port, token.to_string())
                         .await
                 }
             } else {
                 state
                     .mcp_http_runtime
-                    .start(
-                        state.inner().clone(),
-                        settings.mcp_http_port,
-                        token.to_string(),
-                    )
+                    .start(state.clone(), settings.mcp_http_port, token.to_string())
                     .await
             };
         if let Err(error) = runtime_result {
@@ -240,7 +245,7 @@ pub async fn update_mcp_settings(
                 "MCP HTTP 服务切换失败：port={}，error={error}",
                 settings.mcp_http_port
             );
-            restore_mcp_permissions(&state, previous_permissions)?;
+            restore_mcp_permissions(state, previous_permissions)?;
             state
                 .settings_service
                 .lock()
@@ -304,6 +309,7 @@ pub async fn get_mcp_http_client_config(
     state: State<'_, AppState>,
     client_target: McpClientTarget,
 ) -> Result<String, AppError> {
+    let _configuration = state.mcp_configuration_lock.lock().await;
     let settings = state
         .settings_service
         .lock()
@@ -393,28 +399,90 @@ pub fn get_mcp_agent_prompt() -> String {
 #[tauri::command]
 pub async fn inspect_local_agent_setup(
     state: State<'_, AppState>,
+    transport: Option<LocalAgentTransport>,
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentCapability>, AppError> {
+    let configuration = state.mcp_configuration_lock.clone().lock_owned().await;
+    let http = if transport.unwrap_or_default() == LocalAgentTransport::Http {
+        let port = state
+            .settings_service
+            .lock()
+            .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+            .get()
+            .mcp_http_port;
+        // 检测只读系统凭据；尚无令牌时报告待配置，不能顺带开启 HTTP。
+        Some(
+            LocalAgentHttpConfig::new(port, crate::mcp::get_http_token(&state).await?)
+                .map_err(AppError::Validation)?,
+        )
+    } else {
+        None
+    };
     let app_data_dir = state.app_data_directory.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::local_agent_setup::inspect_local_agent_setup(&app_data_dir)
-    })
+    run_local_agent_operation(
+        configuration,
+        "本地 Agent 检测任务异常终止",
+        move || crate::local_agent_setup::inspect_local_agent_setup(&app_data_dir, http),
+    )
     .await
-    .map_err(|_| AppError::Internal("本地 Agent 检测任务异常终止".to_owned()))?
-    .map_err(AppError::Internal)
 }
 
 #[tauri::command]
 pub async fn configure_local_agents(
     state: State<'_, AppState>,
     targets: Vec<crate::local_agent_setup::LocalAgentTarget>,
+    transport: Option<LocalAgentTransport>,
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentConfigureResult>, AppError> {
+    if targets.is_empty() {
+        return Err(AppError::Internal("请至少选择一个本地 Agent".to_owned()));
+    }
+    let configuration = state.mcp_configuration_lock.clone().lock_owned().await;
+    let http = if transport.unwrap_or_default() == LocalAgentTransport::Http {
+        let port = state
+            .settings_service
+            .lock()
+            .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+            .get()
+            .mcp_http_port;
+        let permissions = state
+            .mcp_command_policy_service
+            .lock()
+            .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+            .list_permissions()?;
+        let settings = update_mcp_settings_locked(&state, true, true, port, permissions).await?;
+        let token = crate::mcp::get_http_token(&state)
+            .await?
+            .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
+        Some(
+            LocalAgentHttpConfig::new(settings.mcp_http_port, Some(token))
+                .map_err(AppError::Validation)?,
+        )
+    } else {
+        None
+    };
     let prompt = crate::mcp::mcp_agent_prompt();
     let app_data_dir = state.app_data_directory.clone();
+    run_local_agent_operation(
+        configuration,
+        "本地 Agent 配置任务异常终止",
+        move || {
+            crate::local_agent_setup::configure_local_agents(&app_data_dir, targets, &prompt, http)
+        },
+    )
+    .await
+}
+
+async fn run_local_agent_operation<T: Send + 'static>(
+    configuration: tokio::sync::OwnedMutexGuard<()>,
+    join_error: &'static str,
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::local_agent_setup::configure_local_agents(&app_data_dir, targets, &prompt)
+        // IPC 被取消或窗口销毁后，阻塞写入仍持有锁，防止提前修改端口或轮换令牌。
+        let _configuration = configuration;
+        operation()
     })
     .await
-    .map_err(|_| AppError::Internal("本地 Agent 配置任务异常终止".to_owned()))?
+    .map_err(|_| AppError::Internal(join_error.to_owned()))?
     .map_err(AppError::Internal)
 }
 
@@ -518,6 +586,7 @@ pub struct McpHttpStatus {
 
 #[tauri::command]
 pub async fn get_mcp_http_status(state: State<'_, AppState>) -> Result<McpHttpStatus, AppError> {
+    let _configuration = state.mcp_configuration_lock.lock().await;
     let settings = state
         .settings_service
         .lock()
@@ -531,6 +600,7 @@ pub async fn get_mcp_http_status(state: State<'_, AppState>) -> Result<McpHttpSt
 
 #[tauri::command]
 pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), AppError> {
+    let _configuration = state.mcp_configuration_lock.lock().await;
     let settings = state
         .settings_service
         .lock()
@@ -568,7 +638,184 @@ pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), App
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    use std::time::Duration;
     use uuid::Uuid;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let directory =
+                std::env::temp_dir().join(format!("fstty-local-configuration-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&directory).unwrap();
+            Self(directory)
+        }
+
+        fn state(&self) -> AppState {
+            let mut state = AppState::new(self.0.clone());
+            state.credential_service = crate::services::CredentialService::memory_for_test();
+            state
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn 检测令牌只读且重复初始化复用同一令牌() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let _configuration = state.mcp_configuration_lock.lock().await;
+        assert!(crate::mcp::get_http_token(&state).await.unwrap().is_none());
+        assert!(
+            !state
+                .settings_service
+                .lock()
+                .unwrap()
+                .get()
+                .mcp_http_enabled
+        );
+        assert!(!state.mcp_http_runtime.is_running().await);
+
+        let first = crate::mcp::get_or_create_http_token(&state).await.unwrap();
+        let second = crate::mcp::get_or_create_http_token(&state).await.unwrap();
+        assert!(first.as_str() == second.as_str());
+        assert!(
+            !state
+                .settings_service
+                .lock()
+                .unwrap()
+                .get()
+                .mcp_http_enabled
+        );
+        assert!(!state.mcp_http_runtime.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn 本地http启动失败回滚开关端口与原权限() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let permission: McpGroupPermission = serde_json::from_value(serde_json::json!({
+            "groupName": "prod", "enabled": true, "fileWrite": false, "fileDelete": false
+        }))
+        .unwrap();
+        let permissions = state
+            .mcp_command_policy_service
+            .lock()
+            .unwrap()
+            .replace_all(vec![permission])
+            .unwrap();
+        state
+            .settings_service
+            .lock()
+            .unwrap()
+            .set_mcp_permissions_in_memory(permissions.clone());
+        let previous = state.settings_service.lock().unwrap().get();
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _configuration = state.mcp_configuration_lock.lock().await;
+        let error = update_mcp_settings_locked(&state, true, true, port, permissions.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Connection(message) if message == "MCP HTTP 端口被占用"));
+        let actual = state.settings_service.lock().unwrap().get();
+        assert_eq!(actual.mcp_enabled, previous.mcp_enabled);
+        assert_eq!(actual.mcp_http_enabled, previous.mcp_http_enabled);
+        assert_eq!(actual.mcp_http_port, previous.mcp_http_port);
+        assert_eq!(actual.mcp_group_permissions, permissions);
+        assert_eq!(
+            state
+                .mcp_command_policy_service
+                .lock()
+                .unwrap()
+                .list_permissions()
+                .unwrap(),
+            permissions
+        );
+        assert!(!state.mcp_http_runtime.is_running().await);
+        assert!(!directory.0.join("mcp-runtime").exists());
+    }
+
+    #[tokio::test]
+    async fn 取消窗口请求后阻塞写入仍持锁直到完成() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let guard = state.mcp_configuration_lock.clone().lock_owned().await;
+        let previous_port = state.settings_service.lock().unwrap().get().mcp_http_port;
+        let previous_token = crate::mcp::get_or_create_http_token(&state).await.unwrap();
+        let (started, started_receiver) = tokio::sync::oneshot::channel();
+        let (release, release_receiver) = std::sync::mpsc::channel();
+        let operation = tokio::spawn(run_local_agent_operation(
+            guard,
+            "测试任务异常",
+            move || {
+                started.send(()).unwrap();
+                release_receiver
+                    .recv_timeout(Duration::from_secs(3))
+                    .map_err(|_| "测试写入等待超时".to_owned())
+            },
+        ));
+        started_receiver.await.unwrap();
+        operation.abort();
+        assert!(operation.await.unwrap_err().is_cancelled());
+
+        let cloned = state.clone();
+        let mut next_mutation = tokio::spawn(async move {
+            let _configuration = cloned.mcp_configuration_lock.lock().await;
+            update_mcp_settings_locked(&cloned, false, false, 42_123, vec![])
+                .await
+                .unwrap();
+            crate::mcp::rotate_http_token(&cloned).await.unwrap()
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), &mut next_mutation)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            state.settings_service.lock().unwrap().get().mcp_http_port,
+            previous_port
+        );
+        let token = crate::mcp::get_http_token(&state).await.unwrap().unwrap();
+        assert!(token.as_str() == previous_token.as_str());
+        release.send(()).unwrap();
+        let next_token = tokio::time::timeout(Duration::from_secs(3), next_mutation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state.settings_service.lock().unwrap().get().mcp_http_port,
+            42_123
+        );
+        assert!(next_token.as_str() != previous_token.as_str());
+    }
+
+    #[tokio::test]
+    async fn 本地配置失败释放串行锁并可重试() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let guard = state.mcp_configuration_lock.clone().lock_owned().await;
+        let failed = run_local_agent_operation(guard, "测试任务异常", || {
+            Err::<(), _>("模拟配置提交失败".to_owned())
+        })
+        .await;
+        assert!(
+            matches!(failed, Err(AppError::Internal(message)) if message == "模拟配置提交失败")
+        );
+        let guard = state
+            .mcp_configuration_lock
+            .clone()
+            .try_lock_owned()
+            .unwrap();
+        assert!(run_local_agent_operation(guard, "测试任务异常", || Ok(()))
+            .await
+            .is_ok());
+    }
 
     fn future_policy_database_state() -> (std::path::PathBuf, AppState) {
         let directory =

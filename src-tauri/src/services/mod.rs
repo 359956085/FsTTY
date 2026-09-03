@@ -1,4 +1,5 @@
 mod app_update_service;
+mod autostart_service;
 mod command_history_service;
 mod connection_manager;
 mod connection_paths;
@@ -18,6 +19,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
 pub use app_update_service::AppUpdateService;
+pub use autostart_service::AutostartService;
 pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
@@ -31,6 +33,7 @@ pub use transfer_job_service::TransferJobService;
 #[derive(Clone)]
 pub struct AppState {
     pub app_update_service: AppUpdateService,
+    pub autostart_service: AutostartService,
     pub app_data_directory: PathBuf,
     pub log_directory: PathBuf,
     pub command_history_service: Arc<StdMutex<CommandHistoryService>>,
@@ -43,6 +46,8 @@ pub struct AppState {
     pub transfer_job_service: TransferJobService,
     pub mcp_command_policy_service: Arc<StdMutex<McpCommandPolicyService>>,
     pub mcp_http_runtime: crate::mcp::McpHttpRuntime,
+    // 覆盖设置、令牌及本地配置的完整事务，避免客户端写入过期端口或凭据。
+    pub mcp_configuration_lock: Arc<Mutex<()>>,
     pub mcp_audit_service: McpAuditService,
     pub mcp_operation_lock_service: McpOperationLockService,
 }
@@ -60,6 +65,7 @@ impl AppState {
         }
         Self {
             app_update_service: AppUpdateService::default(),
+            autostart_service: AutostartService::default(),
             app_data_directory: app_data_dir.clone(),
             log_directory: log_directory.clone(),
             command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
@@ -74,6 +80,7 @@ impl AppState {
             transfer_job_service: TransferJobService::default(),
             mcp_command_policy_service: Arc::new(StdMutex::new(policy_service)),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),
+            mcp_configuration_lock: Arc::new(Mutex::new(())),
             mcp_audit_service: McpAuditService::new(&log_directory),
             mcp_operation_lock_service: McpOperationLockService::new(&app_data_dir),
         }

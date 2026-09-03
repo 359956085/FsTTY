@@ -1,3 +1,4 @@
+mod autostart_commands;
 mod clipboard_commands;
 mod command_history_commands;
 mod lightweight_commands;
@@ -5,6 +6,7 @@ mod session_commands;
 mod settings_commands;
 mod update_commands;
 
+pub use autostart_commands::{get_autostart_state, set_autostart_enabled};
 pub use clipboard_commands::get_system_clipboard_content_kind;
 pub use command_history_commands::{
     add_command_history, clear_command_history, export_command_history,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
 import { SettingsPage } from "./SettingsPage";
@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     duplicateCount: 0,
     entryCount: 0,
   }),
+  getAppSettings: vi.fn(),
+  getAutostartState: vi.fn().mockResolvedValue(false),
   getMcpHttpClientConfig: vi.fn(),
   getMcpAgentPrompt: vi.fn(),
   getMcpPermissionCatalog: vi.fn(),
@@ -25,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   importCommandHistory: vi.fn(),
   listSessions: vi.fn(),
   openProjectLink: vi.fn(),
+  rotateMcpHttpToken: vi.fn(),
+  setAutostartEnabled: vi.fn(),
   updateMcpSettings: vi.fn(),
   updateLogSettings: vi.fn(),
   updateAppSettings: vi.fn(),
@@ -41,6 +45,8 @@ vi.mock("../../shared/api/client", () => ({
     clearCommandHistory: mocks.clearCommandHistory,
     exportCommandHistory: mocks.exportCommandHistory,
     getCommandHistorySettings: mocks.getCommandHistorySettings,
+    getAppSettings: mocks.getAppSettings,
+    getAutostartState: mocks.getAutostartState,
     getMcpHttpClientConfig: mocks.getMcpHttpClientConfig,
     getMcpAgentPrompt: mocks.getMcpAgentPrompt,
     getMcpPermissionCatalog: mocks.getMcpPermissionCatalog,
@@ -49,6 +55,8 @@ vi.mock("../../shared/api/client", () => ({
     importCommandHistory: mocks.importCommandHistory,
     listSessions: mocks.listSessions,
     openProjectLink: mocks.openProjectLink,
+    rotateMcpHttpToken: mocks.rotateMcpHttpToken,
+    setAutostartEnabled: mocks.setAutostartEnabled,
     updateMcpSettings: mocks.updateMcpSettings,
     updateCommandHistoryDeduplication: mocks.updateCommandHistoryDeduplication,
     updateLogSettings: mocks.updateLogSettings,
@@ -74,10 +82,17 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-afterEach(() => {
-  cleanup();
-  vi.clearAllMocks();
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.getAutostartState.mockResolvedValue(false);
+  mocks.getCommandHistorySettings.mockResolvedValue({
+    deduplicate: false,
+    duplicateCount: 0,
+    entryCount: 0,
+  });
 });
+
+afterEach(cleanup);
 
 const settings: AppSettings = {
   allowRemoteClipboardWrite: false,
@@ -112,7 +127,61 @@ const updater: AppUpdaterController = {
   versionError: null,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 describe("SettingsPage 本地 Agent 配置", () => {
+  it("自启开关等待系统读取及保存完成，返回页面时重新读取", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    const initial = deferred<boolean>();
+    const save = deferred<boolean>();
+    mocks.getAutostartState.mockReturnValueOnce(initial.promise);
+    mocks.setAutostartEnabled.mockReturnValueOnce(save.promise);
+    const onChange = vi.fn();
+    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    const toggle = screen.getByRole("switch", { name: "settings.autostart" }) as HTMLInputElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-busy")).toBe("true");
+    await act(async () => initial.resolve(false));
+    expect(toggle.disabled).toBe(false);
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(toggle.disabled).toBe(true);
+    expect(mocks.setAutostartEnabled).toHaveBeenCalledTimes(1);
+    expect(mocks.setAutostartEnabled).toHaveBeenCalledWith(true);
+    await act(async () => save.resolve(true));
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    fireEvent.click(screen.getByRole("button", { name: "settings.general" }));
+    const restored = screen.getByRole("switch", { name: "settings.autostart" }) as HTMLInputElement;
+    await waitFor(() => expect(restored.disabled).toBe(false));
+    expect(restored.checked).toBe(false);
+    expect(mocks.getAutostartState).toHaveBeenCalledTimes(2);
+  });
+
+  it("自启读取失败禁用开关并提供重新读取按钮", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.getAutostartState.mockRejectedValueOnce(new Error("启动项读取失败"));
+    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("启动项读取失败");
+    const toggle = screen.getByRole("switch", { name: "settings.autostart" }) as HTMLInputElement;
+    expect(toggle.disabled).toBe(true);
+    expect(screen.getByText("settings.autostartUnknown")).not.toBeNull();
+    mocks.getAutostartState.mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole("button", { name: "settings.autostartRetry" }));
+    await waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.checked).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("日志分组保存 MCP 工具输入开关并阻止重复提交", async () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
@@ -225,7 +294,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     await waitFor(() => expect(switchElement.disabled).toBe(false));
   });
 
-  it("将提示词放入 stdio 和 HTTP，并为 stdio 单列一键设置", () => {
+  it("stdio 和 HTTP 各自提供提示词、复制配置及一键本地配置", () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
@@ -249,11 +318,56 @@ describe("SettingsPage 本地 Agent 配置", () => {
       within(httpPanel!).queryByRole("button", { name: "settings.localAgentOpen" }),
     ).toBeNull();
     expect(
+      within(httpPanel!).getByRole("button", { name: "settings.localAgentHttpOpen" }),
+    ).not.toBeNull();
+    expect(
       within(stdioPanel!).getByRole("button", { name: "settings.mcpCopyConfig" }),
     ).not.toBeNull();
     expect(
       within(httpPanel!).getByRole("button", { name: "settings.mcpCopyConfig" }),
     ).not.toBeNull();
+  });
+
+  it("HTTP 弹窗打开时只检测，提交期间禁用配置操作且不修改自启", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    mocks.inspectLocalAgentSetup.mockResolvedValueOnce([
+      { detail: null, installed: true, state: "missing", target: "claude" },
+    ]);
+    const configured = [{
+      target: "claude" as const,
+      mcpStatus: "configured" as const,
+      promptStatus: "configured" as const,
+      message: null,
+    }];
+    const request = deferred<typeof configured>();
+    const enabledSettings = { ...settings, mcpEnabled: true, mcpHttpEnabled: true };
+    mocks.configureLocalAgents.mockReturnValueOnce(request.promise);
+    mocks.getAppSettings.mockResolvedValueOnce(enabledSettings);
+    const onChange = vi.fn();
+    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    fireEvent.click(screen.getByRole("button", { name: "settings.localAgentHttpOpen" }));
+    await screen.findByRole("checkbox", { name: /Claude/ });
+    expect(mocks.inspectLocalAgentSetup).toHaveBeenCalledWith("http");
+    expect(mocks.configureLocalAgents).not.toHaveBeenCalled();
+    expect(mocks.updateMcpSettings).not.toHaveBeenCalled();
+    expect(screen.getByText("settings.localAgentHttpSecretHint")).not.toBeNull();
+    const configure = screen.getByRole("button", { name: "settings.localAgentConfigure" }) as HTMLButtonElement;
+    await waitFor(() => expect(configure.disabled).toBe(false));
+    fireEvent.click(configure);
+    fireEvent.click(configure);
+    await waitFor(() => expect(mocks.configureLocalAgents).toHaveBeenCalledTimes(1));
+    expect(mocks.configureLocalAgents).toHaveBeenCalledWith(["claude"], "http");
+    expect(configure.disabled).toBe(true);
+    expect((screen.getByLabelText("settings.mcpHttpPort") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "settings.mcpResetToken" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => request.resolve(configured));
+    expect(screen.getByText("settings.localAgentHttpCompletedHint")).not.toBeNull();
+    expect(onChange).toHaveBeenCalledWith(enabledSettings);
+    expect(mocks.updateMcpSettings).not.toHaveBeenCalled();
+    expect(mocks.setAutostartEnabled).not.toHaveBeenCalled();
+    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 
   it("stdio 和 HTTP 配置均可选择 dsh 并显示对应提示", async () => {
@@ -370,7 +484,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
       mocks.configureLocalAgents.mock.invocationCallOrder[0],
     );
     expect(onChange).toHaveBeenCalledWith(enabledSettings);
-    expect(mocks.writeText).toHaveBeenCalledWith("FsTTY prompt");
+    await waitFor(() => expect(mocks.writeText).toHaveBeenCalledWith("FsTTY prompt"));
     expect(screen.getByText("settings.localAgentCursorPromptCopied")).not.toBeNull();
   });
 

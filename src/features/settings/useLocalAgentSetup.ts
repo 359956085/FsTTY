@@ -8,6 +8,7 @@ import type {
   LocalAgentConfigureResult,
   LocalAgentTarget,
   McpGroupPermission,
+  McpTransport,
 } from "../../shared/api/types";
 import { createLatestRequestGuard } from "../../shared/async/latestRequest";
 
@@ -24,19 +25,23 @@ const manualPromptCopyFailedKeys: Partial<Record<LocalAgentTarget, string>> = {
 };
 
 interface UseLocalAgentSetupOptions {
+  configurationBusyRef: { current: boolean };
   getSavedPermissions: () => McpGroupPermission[];
   onChange: (settings: AppSettings) => void;
-  settings: AppSettings;
+  prepareConfiguration: (transport: McpTransport) => Promise<AppSettings>;
   translate: (key: string) => string;
 }
 
 export function useLocalAgentSetup({
+  configurationBusyRef,
   getSavedPermissions,
   onChange,
-  settings,
+  prepareConfiguration,
   translate,
 }: UseLocalAgentSetupOptions) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [transport, setTransport] = useState<McpTransport>("stdio");
+  const transportRef = useRef<McpTransport>("stdio");
   const [capabilities, setCapabilities] = useState<LocalAgentCapability[]>([]);
   const [results, setResults] = useState<LocalAgentConfigureResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,8 +50,10 @@ export function useLocalAgentSetup({
   const inspectRequestRef = useRef(createLatestRequestGuard());
   const configureRequestRef = useRef(createLatestRequestGuard());
   const configuringRef = useRef(false);
+  const mountedRef = useRef(false);
 
   const cancel = useCallback(() => {
+    if (!mountedRef.current || configuringRef.current) return;
     inspectRequestRef.current.invalidate();
     configureRequestRef.current.invalidate();
     configuringRef.current = false;
@@ -55,23 +62,33 @@ export function useLocalAgentSetup({
     setConfiguring(false);
   }, []);
 
-  useEffect(
-    () => () => {
-      inspectRequestRef.current.invalidate();
-      configureRequestRef.current.invalidate();
+  useEffect(() => {
+    mountedRef.current = true;
+    const inspections = inspectRequestRef.current;
+    const configurations = configureRequestRef.current;
+    return () => {
+      mountedRef.current = false;
+      inspections.invalidate();
+      configurations.invalidate();
       configuringRef.current = false;
-    },
-    [],
-  );
+      configurationBusyRef.current = false;
+    };
+  }, [configurationBusyRef]);
 
-  const open = useCallback(async () => {
+  const open = useCallback(async (nextTransport: McpTransport = "stdio") => {
+    if (!mountedRef.current || configuringRef.current) return;
     const requestId = inspectRequestRef.current.begin();
+    transportRef.current = nextTransport;
+    setTransport(nextTransport);
     setDialogOpen(true);
     setLoading(true);
+    setCapabilities([]);
     setResults([]);
     setError(null);
     try {
-      const nextCapabilities = await api.inspectLocalAgentSetup();
+      const nextCapabilities = nextTransport === "http"
+        ? await api.inspectLocalAgentSetup("http")
+        : await api.inspectLocalAgentSetup();
       if (inspectRequestRef.current.isCurrent(requestId)) {
         setCapabilities(nextCapabilities);
       }
@@ -89,20 +106,24 @@ export function useLocalAgentSetup({
 
   const configure = useCallback(
     async (targets: LocalAgentTarget[]) => {
-      if (configuringRef.current || targets.length === 0) {
+      if (!mountedRef.current || configuringRef.current || configurationBusyRef.current || loading || !dialogOpen || targets.length === 0) {
         return;
       }
       const requestId = configureRequestRef.current.begin();
       configuringRef.current = true;
+      configurationBusyRef.current = true;
+      const selectedTransport = transportRef.current;
       setConfiguring(true);
       setError(null);
       setResults([]);
       try {
-        if (!settings.mcpEnabled) {
+        const currentSettings = await prepareConfiguration(selectedTransport);
+        if (!configureRequestRef.current.isCurrent(requestId)) return;
+        if (selectedTransport === "stdio" && !currentSettings.mcpEnabled) {
           const nextSettings = await api.updateMcpSettings(
             true,
-            settings.mcpHttpEnabled,
-            settings.mcpHttpPort,
+            currentSettings.mcpHttpEnabled,
+            currentSettings.mcpHttpPort,
             getSavedPermissions(),
           );
           if (!configureRequestRef.current.isCurrent(requestId)) {
@@ -110,7 +131,24 @@ export function useLocalAgentSetup({
           }
           onChange(nextSettings);
         }
-        let nextResults = await api.configureLocalAgents(targets);
+        let nextResults: LocalAgentConfigureResult[];
+        try {
+          nextResults = selectedTransport === "http"
+            ? await api.configureLocalAgents(targets, "http")
+            : await api.configureLocalAgents(targets);
+        } finally {
+          // 后端可能已启用 HTTP，再遇到单个配置文件失败；回读真实开关，不猜测回滚状态。
+          if (selectedTransport === "http" && configureRequestRef.current.isCurrent(requestId)) {
+            try {
+              const actual = await api.getAppSettings();
+              if (configureRequestRef.current.isCurrent(requestId)) onChange(actual);
+            } catch (nextError) {
+              if (configureRequestRef.current.isCurrent(requestId)) {
+                setError(resolveApiError(nextError, translate("settings.localAgentSettingsRefreshFailed")));
+              }
+            }
+          }
+        }
         if (!configureRequestRef.current.isCurrent(requestId)) {
           return;
         }
@@ -126,7 +164,9 @@ export function useLocalAgentSetup({
         );
         if (manualTargets.size > 0) {
           try {
-            await writeText(await api.getMcpAgentPrompt());
+            const prompt = await api.getMcpAgentPrompt();
+            if (!configureRequestRef.current.isCurrent(requestId)) return;
+            await writeText(prompt);
             nextResults = nextResults.map((result) => {
               const messageKey = manualPromptCopiedKeys[result.target];
               return manualTargets.has(result.target) && messageKey
@@ -158,11 +198,12 @@ export function useLocalAgentSetup({
       } finally {
         if (configureRequestRef.current.isCurrent(requestId)) {
           configuringRef.current = false;
+          configurationBusyRef.current = false;
           setConfiguring(false);
         }
       }
     },
-    [getSavedPermissions, onChange, settings, translate],
+    [configurationBusyRef, dialogOpen, getSavedPermissions, loading, onChange, prepareConfiguration, translate],
   );
 
   return {
@@ -175,5 +216,6 @@ export function useLocalAgentSetup({
     loading,
     open,
     results,
+    transport,
   };
 }
