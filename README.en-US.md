@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.3.1-2563EB)
+![Version](https://img.shields.io/badge/version-1.4.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -96,6 +96,8 @@ The configuration generator supports dsh (DeepSeek Harness). Install a compatibl
 
 ## One-click Local Agent Setup
 
+The stdio and HTTP switches work independently: disabling one does not stop the other. One-click setup enables only the selected transport and preserves the other switch.
+
 | Agent | MCP configuration | Global instructions |
 | --- | --- | --- |
 | Codex | Merged automatically | Merged into `AGENTS.md` |
@@ -109,7 +111,7 @@ The configuration generator supports dsh (DeepSeek Harness). Install a compatibl
 
 Automatic setup replaces only the selected client's `fstty` node and the `fstty:begin/end` instruction block. Old transport fields are removed; other servers and user settings are preserved. Damaged files, unknown structures, OpenCode dual-file conflicts, and detected external edits are not overwritten. A failed atomic commit preserves the original file and removes the temporary file. Individual failures do not roll back other successful steps, and repeated runs do not duplicate content.
 
-Opening the HTTP dialog only inspects clients. Applying first waits for the port to be saved, then enables MCP and HTTP, and writes client files only after the listener starts successfully. Saved permissions are reused without granting additional access. Port changes, token operations, and local configuration writes share a serialized transaction; closing the window does not release an in-progress file write early.
+Opening the HTTP dialog only inspects clients. Applying first waits for the port to be saved, then enables HTTP while preserving the stdio switch, and writes client files only after the listener starts successfully. Saved permissions are reused without granting additional access. Port changes, token operations, and local configuration writes share a serialized transaction; closing the window does not release an in-progress file write early.
 
 Windows HTTP listeners use exclusive port binding so an existing loopback listener cannot cause a false successful startup. The listener still covers all IPv4 interfaces; see [Microsoft's socket exclusivity reference](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse).
 

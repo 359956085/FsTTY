@@ -145,9 +145,7 @@ pub fn run() {
                     .lock()
                     .ok()
                     .map(|service| service.get());
-                if let Some(settings) =
-                    settings.filter(|settings| settings.mcp_enabled && settings.mcp_http_enabled)
-                {
+                if let Some(settings) = settings.filter(|settings| settings.mcp_http_enabled) {
                     if let Ok(token) = crate::mcp::get_or_create_http_token(&startup_state).await {
                         if let Err(error) = startup_state
                             .mcp_http_runtime

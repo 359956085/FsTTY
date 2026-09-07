@@ -134,6 +134,47 @@ function deferred<T>() {
 }
 
 describe("SettingsPage 本地 Agent 配置", () => {
+  it.each([false, true])("stdio 关闭时 HTTP 开关仍可操作，原状态为 %s", async (httpEnabled) => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    const current = { ...settings, mcpHttpEnabled: httpEnabled };
+    const next = { ...current, mcpHttpEnabled: !httpEnabled };
+    mocks.updateMcpSettings.mockResolvedValueOnce(next);
+    const onChange = vi.fn();
+    const page = render(<SettingsPage onChange={onChange} settings={current} updater={updater} />);
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    const httpPanel = screen.getByRole("heading", { name: "settings.mcpHttp" }).closest("section")!;
+    const toggle = within(httpPanel).getByRole("switch") as HTMLInputElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.checked).toBe(httpEnabled);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(next));
+    expect(mocks.updateMcpSettings).toHaveBeenCalledWith(false, !httpEnabled, 37_653, []);
+    page.rerender(<SettingsPage onChange={onChange} settings={next} updater={updater} />);
+    expect(toggle.checked).toBe(!httpEnabled);
+    expect(toggle.disabled).toBe(false);
+  });
+
+  it("关闭 stdio 时保留已启用的 HTTP", async () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    const current = { ...settings, mcpEnabled: true, mcpHttpEnabled: true };
+    const next = { ...current, mcpEnabled: false };
+    mocks.updateMcpSettings.mockResolvedValueOnce(next);
+    const onChange = vi.fn();
+    const page = render(<SettingsPage onChange={onChange} settings={current} updater={updater} />);
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    const stdioPanel = screen.getByRole("heading", { name: "settings.mcpEnabled" }).closest("section")!;
+    fireEvent.click(within(stdioPanel).getByRole("switch"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(next));
+    expect(mocks.updateMcpSettings).toHaveBeenCalledWith(false, true, 37_653, []);
+    page.rerender(<SettingsPage onChange={onChange} settings={next} updater={updater} />);
+    const httpPanel = screen.getByRole("heading", { name: "settings.mcpHttp" }).closest("section")!;
+    const toggle = within(httpPanel).getByRole("switch") as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+  });
+
   it("自启开关等待系统读取及保存完成，返回页面时重新读取", async () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
@@ -341,7 +382,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
       message: null,
     }];
     const request = deferred<typeof configured>();
-    const enabledSettings = { ...settings, mcpEnabled: true, mcpHttpEnabled: true };
+    const enabledSettings = { ...settings, mcpHttpEnabled: true };
     mocks.configureLocalAgents.mockReturnValueOnce(request.promise);
     mocks.getAppSettings.mockResolvedValueOnce(enabledSettings);
     const onChange = vi.fn();

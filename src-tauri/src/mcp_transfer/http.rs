@@ -2,7 +2,7 @@ use super::{
     range::parse_range_headers, ticket::TransferTicketKind, McpTransferRuntime,
     DOWNLOAD_PIPE_BYTES, TRANSFER_IDLE_TIMEOUT,
 };
-use crate::mcp::{authorized_session, McpAccessError, Permission};
+use crate::mcp::{authorized_session, McpAccessError, McpTransport, Permission};
 use crate::models::AppError;
 use axum::{
     body::Body,
@@ -102,6 +102,7 @@ async fn download_response(
     };
     let session = match authorized_session(
         &runtime.inner.state,
+        McpTransport::Http,
         &ticket.session_id,
         Permission::FileTransfer,
     )
@@ -372,6 +373,7 @@ pub(super) async fn upload_file(
     };
     let session = match authorized_session(
         &runtime.inner.state,
+        McpTransport::Http,
         &ticket.session_id,
         Permission::FileTransfer,
     )

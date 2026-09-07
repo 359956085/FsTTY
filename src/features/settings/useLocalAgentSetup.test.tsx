@@ -48,7 +48,7 @@ const capabilities: LocalAgentCapability[] = [
 const configured: LocalAgentConfigureResult[] = [
   { target: "codex", mcpStatus: "configured", promptStatus: "configured", message: null },
 ];
-const httpSettings = { ...settings, mcpEnabled: true, mcpHttpEnabled: true };
+const httpSettings = { ...settings, mcpHttpEnabled: true };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -104,6 +104,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("HTTP 本地一键配置控制器", () => {
+  it("HTTP 一键配置后 stdio 仍关闭，再配置 stdio 保留 HTTP", async () => {
+    const { result } = renderSettings();
+    await act(async () => result.current.local.open("http"));
+    await act(async () => result.current.local.configure(["codex"]));
+    expect(result.current.currentSettings.mcpEnabled).toBe(false);
+    expect(result.current.currentSettings.mcpHttpEnabled).toBe(true);
+    expect(apiMocks.updateMcpSettings).not.toHaveBeenCalled();
+    await act(async () => result.current.local.cancel());
+    await act(async () => result.current.local.open("stdio"));
+    await act(async () => result.current.local.configure(["codex"]));
+    expect(apiMocks.updateMcpSettings).toHaveBeenCalledWith(true, true, 37_653, []);
+    expect(result.current.currentSettings.mcpEnabled).toBe(true);
+    expect(result.current.currentSettings.mcpHttpEnabled).toBe(true);
+  });
+
   it("打开弹窗仅检测，不启用服务、写配置或复制凭据", async () => {
     const { result } = renderSettings();
     await act(async () => result.current.local.open("http"));

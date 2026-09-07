@@ -342,7 +342,7 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
                 <input
                   checked={settings.mcpHttpEnabled}
                   className="settings-auto-update-toggle"
-                  disabled={savingMcp || configuringLocalAgents || !settings.mcpEnabled}
+                  disabled={savingMcp || configuringLocalAgents}
                   id="mcp-http-enabled"
                   onChange={(event) =>
                     void saveMcpSettings(

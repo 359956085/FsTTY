@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub record_mcp_tool_inputs: bool,
     #[serde(default)]
     pub ignored_update_version: Option<String>,
+    // 保留旧字段名兼容配置文件；此开关仅控制 stdio。
     #[serde(default)]
     pub mcp_enabled: bool,
     #[serde(default)]

@@ -73,10 +73,12 @@ impl SettingsService {
     }
 
     pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
-        // MCP 独立进程只从设置文件同步通用运行时字段；授权由独立数据库实时读取。
+        // MCP 独立进程同步传输开关和通用运行时字段；分组授权由独立数据库实时读取。
         let store = read_store(&self.store_path)?
             .ok_or_else(|| AppError::Persistence("MCP 权限设置文件不存在".to_owned()))?;
         self.settings.language = store.settings.language;
+        self.settings.mcp_enabled = store.settings.mcp_enabled;
+        self.settings.mcp_http_enabled = store.settings.mcp_http_enabled;
         if !self.mcp_permissions_externalized {
             self.settings.mcp_group_permissions = store.settings.mcp_group_permissions;
         }
@@ -669,8 +671,8 @@ mod tests {
         assert!(settings.mcp_group_permissions[0].command_execute);
         assert_eq!(settings.language, Language::ZhCn);
         assert!(settings.record_mcp_tool_inputs);
-        assert!(!settings.mcp_enabled);
-        assert!(!settings.mcp_http_enabled);
+        assert!(settings.mcp_enabled);
+        assert!(settings.mcp_http_enabled);
         assert_eq!(settings.mcp_http_port, 40_000);
         assert_eq!(settings.update_proxy, "socks5://127.0.0.1:7890");
         let _ = fs::remove_dir_all(directory);

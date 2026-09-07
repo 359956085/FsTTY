@@ -43,7 +43,7 @@ use access::{
     authorized_command_session, authorized_session_context, command_policy_response,
     current_mcp_settings, mcp_access_error, mcp_error, permission,
 };
-pub(crate) use access::{authorized_session, McpAccessError, Permission};
+pub(crate) use access::{authorized_session, McpAccessError, McpTransport, Permission};
 #[cfg(test)]
 use access::{localized_access_error, localized_unsupported_syntax_error, AccessIssue};
 use audit::{command_audit_input, redact_audit_value, write_file_audit_input, AuditGuard};
@@ -80,7 +80,7 @@ pub async fn run_stdio(app_data_dir: std::path::PathBuf) -> Result<(), String> {
     {
         return Err("MCP 服务未启用".to_owned());
     }
-    let service = McpService::new(state, "stdio")
+    let service = McpService::new(state, McpTransport::Stdio)
         .serve(stdio())
         .await
         .map_err(|error| error.to_string())?;
@@ -95,7 +95,7 @@ pub async fn run_stdio(app_data_dir: std::path::PathBuf) -> Result<(), String> {
 pub struct McpService {
     state: AppState,
     connections: ConnectionCache,
-    transport: &'static str,
+    transport: McpTransport,
     transfer_runtime: Option<McpTransferRuntime>,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
@@ -236,7 +236,7 @@ fn default_read_limit() -> usize {
 
 #[tool_router]
 impl McpService {
-    pub fn new(state: AppState, transport: &'static str) -> Self {
+    pub(crate) fn new(state: AppState, transport: McpTransport) -> Self {
         let mut tool_router = Self::tool_router();
         tool_router.remove_route("create_remote_file_download_link");
         tool_router.remove_route("create_remote_file_upload_link");
@@ -256,7 +256,7 @@ impl McpService {
         Self {
             state,
             connections: ConnectionCache::default(),
-            transport: "http",
+            transport: McpTransport::Http,
             transfer_runtime: Some(transfer_runtime),
             tool_router,
         }
@@ -294,7 +294,7 @@ impl McpService {
     ) -> AuditGuard {
         AuditGuard::new(
             self.state.mcp_audit_service.clone(),
-            self.transport,
+            self.transport.as_str(),
             tool,
             session_id.map(ToOwned::to_owned),
             input,
@@ -342,7 +342,7 @@ impl McpService {
     async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
         let audit = self.audit("list_sessions", None, &json!({}));
         let settings = self.settings()?;
-        if !settings.mcp_enabled {
+        if !self.transport.is_enabled(&settings) {
             return Ok(tool_error("MCP 服务未启用"));
         }
         let groups = self
@@ -526,10 +526,14 @@ impl McpService {
         Parameters(args): Parameters<SessionArgs>,
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("get_command_policy", Some(&args.session_id), &args);
-        let (_, access, _) =
-            authorized_session_context(&self.state, &args.session_id, Permission::Command)
-                .await
-                .map_err(mcp_access_error)?;
+        let (_, access, _) = authorized_session_context(
+            &self.state,
+            self.transport,
+            &args.session_id,
+            Permission::Command,
+        )
+        .await
+        .map_err(mcp_access_error)?;
         let response = command_policy_response(&args.session_id, &access);
         audit.succeed();
         Ok(structured_json_result(&response))
@@ -920,7 +924,7 @@ impl McpService {
         session_id: &str,
         required: Permission,
     ) -> Result<String, McpError> {
-        let session = authorized_session(&self.state, session_id, required)
+        let session = authorized_session(&self.state, self.transport, session_id, required)
             .await
             .map_err(mcp_access_error)?;
         self.connection_for_session(session_id, session).await
@@ -931,7 +935,7 @@ impl McpService {
         session_id: &str,
         command: &str,
     ) -> Result<String, McpError> {
-        let session = authorized_command_session(&self.state, session_id, command)
+        let session = authorized_command_session(&self.state, self.transport, session_id, command)
             .await
             .map_err(mcp_access_error)?;
         self.connection_for_session(session_id, session).await
@@ -1054,9 +1058,9 @@ impl ServerHandler for McpService {
             .map(|settings| settings.language)
             .unwrap_or(Language::ZhCn);
         let english = matches!(language, Language::EnUs);
-        let transfer_note = if self.transport == "http" && english {
+        let transfer_note = if self.transport == McpTransport::Http && english {
             "HTTP file transfer tools return five-minute links that act as credentials."
-        } else if self.transport == "http" {
+        } else if self.transport == McpTransport::Http {
             "HTTP 文件传输工具返回 5 分钟有效链接；链接本身即凭据。"
         } else if english {
             "stdio local file transfers can only access Roots declared by the client."
@@ -1718,7 +1722,7 @@ mod tests {
             .update_mcp(true, false, 37_653, Vec::new())
             .expect("保存 MCP 设置失败");
         let state = AppState::new(directory.clone());
-        let service = McpService::new(state, "stdio");
+        let service = McpService::new(state, McpTransport::Stdio);
 
         assert_eq!(
             service.settings().expect("读取中文设置失败").language,
@@ -1742,7 +1746,7 @@ mod tests {
             .update_mcp(true, false, 37_653, Vec::new())
             .expect("保存 MCP 设置失败");
         let state = AppState::new(directory.clone());
-        let service = McpService::new(state, "stdio");
+        let service = McpService::new(state, McpTransport::Stdio);
 
         service
             .audit(
@@ -1779,6 +1783,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 两种传输独立鉴权并热加载各自开关() {
+        let directory = std::env::temp_dir().join(format!("fstty-mcp-switches-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let session_id = Uuid::new_v4().to_string();
+        write_test_session(&directory, &session_id);
+        let mut writer = SettingsService::load(&directory);
+        let mut permission = mcp_permission(true);
+        permission.file_transfer = true;
+        writer
+            .update_mcp(true, true, 37_653, vec![permission])
+            .unwrap();
+        let stdio = McpService::new(AppState::new(directory.clone()), McpTransport::Stdio);
+        let http_state = AppState::new(directory.clone());
+        let transfers =
+            McpTransferRuntime::new(http_state.clone(), 37_653, CancellationToken::new());
+        let http = McpService::new_http(http_state, transfers);
+
+        for (stdio_enabled, http_enabled) in
+            [(false, true), (true, false), (false, false), (true, true)]
+        {
+            writer
+                .update_mcp_transport(stdio_enabled, http_enabled, 37_653)
+                .unwrap();
+            for (service, enabled) in [(&stdio, stdio_enabled), (&http, http_enabled)] {
+                let sessions = service.list_sessions().await.unwrap();
+                assert_eq!(sessions.is_error.unwrap_or(false), !enabled);
+                let policy = service
+                    .get_command_policy(Parameters(SessionArgs {
+                        session_id: session_id.clone(),
+                    }))
+                    .await;
+                assert_eq!(policy.is_ok(), enabled);
+                let command = authorized_command_session(
+                    &service.state,
+                    service.transport,
+                    &session_id,
+                    "pwd",
+                )
+                .await;
+                assert_eq!(command.is_ok(), enabled);
+                let transfer = authorized_session(
+                    &service.state,
+                    service.transport,
+                    &session_id,
+                    Permission::FileTransfer,
+                )
+                .await;
+                assert_eq!(transfer.is_ok(), enabled);
+                if !enabled {
+                    assert!(matches!(command, Err(McpAccessError::Forbidden(_))));
+                    assert!(matches!(transfer, Err(McpAccessError::Forbidden(_))));
+                }
+            }
+        }
+        drop(http);
+        drop(stdio);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
     async fn stdio和http相同服务实例热加载命令权限() {
         let directory =
             std::env::temp_dir().join(format!("fstty-mcp-hot-reload-{}", Uuid::new_v4()));
@@ -1791,16 +1855,28 @@ mod tests {
             .expect("保存初始权限失败");
 
         let state = AppState::new(directory.clone());
-        let stdio = McpService::new(state.clone(), "stdio");
+        let stdio = McpService::new(state.clone(), McpTransport::Stdio);
         let transfers = McpTransferRuntime::new(state.clone(), 37_653, CancellationToken::new());
         let http = McpService::new_http(state, transfers);
 
         assert!(matches!(
-            authorized_session(&stdio.state, &session_id, Permission::Command).await,
+            authorized_session(
+                &stdio.state,
+                stdio.transport,
+                &session_id,
+                Permission::Command
+            )
+            .await,
             Err(McpAccessError::Forbidden(_))
         ));
         assert!(matches!(
-            authorized_session(&http.state, &session_id, Permission::Command).await,
+            authorized_session(
+                &http.state,
+                http.transport,
+                &session_id,
+                Permission::Command
+            )
+            .await,
             Err(McpAccessError::Forbidden(_))
         ));
         assert!(stdio
@@ -1817,16 +1893,22 @@ mod tests {
             .expect("策略服务应可锁定")
             .replace_all(vec![mcp_permission(true)])
             .expect("授予命令权限失败");
-        assert!(
-            authorized_session(&stdio.state, &session_id, Permission::Command)
-                .await
-                .is_ok()
-        );
-        assert!(
-            authorized_session(&http.state, &session_id, Permission::Command)
-                .await
-                .is_ok()
-        );
+        assert!(authorized_session(
+            &stdio.state,
+            stdio.transport,
+            &session_id,
+            Permission::Command
+        )
+        .await
+        .is_ok());
+        assert!(authorized_session(
+            &http.state,
+            http.transport,
+            &session_id,
+            Permission::Command
+        )
+        .await
+        .is_ok());
 
         stdio
             .state
@@ -1836,11 +1918,23 @@ mod tests {
             .replace_all(vec![mcp_permission(false)])
             .expect("撤销命令权限失败");
         assert!(matches!(
-            authorized_session(&stdio.state, &session_id, Permission::Command).await,
+            authorized_session(
+                &stdio.state,
+                stdio.transport,
+                &session_id,
+                Permission::Command
+            )
+            .await,
             Err(McpAccessError::Forbidden(_))
         ));
         assert!(matches!(
-            authorized_session(&http.state, &session_id, Permission::Command).await,
+            authorized_session(
+                &http.state,
+                http.transport,
+                &session_id,
+                Permission::Command
+            )
+            .await,
             Err(McpAccessError::Forbidden(_))
         ));
         let _ = std::fs::remove_dir_all(directory);
@@ -1872,7 +1966,7 @@ mod tests {
             .expect("保存高级命令策略失败");
 
         let state = AppState::new(directory.clone());
-        let stdio = McpService::new(state.clone(), "stdio");
+        let stdio = McpService::new(state.clone(), McpTransport::Stdio);
         let transfers = McpTransferRuntime::new(state.clone(), 37_653, CancellationToken::new());
         let http = McpService::new_http(state, transfers);
         for service in [&stdio, &http] {
@@ -1889,25 +1983,36 @@ mod tests {
                     .expect("应返回结构化策略")["advancedPolicy"]["effectiveMode"],
                 "allow"
             );
-            assert!(
-                authorized_command_session(&service.state, &session_id, "git status --short")
-                    .await
-                    .is_ok()
-            );
             assert!(authorized_command_session(
                 &service.state,
+                service.transport,
+                &session_id,
+                "git status --short"
+            )
+            .await
+            .is_ok());
+            assert!(authorized_command_session(
+                &service.state,
+                service.transport,
                 &session_id,
                 "git status --short && git status --branch"
             )
             .await
             .is_ok());
             assert!(matches!(
-                authorized_command_session(&service.state, &session_id, "rm -rf /tmp/demo").await,
+                authorized_command_session(
+                    &service.state,
+                    service.transport,
+                    &session_id,
+                    "rm -rf /tmp/demo"
+                )
+                .await,
                 Err(McpAccessError::Forbidden(_))
             ));
             assert!(matches!(
                 authorized_command_session(
                     &service.state,
+                    service.transport,
                     &session_id,
                     "git status --short && rm -rf /tmp/demo"
                 )
@@ -1915,7 +2020,13 @@ mod tests {
                 Err(McpAccessError::Forbidden(_))
             ));
             assert!(matches!(
-                authorized_command_session(&service.state, &session_id, "echo $(pwd)").await,
+                authorized_command_session(
+                    &service.state,
+                    service.transport,
+                    &session_id,
+                    "echo $(pwd)"
+                )
+                .await,
                 Err(McpAccessError::UnsupportedSyntax {
                     kind:
                         crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
@@ -1946,14 +2057,23 @@ mod tests {
             "exclude"
         );
         assert!(matches!(
-            authorized_command_session(&stdio.state, &session_id, "rm -rf /tmp/demo").await,
+            authorized_command_session(
+                &stdio.state,
+                stdio.transport,
+                &session_id,
+                "rm -rf /tmp/demo"
+            )
+            .await,
             Err(McpAccessError::Forbidden(_))
         ));
-        assert!(
-            authorized_command_session(&stdio.state, &session_id, "git status --short")
-                .await
-                .is_ok()
-        );
+        assert!(authorized_command_session(
+            &stdio.state,
+            stdio.transport,
+            &session_id,
+            "git status --short"
+        )
+        .await
+        .is_ok());
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -1977,7 +2097,7 @@ mod tests {
 
         let state = AppState::new(directory.clone());
         assert!(matches!(
-            authorized_command_session(&state, &session_id, "pwd").await,
+            authorized_command_session(&state, McpTransport::Stdio, &session_id, "pwd").await,
             Err(McpAccessError::Internal(_))
         ));
         let _ = std::fs::remove_dir_all(directory);
@@ -2060,7 +2180,7 @@ mod tests {
     fn 不同传输只暴露适用的文件传输工具() {
         let directory = std::env::temp_dir().join(format!("fstty-mcp-tools-{}", Uuid::new_v4()));
         let state = AppState::new(directory.clone());
-        let stdio = McpService::new(state.clone(), "stdio");
+        let stdio = McpService::new(state.clone(), McpTransport::Stdio);
         assert!(stdio.tool_router.has_route("get_permission_guide"));
         assert!(stdio.tool_router.has_route("get_command_policy"));
         assert!(stdio.tool_router.has_route("search_remote_file"));

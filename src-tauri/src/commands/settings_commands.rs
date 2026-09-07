@@ -190,7 +190,7 @@ async fn update_mcp_settings_locked(
         .lock()
         .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
         .replace_all(group_permissions)?;
-    let http_token = if enabled && http_enabled {
+    let http_token = if http_enabled {
         match crate::mcp::get_or_create_http_token(state).await {
             Ok(token) => Some(token),
             Err(error) => {
@@ -221,7 +221,7 @@ async fn update_mcp_settings_locked(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
         .set_mcp_permissions_in_memory(permissions);
-    if settings.mcp_enabled && settings.mcp_http_enabled {
+    if settings.mcp_http_enabled {
         let token = http_token
             .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
         let runtime_result =
@@ -403,16 +403,18 @@ pub async fn inspect_local_agent_setup(
 ) -> Result<Vec<crate::local_agent_setup::LocalAgentCapability>, AppError> {
     let configuration = state.mcp_configuration_lock.clone().lock_owned().await;
     let http = if transport.unwrap_or_default() == LocalAgentTransport::Http {
-        let port = state
+        let current = state
             .settings_service
             .lock()
             .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-            .get()
-            .mcp_http_port;
+            .get();
         // 检测只读系统凭据；尚无令牌时报告待配置，不能顺带开启 HTTP。
         Some(
-            LocalAgentHttpConfig::new(port, crate::mcp::get_http_token(&state).await?)
-                .map_err(AppError::Validation)?,
+            LocalAgentHttpConfig::new(
+                current.mcp_http_port,
+                crate::mcp::get_http_token(&state).await?,
+            )
+            .map_err(AppError::Validation)?,
         )
     } else {
         None
@@ -437,25 +439,7 @@ pub async fn configure_local_agents(
     }
     let configuration = state.mcp_configuration_lock.clone().lock_owned().await;
     let http = if transport.unwrap_or_default() == LocalAgentTransport::Http {
-        let port = state
-            .settings_service
-            .lock()
-            .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
-            .get()
-            .mcp_http_port;
-        let permissions = state
-            .mcp_command_policy_service
-            .lock()
-            .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
-            .list_permissions()?;
-        let settings = update_mcp_settings_locked(&state, true, true, port, permissions).await?;
-        let token = crate::mcp::get_http_token(&state)
-            .await?
-            .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
-        Some(
-            LocalAgentHttpConfig::new(settings.mcp_http_port, Some(token))
-                .map_err(AppError::Validation)?,
-        )
+        Some(prepare_local_agent_http_locked(&state).await?)
     } else {
         None
     };
@@ -469,6 +453,34 @@ pub async fn configure_local_agents(
         },
     )
     .await
+}
+
+// 调用者须持有配置事务锁；一键配置只启用 HTTP，并保留 stdio 状态及分组权限。
+async fn prepare_local_agent_http_locked(
+    state: &AppState,
+) -> Result<LocalAgentHttpConfig, AppError> {
+    let current = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
+        .get();
+    let permissions = state
+        .mcp_command_policy_service
+        .lock()
+        .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
+        .list_permissions()?;
+    let settings = update_mcp_settings_locked(
+        state,
+        current.mcp_enabled,
+        true,
+        current.mcp_http_port,
+        permissions,
+    )
+    .await?;
+    let token = crate::mcp::get_http_token(state)
+        .await?
+        .ok_or_else(|| AppError::Internal("启用 MCP HTTP 服务时未能读取访问令牌".to_owned()))?;
+    LocalAgentHttpConfig::new(settings.mcp_http_port, Some(token)).map_err(AppError::Validation)
 }
 
 async fn run_local_agent_operation<T: Send + 'static>(
@@ -607,7 +619,7 @@ pub async fn rotate_mcp_http_token(state: State<'_, AppState>) -> Result<(), App
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?
         .get();
     let token = crate::mcp::rotate_http_token(&state).await?;
-    if settings.mcp_enabled && settings.mcp_http_enabled {
+    if settings.mcp_http_enabled {
         if state.mcp_http_runtime.running_port().await == Some(settings.mcp_http_port) {
             if !state.mcp_http_runtime.update_token(token.to_string()).await {
                 state
@@ -695,6 +707,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http一键配置仅启用自身且两个开关互不影响() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let permission: McpGroupPermission = serde_json::from_value(serde_json::json!({
+            "groupName": "prod", "enabled": true, "fileRead": true, "commandExecute": false
+        }))
+        .unwrap();
+        let permissions = vec![permission];
+        let _configuration = state.mcp_configuration_lock.lock().await;
+        update_mcp_settings_locked(&state, false, false, port, permissions.clone())
+            .await
+            .unwrap();
+        prepare_local_agent_http_locked(&state).await.unwrap();
+        let current = state.settings_service.lock().unwrap().get();
+        assert!(!current.mcp_enabled);
+        assert!(current.mcp_http_enabled);
+        assert_eq!(current.mcp_group_permissions, permissions);
+        assert_eq!(state.mcp_http_runtime.running_port().await, Some(port));
+        assert!(
+            tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+                .await
+                .is_ok()
+        );
+        let token = crate::mcp::get_http_token(&state).await.unwrap().unwrap();
+
+        for stdio_enabled in [true, false] {
+            let current =
+                update_mcp_settings_locked(&state, stdio_enabled, true, port, permissions.clone())
+                    .await
+                    .unwrap();
+            assert_eq!(current.mcp_enabled, stdio_enabled);
+            assert!(current.mcp_http_enabled);
+            assert_eq!(state.mcp_http_runtime.running_port().await, Some(port));
+            assert!(
+                crate::mcp::get_http_token(&state)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .as_str()
+                    == token.as_str()
+            );
+        }
+        let current = update_mcp_settings_locked(&state, false, false, port, permissions.clone())
+            .await
+            .unwrap();
+        assert!(!current.mcp_enabled);
+        assert!(!current.mcp_http_enabled);
+        assert!(!state.mcp_http_runtime.is_running().await);
+
+        update_mcp_settings_locked(&state, true, false, port, permissions.clone())
+            .await
+            .unwrap();
+        prepare_local_agent_http_locked(&state).await.unwrap();
+        assert!(state.settings_service.lock().unwrap().get().mcp_enabled);
+        let current = update_mcp_settings_locked(&state, true, false, port, permissions)
+            .await
+            .unwrap();
+        assert!(current.mcp_enabled);
+        assert!(!state.mcp_http_runtime.is_running().await);
+    }
+
+    #[tokio::test]
     async fn 本地http启动失败回滚开关端口与原权限() {
         let directory = TestDirectory::new();
         let state = directory.state();
@@ -719,7 +798,7 @@ mod tests {
             .unwrap();
         let port = listener.local_addr().unwrap().port();
         let _configuration = state.mcp_configuration_lock.lock().await;
-        let error = update_mcp_settings_locked(&state, true, true, port, permissions.clone())
+        let error = update_mcp_settings_locked(&state, false, true, port, permissions.clone())
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Connection(message) if message == "MCP HTTP 端口被占用"));

@@ -5,6 +5,28 @@ use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
 use std::fmt::{Display, Formatter};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum McpTransport {
+    Stdio,
+    Http,
+}
+
+impl McpTransport {
+    pub(super) fn is_enabled(self, settings: &AppSettings) -> bool {
+        match self {
+            Self::Stdio => settings.mcp_enabled,
+            Self::Http => settings.mcp_http_enabled,
+        }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::Http => "http",
+        }
+    }
+}
+
 pub(super) fn current_mcp_settings(state: &AppState) -> Result<AppSettings, AppError> {
     let mut settings = state
         .settings_service
@@ -62,21 +84,23 @@ impl Display for McpAccessError {
 
 pub(crate) async fn authorized_session(
     state: &AppState,
+    transport: McpTransport,
     session_id: &str,
     required: Permission,
 ) -> Result<StoredSession, McpAccessError> {
-    authorized_session_context(state, session_id, required)
+    authorized_session_context(state, transport, session_id, required)
         .await
         .map(|(session, _, _)| session)
 }
 
 pub(super) async fn authorized_command_session(
     state: &AppState,
+    transport: McpTransport,
     session_id: &str,
     command: &str,
 ) -> Result<StoredSession, McpAccessError> {
     let (session, access, language) =
-        authorized_session_context(state, session_id, Permission::Command).await?;
+        authorized_session_context(state, transport, session_id, Permission::Command).await?;
     match crate::mcp_command_policy::evaluate_command_policy(&access.command_policy, command) {
         crate::mcp_command_policy::CommandPolicyDecision::Allowed => {}
         crate::mcp_command_policy::CommandPolicyDecision::Denied => {
@@ -97,12 +121,13 @@ pub(super) async fn authorized_command_session(
 
 pub(super) async fn authorized_session_context(
     state: &AppState,
+    transport: McpTransport,
     session_id: &str,
     required: Permission,
 ) -> Result<(StoredSession, McpGroupPermission, Language), McpAccessError> {
     let settings =
         current_mcp_settings(state).map_err(|error| McpAccessError::Internal(error.to_string()))?;
-    if !settings.mcp_enabled {
+    if !transport.is_enabled(&settings) {
         return Err(McpAccessError::Forbidden(localized_access_error(
             &settings.language,
             AccessIssue::ServiceDisabled,
