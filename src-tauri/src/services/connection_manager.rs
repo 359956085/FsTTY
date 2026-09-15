@@ -16,9 +16,11 @@ use crate::models::{
 };
 use crate::services::CredentialService;
 use russh::client;
+#[cfg(any(not(windows), test))]
+use russh::keys::known_hosts::learn_known_hosts_path;
 #[cfg(test)]
 use russh::keys::load_secret_key;
-use russh::keys::{known_hosts::learn_known_hosts_path, ssh_key::PublicKey};
+use russh::keys::ssh_key::PublicKey;
 #[cfg(test)]
 use russh::MethodKind;
 use russh::{ChannelMsg, Disconnect};
@@ -37,6 +39,7 @@ use tokio::time;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 mod authentication;
 mod device_metrics;
 mod remote_files;
@@ -45,13 +48,13 @@ mod transfer;
 
 use super::device_metrics_service::DeviceMetricsMonitor;
 use super::lightweight_mode_service::LightweightTerminalBridge;
-use authentication::{
-    authenticate, key_algorithm, key_fingerprint, remove_known_host, HostObservation, SshClient,
-};
+#[cfg(any(not(windows), test))]
+use authentication::{authenticate, remove_known_host};
 #[cfg(test)]
 use authentication::{
     authentication_rejected, is_authentication_interruption, map_authentication_exchange_error,
 };
+use authentication::{key_algorithm, key_fingerprint, HostObservation, SshClient};
 #[cfg(test)]
 use remote_files::join_directory_reads;
 #[cfg(test)]
@@ -64,7 +67,9 @@ use transfer::finalize_local_file;
 use transfer::ActiveTransfer;
 pub(crate) use transfer::TransferReporter;
 
+#[cfg(any(not(windows), test))]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 const TERMINAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SFTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -80,6 +85,7 @@ const MAX_EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_MCP_EXEC_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const TRANSFER_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_REMOTE_PATH_BYTES: usize = 4096;
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 
 fn append_limited(target: &mut Vec<u8>, data: &[u8], limit: usize, truncated: &mut bool) {
@@ -134,6 +140,7 @@ struct ConnectionEntry {
     browser_sftp: Option<Arc<SftpSession>>,
 }
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 struct PendingHostKey {
     session_id: String,
     host: String,
@@ -276,17 +283,81 @@ enum TerminalEnd {
     ClientGone,
 }
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 enum AuthenticationOutcome {
     Authenticated,
     CredentialRequired(CredentialKind),
 }
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 enum TransportError {
+    #[cfg(all(windows, not(test)))]
+    Broker(AppError),
     Timeout,
     Handshake(Box<Option<HostObservation>>),
 }
 
 impl ConnectionManager {
+    #[cfg(all(windows, not(test)))]
+    async fn open_transport(
+        &self,
+        session: &StoredSession,
+    ) -> Result<client::Handle<SshClient>, TransportError> {
+        let pipe = super::broker_service::connect_stream(&session.id)
+            .await
+            .map_err(TransportError::Broker)?;
+        let (mut handler, _) = self.ssh_client(session);
+        handler.broker_transport = true;
+        client::connect_stream(
+            Arc::new(client::Config {
+                channel_buffer_size: 32,
+                ..Default::default()
+            }),
+            pipe,
+            handler,
+        )
+        .await
+        .map_err(|_| TransportError::Broker(AppError::Connection("凭据服务连接已断开".into())))
+    }
+
+    #[cfg(all(windows, not(test)))]
+    async fn authenticate_handle(
+        &self,
+        handle: &mut client::Handle<SshClient>,
+        _session: &StoredSession,
+        _credentials: &CredentialService,
+        one_time: Option<Zeroizing<String>>,
+    ) -> Result<AuthenticationOutcome, AppError> {
+        if one_time.is_some() {
+            return Err(AppError::Credential("请在安全管理窗口输入凭据".into()));
+        }
+        if handle
+            .authenticate_none("fstty")
+            .await
+            .map_err(|_| AppError::Connection("凭据服务连接已断开".into()))?
+            .success()
+        {
+            Ok(AuthenticationOutcome::Authenticated)
+        } else {
+            Err(AppError::Authentication("凭据服务认证失败".into()))
+        }
+    }
+
+    #[cfg(all(windows, not(test)))]
+    pub async fn trust_host_key(
+        &self,
+        session: &StoredSession,
+        _challenge_id: &str,
+    ) -> Result<(), AppError> {
+        super::broker_service::trust(&session.id).await
+    }
+
+    #[cfg(all(windows, not(test)))]
+    pub async fn forget_host_key(&self, session: &StoredSession) -> Result<bool, AppError> {
+        super::broker_service::trust(&session.id).await?;
+        Ok(true)
+    }
+
     pub fn new(app_data_dir: &Path) -> Self {
         Self {
             inner: Arc::new(ConnectionManagerInner {
@@ -307,6 +378,7 @@ impl ConnectionManager {
     ) -> (SshClient, Arc<StdMutex<Option<HostObservation>>>) {
         let observation = Arc::new(StdMutex::new(None));
         let handler = SshClient {
+            broker_transport: false,
             host: session.host.clone(),
             port: session.port,
             known_hosts_path: self.inner.known_hosts_path.clone(),
@@ -316,6 +388,7 @@ impl ConnectionManager {
         (handler, observation)
     }
 
+    #[cfg(any(not(windows), test))]
     async fn open_transport(
         &self,
         session: &StoredSession,
@@ -361,6 +434,7 @@ impl ConnectionManager {
         (browser_sftp, home_path)
     }
 
+    #[cfg(any(not(windows), test))]
     async fn authenticate_handle(
         &self,
         handle: &mut client::Handle<SshClient>,
@@ -475,6 +549,8 @@ impl ConnectionManager {
         cancellation: &ConnectCancellation,
     ) -> Result<ConnectResult, AppError> {
         match error {
+            #[cfg(all(windows, not(test)))]
+            TransportError::Broker(error) => Err(error),
             TransportError::Timeout => Err(AppError::Connection("连接服务器超时".to_owned())),
             TransportError::Handshake(observed) => match *observed {
                 Some(HostObservation::Unknown(key)) => {
@@ -502,6 +578,8 @@ impl ConnectionManager {
 
     fn map_headless_transport_error(error: TransportError) -> AppError {
         match error {
+            #[cfg(all(windows, not(test)))]
+            TransportError::Broker(error) => error,
             TransportError::Timeout => AppError::Connection("连接服务器超时".to_owned()),
             TransportError::Handshake(observed) => match *observed {
                 Some(HostObservation::Unknown(_)) => {
@@ -781,6 +859,7 @@ impl ConnectionManager {
         challenge
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn trust_host_key(
         &self,
         session: &StoredSession,
@@ -814,6 +893,7 @@ impl ConnectionManager {
         .map_err(|_| AppError::Persistence("无法保存主机密钥".to_owned()))
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn forget_host_key(&self, session: &StoredSession) -> Result<bool, AppError> {
         let path = self.inner.known_hosts_path.clone();
         let known_hosts_lock = self.inner.known_hosts_lock.clone();

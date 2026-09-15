@@ -1,4 +1,9 @@
 mod autostart_commands;
+mod broker_commands;
+pub use broker_commands::{
+    get_credential_service_status, manage_ssh_credential, migrate_ssh_credential,
+    migrate_ssh_credentials, repair_credential_service,
+};
 mod clipboard_commands;
 mod command_history_commands;
 mod lightweight_commands;

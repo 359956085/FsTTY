@@ -208,6 +208,18 @@ pub async fn connect_session(
     one_time_username: Option<String>,
 ) -> Result<ConnectResult, AppError> {
     let _activity = state.lightweight_mode_service.try_gui_activity()?;
+    #[cfg(all(windows, not(test)))]
+    {
+        if one_time_credential.is_some() || one_time_username.is_some() {
+            return Err(AppError::Credential("请在安全窗口配置凭据和账号".into()));
+        }
+        state
+            .session_service
+            .lock()
+            .await
+            .migrate_to_broker(&session_id)
+            .await?;
+    }
     let session = state.session_service.lock().await.find(&session_id)?;
     state
         .connection_manager

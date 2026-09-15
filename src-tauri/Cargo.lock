@@ -1737,6 +1737,7 @@ dependencies = [
  "base64 0.22.1",
  "clipboard-win",
  "fs2",
+ "fstty-broker",
  "jsonc-parser",
  "keyring",
  "keyring-core",
@@ -1767,6 +1768,24 @@ dependencies = [
  "uuid",
  "vt100",
  "windows-native-keyring-store",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
+name = "fstty-broker"
+version = "1.4.0"
+dependencies = [
+ "base64 0.22.1",
+ "minisign-verify",
+ "rand",
+ "rusqlite",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
  "windows-sys 0.61.2",
  "zeroize",
 ]

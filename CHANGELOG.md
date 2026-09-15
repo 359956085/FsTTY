@@ -6,6 +6,20 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+### 简体中文
+
+- Windows 默认由独立 `FsTTYBroker` 服务持有 SSH 凭据和连接；普通桌面与 MCP 进程只接收终端和远程操作数据。
+- 新增 UAC 后的原生认证配置窗口、批量迁移及旧副本清理状态；认证目标和主机指纹变更由服务确认。
+- Windows 使用机器范围 NSIS 安装，包含强制服务安装、受保护更新暂存、提权端独立验签和升级恢复流程。
+- MCP Token、其他平台的凭据存储及现有分组权限保持原有行为。私钥原件需要自行保管，不提供托管秘密导出。
+
+### English
+
+- Windows now uses the independent `FsTTYBroker` service to own SSH credentials and connections. Desktop and MCP processes receive terminal and remote-operation data only.
+- Added a native credential approval window after UAC, batch migration, and legacy-copy cleanup status. Authentication targets and host keys are managed by the service.
+- Windows NSIS installs per machine with a mandatory service, protected update staging, independent elevated signature verification, and upgrade recovery.
+- MCP Token storage, other platforms, and existing group permissions retain their behavior. Original key files remain the user's responsibility; managed secrets cannot be exported.
+
 ## [1.4.0] - 2026-09-07
 
 <!-- release-notes:zh-CN:start -->

@@ -29,6 +29,7 @@ pub(super) enum HostObservation {
 }
 
 pub(super) struct SshClient {
+    pub(super) broker_transport: bool,
     pub(super) host: String,
     pub(super) port: u16,
     pub(super) known_hosts_path: PathBuf,
@@ -43,6 +44,10 @@ impl client::Handler for SshClient {
         &mut self,
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
+        if self.broker_transport {
+            // 此标记只能在命名管道已验证 SCM 服务身份后设置；真实主机校验由服务执行。
+            return Ok(true);
+        }
         let _known_hosts_guard = match self.known_hosts_lock.lock() {
             Ok(guard) => guard,
             Err(_) => {

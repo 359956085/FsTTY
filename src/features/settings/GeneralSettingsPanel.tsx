@@ -11,6 +11,7 @@ import { useAutostartSettings } from "./useAutostartSettings";
 import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
+import { CredentialSecuritySection } from "./CredentialSecuritySection";
 
 interface GeneralSettingsPanelProps {
   activeTooltipKey: string | null;
@@ -56,6 +57,7 @@ export function GeneralSettingsPanel({
 
   return (
     <>
+      <CredentialSecuritySection />
       <section aria-labelledby="general-settings-title" className="settings-panel">
         <header className="settings-panel-header">
           <h3 id="general-settings-title">{t("settings.generalSettings")}</h3>

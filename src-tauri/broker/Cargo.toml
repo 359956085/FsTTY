@@ -1,0 +1,37 @@
+[package]
+name = "fstty-broker"
+version = "1.4.0"
+edition = "2021"
+publish = false
+
+[features]
+approval-preview = ["windows-sys/Win32_Storage_Xps"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = { version = "1", features = ["serde"] }
+rand = "0.10"
+base64 = "0.22"
+minisign-verify = "0.2"
+
+[build-dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+russh-sftp = "2.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_DataExchange", "Win32_System_Com", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Pipes", "Win32_System_Services", "Win32_System_Threading", "Win32_System_Environment", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+[[bin]]
+name = "fstty-broker"
+path = "src/main.rs"
+
+[[example]]
+name = "approval_preview"
+required-features = ["approval-preview"]

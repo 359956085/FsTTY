@@ -98,6 +98,7 @@ impl AppUpdateService {
         };
 
         let mut started = false;
+        #[cfg(not(windows))]
         let result = pending
             .update
             .download_and_install(
@@ -116,6 +117,35 @@ impl AppUpdateService {
             )
             .await
             .map_err(|error| AppError::Internal(format!("下载或安装应用更新失败：{error}")));
+        #[cfg(windows)]
+        let result = async {
+            let bytes = pending
+                .update
+                .download(
+                    |chunk_bytes, total_bytes| {
+                        if !started {
+                            started = true;
+                            let _ = on_progress.send(AppUpdateProgress::Started { total_bytes });
+                        }
+                        let _ = on_progress.send(AppUpdateProgress::Progress {
+                            chunk_bytes: chunk_bytes as u64,
+                        });
+                    },
+                    || {},
+                )
+                .await
+                .map_err(|error| AppError::Internal(format!("下载应用更新失败：{error}")))?;
+            let ticket = fstty_broker::update::stage(&bytes, pending.update.signature.clone())
+                .await
+                .map_err(AppError::Internal)?;
+            tokio::task::spawn_blocking(move || fstty_broker::windows::elevate_update(&ticket))
+                .await
+                .map_err(|_| AppError::Internal("安全更新窗口启动失败".into()))?
+                .map_err(AppError::Internal)?;
+            let _ = on_progress.send(AppUpdateProgress::Finished);
+            Ok::<(), AppError>(())
+        }
+        .await;
         self.installing.store(false, Ordering::Release);
         result?;
         self.close().await;

@@ -11,6 +11,24 @@ void i18n.use(initReactI18next).init({
   resources: {
     "zh-CN": {
       translation: {
+        security: {
+          title: "SSH 凭据保护",
+          secretInputHint: "保存凭据及修改认证目标需在 Windows 安全窗口确认。密码、私钥和口令仅由独立服务保管，日常连接无需重复确认。",
+          changeCredential: "安全更换凭据",
+          reviewHostKey: "核对主机指纹",
+          boundary: "隔离未提权程序对托管凭据的读取；已有 MCP 权限仍可访问服务器。",
+          available: "凭据服务正在运行",
+          unavailable: "凭据服务不可用",
+          checking: "正在检查凭据服务…",
+          refresh: "刷新",
+          migrate: "迁移 / 清理旧副本",
+          migrateBatch: "批量迁移（每次最多 32 个）",
+          hostKeyReviewed: "主机指纹已通过安全窗口重新确认。",
+          repair: "修复凭据服务（需管理员确认）",
+          repairHint: "尝试修复服务；若程序缺失，请重新运行 Windows 安装程序。服务不可用时不会退回旧凭据库。",
+          originalsHint: "导入不会删除原私钥文件；原件仍可被同账号程序读取，请自行妥善处理。服务不提供密钥导出，换机或重装系统需重新导入自有原件。",
+          states: { stored: "已托管", missing: "缺少凭据", notRequired: "需要导入私钥", migrationRequired: "等待迁移", cleanupPending: "仍有旧副本", serviceUnavailable: "服务不可用" },
+        },
         common: {
           loading: "加载中...",
         },
@@ -467,6 +485,24 @@ void i18n.use(initReactI18next).init({
     },
     "en-US": {
       translation: {
+        security: {
+          title: "SSH credential protection",
+          secretInputHint: "Saving credentials or changing authentication targets requires confirmation in the Windows security window. The service holds passwords, private keys and passphrases. Routine connections need no confirmation.",
+          changeCredential: "Change credentials securely",
+          reviewHostKey: "Review host fingerprint",
+          boundary: "Isolates managed credentials from unelevated processes. Existing MCP permissions can still access servers.",
+          available: "Credential service is running",
+          unavailable: "Credential service unavailable",
+          checking: "Checking credential service…",
+          refresh: "Refresh",
+          migrate: "Migrate / remove legacy copies",
+          migrateBatch: "Batch migration (up to 32 sessions)",
+          hostKeyReviewed: "Host key reviewed in the secure window.",
+          repair: "Repair credential service (administrator approval)",
+          repairHint: "Try repairing the service. If its program is missing, run the Windows installer again. FsTTY will not fall back to the legacy credential store.",
+          originalsHint: "Import preserves original key files, which remain readable by other programs under your account. Handle originals separately. The service does not export keys; retain your own originals for a new computer or OS installation.",
+          states: { stored: "Managed", missing: "Credentials missing", notRequired: "Key import required", migrationRequired: "Migration required", cleanupPending: "Legacy copies remain", serviceUnavailable: "Service unavailable" },
+        },
         common: {
           loading: "Loading...",
         },

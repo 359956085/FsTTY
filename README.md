@@ -18,7 +18,7 @@
 FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor 等 Agent。Agent 不接触密码和私钥，只能在用户授权的会话分组中调用明确的工具。
 
 - **最小权限**：按会话分组分别控制访问、文件读取、文件传输、命令、编辑和删除。
-- **复用 SSH 能力**：终端、SFTP、主机密钥校验和系统凭据库由 FsTTY 统一处理。
+- **复用 SSH 能力**：终端、SFTP、主机密钥校验和凭据保护由 FsTTY 统一处理。
 - **本地与远程接入**：支持本机 stdio，以及可信局域网或 VPN 内的 Streamable HTTP。
 - **一键配置 Agent**：自动检测本机 Agent，支持 stdio 或本地 HTTP，合并 MCP 配置和全局提示词，不覆盖无关设置。
 - **适合生产排障**：支持远程日志搜索、分段读取、命令执行、原子写入和受控文件传输。
@@ -53,6 +53,8 @@ FsTTY 目前提供 17 个 MCP 工具：
 - 权限配置无法读取或校验失败时，请求默认拒绝。
 
 ## stdio 与 HTTP
+
+当前开发分支在 Windows 默认使用独立 SSH 凭据服务。安装、迁移和认证配置变更需要 UAC；日常连接免交互。原私钥文件、剪贴板和尚未清理的旧副本仍可被同账号程序读取。服务不提供秘密导出，MCP Token 继续使用原有存储。参见 [Windows 凭据服务与验收说明](doc/windows-credential-broker.md)。
 
 | | stdio | Streamable HTTP |
 | --- | --- | --- |
@@ -150,7 +152,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 | 功能 | 说明 |
 | --- | --- |
 | 会话管理 | 分组、拖动排序、跨组移动、搜索、收藏和多标签页 |
-| SSH 认证 | 密码、私钥文件和粘贴私钥正文；敏感凭据保存到系统凭据库 |
+| SSH 认证 | 密码及导入的私钥；Windows 由独立服务保存凭据并完成认证 |
 | 远程终端 | xterm.js 6、复制粘贴、清屏、重连、tmux 鼠标和 OSC 52 剪贴板 |
 | 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
 | 文件管理 | SFTP 浏览、上传、下载、拖放移动、新建目录、重命名、复制路径和递归删除 |
@@ -163,8 +165,8 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 
 优先前往 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases)，也可使用 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
-- 普通用户推荐 `*-setup.exe`（NSIS）。
-- 企业部署或 MSI 场景使用 `*.msi`。
+- 当前开发分支生成 `*-setup.exe`（NSIS），固定安装到 Program Files，强制安装凭据服务。
+- 旧版本发布页中的 MSI 不包含新的服务安装流程。
 
 NSIS 支持简体中文和英文，并跟随 Windows 显示语言。发布包暂未配置 Windows Authenticode 签名；若 SmartScreen 显示提示，请确认安装包来自本仓库 Releases 页面。
 

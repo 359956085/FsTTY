@@ -2,8 +2,12 @@ use super::session_structure::{
     flatten_session_blocks, group_session_blocks, normalize_group, normalize_tags,
     DEFAULT_SESSION_GROUP,
 };
+#[cfg(all(windows, not(test)))]
+mod broker_windows;
+#[cfg(any(not(windows), test))]
 mod credentials;
 mod persistence;
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 mod validation;
 use crate::models::{
     AppError, CreateSessionPayload, SessionGroup, SessionProfile, StoredSession,
@@ -15,12 +19,15 @@ use crate::models::{
     SessionAuthInput,
 };
 use crate::services::CredentialService;
+#[cfg(any(not(windows), test))]
 use credentials::*;
 use persistence::*;
+#[cfg(any(not(windows), test))]
 use std::collections::HashSet;
 #[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(any(not(windows), test))]
 use uuid::Uuid;
 use validation::*;
 #[cfg(test)]
@@ -83,6 +90,7 @@ impl SessionService {
         }
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn list_groups(
         &mut self,
         credentials: &CredentialService,
@@ -117,6 +125,7 @@ impl SessionService {
             .ok_or_else(|| AppError::NotFound("未找到指定会话".to_owned()))
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn create(
         &mut self,
         payload: CreateSessionPayload,
@@ -185,6 +194,7 @@ impl SessionService {
         Ok(profile_with_state(session, credential_state))
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn update(
         &mut self,
         payload: UpdateSessionPayload,
@@ -283,6 +293,7 @@ impl SessionService {
         ))
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn delete(
         &mut self,
         session_id: &str,
@@ -456,6 +467,7 @@ impl SessionService {
         Ok(session_ids)
     }
 
+    #[cfg(any(not(windows), test))]
     pub async fn delete_group(
         &mut self,
         group_name: &str,

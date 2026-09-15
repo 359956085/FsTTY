@@ -16,6 +16,7 @@ import { Select } from "../../shared/ui/Select";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
 import { DEFAULT_SESSION_GROUP } from "./constants";
+import { usesWindowsCredentialBroker } from "../../shared/platform";
 
 interface SessionFormDialogProps {
   mode: "create" | "edit";
@@ -38,6 +39,7 @@ export function SessionFormDialog({
   session,
 }: SessionFormDialogProps) {
   const { t } = useTranslation();
+  const brokerRequired = usesWindowsCredentialBroker();
   const [name, setName] = useState(session?.name ?? "");
   const [host, setHost] = useState(session?.host ?? "");
   const [port, setPort] = useState(String(session?.port ?? 22));
@@ -165,6 +167,11 @@ export function SessionFormDialog({
       return;
     }
     try {
+      if (brokerRequired) {
+        await api.forgetHostKey(session.id);
+        setHostKeyMessage(t("security.hostKeyReviewed"));
+        return;
+      }
       const accepted = await confirm(t("sessions.confirmForgetHostKey"), {
         title: t("sessions.forgetHostKey"),
         kind: "warning",
@@ -193,6 +200,23 @@ export function SessionFormDialog({
     const normalizedUsername = username.trim();
     const normalizedGroup = group.trim();
     const normalizedKeyPath = privateKeyPath.trim();
+
+    if (brokerRequired) {
+      if (!normalizedHost || !normalizedUsername) { setError(t("sessions.validationRequired")); return; }
+      if (!Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) {
+        setError(t("sessions.validationPort")); return;
+      }
+      const payload: CreateSessionPayload = {
+        name: normalizedName, host: normalizedHost, port: normalizedPort,
+        username: normalizedUsername, group: normalizedGroup, tags: session?.tags ?? [],
+        auth: authKind === "password" ? { kind: "password" } : { kind: "privateKey", source: "inline", material: { mode: "preserve" } },
+        credential: { mode: "preserve" },
+      };
+      setError(null); setSubmitting(true);
+      try { await onSave(mode === "edit" && session ? { ...payload, id: session.id } : payload); }
+      finally { setSubmitting(false); }
+      return;
+    }
 
     if (!normalizedHost) {
       setError(t("sessions.validationRequired"));
@@ -434,7 +458,16 @@ export function SessionFormDialog({
             />
           </label>
 
-          {authKind === "password" ? (
+          {brokerRequired ? (
+            <div className="form-wide">
+              <p>{t("security.secretInputHint")}</p>
+              {session ? <Button disabled={submitting} variant="ghost" onClick={() => {
+                setSubmitting(true); setError(null);
+                void api.manageSshCredential(session.id).catch((reason: unknown) => setError(resolveApiError(reason, t("errors.unknown"))))
+                  .finally(() => setSubmitting(false));
+              }}>{t("security.changeCredential")}</Button> : null}
+            </div>
+          ) : authKind === "password" ? (
             rememberCredential ? (
               <label className="form-wide">
                 <span>{t("sessions.password")}</span>
@@ -525,7 +558,7 @@ export function SessionFormDialog({
               )}
             </>
           )}
-          <label className="credential-remember-row form-wide">
+          {!brokerRequired ? <label className="credential-remember-row form-wide">
             <input
               checked={rememberCredential}
               onChange={(event) => {
@@ -542,7 +575,7 @@ export function SessionFormDialog({
                 ? t("sessions.rememberPassword")
                 : t("sessions.rememberPassphrase")}
             </span>
-          </label>
+          </label> : null}
         </div>
 
         {session ? (
@@ -552,7 +585,7 @@ export function SessionFormDialog({
               onClick={() => void forgetHostKey()}
               variant="ghost"
             >
-              {t("sessions.forgetHostKey")}
+              {t(brokerRequired ? "security.reviewHostKey" : "sessions.forgetHostKey")}
             </Button>
             {hostKeyMessage ? <span>{hostKeyMessage}</span> : null}
           </div>

@@ -43,6 +43,21 @@ import type {
 } from "./types";
 
 export const api = {
+  getCredentialServiceStatus() {
+    return invoke<{ required: boolean; available: boolean; message: string | null }>("get_credential_service_status");
+  },
+  repairCredentialService() {
+    return invoke<void>("repair_credential_service");
+  },
+  migrateSshCredential(sessionId: string) {
+    return invoke<Session>("migrate_ssh_credential", { sessionId });
+  },
+  migrateSshCredentials(sessionIds: string[]) {
+    return invoke<void>("migrate_ssh_credentials", { sessionIds });
+  },
+  manageSshCredential(sessionId: string) {
+    return invoke<Session>("manage_ssh_credential", { sessionId });
+  },
   listSessions() {
     return invoke<SessionGroup[]>("list_sessions");
   },

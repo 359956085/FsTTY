@@ -138,7 +138,7 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 | Feature | Description |
 | --- | --- |
 | Session management | Groups, drag ordering, cross-group moves, search, favorites, and multiple tabs |
-| SSH authentication | Passwords, private-key files, and pasted private keys, with secrets stored in the system credential vault |
+| SSH authentication | Passwords and imported private keys; on Windows, an independent service stores credentials and performs authentication |
 | Remote terminal | xterm.js 6, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
 | Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
 | File management | SFTP browse, upload, download, drag-to-move, create, rename, copy path, and recursive delete |
@@ -151,8 +151,10 @@ Selecting a history entry with Enter or the mouse inserts it into the terminal w
 
 Prefer [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) in mainland China, or use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
 
-- `*-setup.exe` (NSIS) is recommended for most users.
-- Use `*.msi` for enterprise or MSI-based deployment.
+- The development branch produces `*-setup.exe` (NSIS), installs into Program Files, and requires the credential service.
+- MSI packages from earlier releases do not include the new service installation workflow.
+
+The Windows development build uses an independent SSH credential service. Installation, migration, and authentication changes require UAC; daily connections do not. Original key files, clipboard contents, and remaining legacy copies are still accessible to programs running under the same account. Secrets cannot be exported. MCP Token storage is unchanged. See the [implementation and acceptance guide](doc/windows-credential-broker.md).
 
 The NSIS installer supports Simplified Chinese and English and follows the Windows display language. Release packages are not currently signed with Windows Authenticode. If SmartScreen displays a warning, verify that the installer came from this repository's Releases page.
 

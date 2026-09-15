@@ -58,6 +58,9 @@ impl SettingsService {
             },
         };
 
+        #[cfg(all(windows, not(test)))]
+        super::broker_service::set_approval_theme(store.settings.theme);
+
         Self {
             settings: store.settings,
             store_path,
@@ -109,7 +112,10 @@ impl SettingsService {
     pub fn set_theme(&mut self, theme: ThemePreference) -> Result<AppSettings, AppError> {
         let mut next = self.settings.clone();
         next.theme = theme;
-        self.replace(next)
+        let saved = self.replace(next)?;
+        #[cfg(all(windows, not(test)))]
+        super::broker_service::set_approval_theme(theme);
+        Ok(saved)
     }
 
     pub fn update(

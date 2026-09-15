@@ -33,6 +33,7 @@ pub enum ConnectResult {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 pub enum CredentialKind {
     Password,
     PrivateKeyPassphrase,

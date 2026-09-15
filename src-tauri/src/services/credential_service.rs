@@ -20,6 +20,7 @@ const DAMAGED_PRIVATE_KEY_MESSAGE: &str = "系统凭据库中的私钥分块或�
 
 type CredentialResult<T> = Result<T, AppError>;
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 enum CredentialRequest {
     Get {
         account: String,
@@ -65,6 +66,7 @@ struct PrivateKeyManifest {
 #[derive(Clone)]
 pub struct CredentialService {
     sender: Sender<CredentialRequest>,
+    legacy_access: bool,
 }
 
 impl Default for CredentialService {
@@ -73,14 +75,36 @@ impl Default for CredentialService {
     }
 }
 
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 impl CredentialService {
+    #[cfg(all(windows, not(test)))]
+    pub(crate) fn legacy_for_migration() -> Self {
+        Self {
+            legacy_access: true,
+            ..Self::new()
+        }
+    }
+
+    fn check_ssh_access(&self, session_id: &str) -> CredentialResult<()> {
+        if cfg!(all(windows, not(test))) && !self.legacy_access && session_id != "__mcp_http_token"
+        {
+            return Err(AppError::Credential(
+                "SSH 凭据只能由独立服务访问，请迁移或修复安装".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
         // Windows 凭据后端不保证跨线程操作同一条目时的可见顺序，因此固定由一个线程处理。
         let _ = std::thread::Builder::new()
             .name("fstty-credentials".to_owned())
             .spawn(move || run_worker(receiver));
-        Self { sender }
+        Self {
+            sender,
+            legacy_access: false,
+        }
     }
 
     #[cfg(test)]
@@ -110,10 +134,14 @@ impl CredentialService {
                 }
             }
         });
-        Self { sender }
+        Self {
+            sender,
+            legacy_access: false,
+        }
     }
 
     pub async fn get(&self, session_id: &str) -> CredentialResult<Option<Zeroizing<String>>> {
+        self.check_ssh_access(session_id)?;
         let (response, receiver) = oneshot::channel();
         self.sender
             .send(CredentialRequest::Get {
@@ -125,6 +153,7 @@ impl CredentialService {
     }
 
     pub async fn set(&self, session_id: &str, value: Zeroizing<String>) -> CredentialResult<()> {
+        self.check_ssh_access(session_id)?;
         if value.is_empty()
             || value.len() > MAX_CREDENTIAL_LENGTH
             || (cfg!(target_os = "windows")
@@ -147,6 +176,7 @@ impl CredentialService {
     }
 
     pub async fn delete(&self, session_id: &str) -> CredentialResult<()> {
+        self.check_ssh_access(session_id)?;
         let (response, receiver) = oneshot::channel();
         self.sender
             .send(CredentialRequest::Delete {
@@ -161,6 +191,7 @@ impl CredentialService {
         &self,
         session_id: &str,
     ) -> CredentialResult<Option<Zeroizing<String>>> {
+        self.check_ssh_access(session_id)?;
         let (response, receiver) = oneshot::channel();
         self.sender
             .send(CredentialRequest::GetPrivateKey {
@@ -176,6 +207,7 @@ impl CredentialService {
         session_id: &str,
         value: Zeroizing<String>,
     ) -> CredentialResult<()> {
+        self.check_ssh_access(session_id)?;
         validate_private_key_material(&value)?;
         let (response, receiver) = oneshot::channel();
         self.sender
@@ -208,6 +240,7 @@ impl CredentialService {
     }
 
     pub async fn delete_private_key(&self, session_id: &str) -> CredentialResult<()> {
+        self.check_ssh_access(session_id)?;
         let (response, receiver) = oneshot::channel();
         self.sender
             .send(CredentialRequest::DeletePrivateKey {
@@ -219,6 +252,7 @@ impl CredentialService {
     }
 
     pub async fn delete_all(&self, session_id: &str) -> CredentialResult<()> {
+        self.check_ssh_access(session_id)?;
         let (response, receiver) = oneshot::channel();
         self.sender
             .send(CredentialRequest::DeleteAll {
@@ -362,7 +396,22 @@ impl CredentialBackend {
 
     fn delete_all(&self, session_id: &str) -> CredentialResult<()> {
         self.delete(&credential_account(session_id))?;
-        self.delete_private_key(session_id)
+        self.delete_private_key(session_id)?;
+        #[cfg(all(windows, not(test)))]
+        {
+            // 逐项核对旧分块，不能仅凭清单已删除就认定不存在旧副本。
+            let accounts = std::iter::once(credential_account(session_id))
+                .chain(std::iter::once(private_key_manifest_account(session_id)))
+                .chain(
+                    (0..MAX_PRIVATE_KEY_CHUNKS).map(|i| private_key_chunk_account(session_id, i)),
+                );
+            for account in accounts {
+                if self.get(&account)?.is_some() {
+                    return Err(AppError::Credential("旧凭据清理未完成，仍有旧副本".into()));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]

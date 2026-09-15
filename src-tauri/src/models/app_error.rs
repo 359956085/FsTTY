@@ -9,7 +9,9 @@ pub enum AppError {
     Persistence(String),
     Credential(String),
     Authentication(String),
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     AuthenticationInterrupted(String),
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     AuthenticationRejected(String),
     Connection(String),
     Sftp(String),

@@ -1,5 +1,7 @@
 mod app_update_service;
 mod autostart_service;
+#[cfg(all(windows, not(test)))]
+pub(crate) mod broker_service;
 mod command_history_service;
 mod connection_manager;
 mod connection_paths;

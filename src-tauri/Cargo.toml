@@ -9,6 +9,11 @@ edition = "2021"
 name = "fstty_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[workspace]
+members = ["broker"]
+default-members = ["."]
+resolver = "2"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -45,6 +50,7 @@ vt100 = "0.16.2"
 zeroize = { version = "1", features = ["serde"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+fstty-broker = { path = "broker" }
 auto-launch = "=0.5.0"
 clipboard-win = "5.4"
 keyring-core = "1"

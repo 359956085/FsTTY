@@ -1,0 +1,15 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build && npm run build:broker"
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "windows/broker-hooks.nsh"
+      }
+    }
+  }
+}

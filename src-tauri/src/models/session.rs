@@ -71,7 +71,7 @@ pub struct SessionProfile {
     pub login_save_prompted: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub id: String,
@@ -91,7 +91,14 @@ pub struct StoredSession {
 pub enum CredentialState {
     Stored,
     Missing,
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     NotRequired,
+    #[cfg_attr(any(not(windows), test), allow(dead_code))]
+    MigrationRequired,
+    #[cfg_attr(any(not(windows), test), allow(dead_code))]
+    CleanupPending,
+    #[cfg_attr(any(not(windows), test), allow(dead_code))]
+    ServiceUnavailable,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -120,6 +127,7 @@ pub enum CredentialAction {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 pub enum LoginSaveDecision {
     Save {
         #[serde(default)]
@@ -160,6 +168,7 @@ pub struct UpdateSessionPayload {
 }
 
 impl StoredSession {
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     pub fn requires_passphrase(&self) -> bool {
         matches!(
             self.auth,

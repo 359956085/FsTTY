@@ -207,7 +207,7 @@ export interface Session {
   group: string;
   tags: string[];
   auth: SessionAuth;
-  credentialState: "stored" | "missing" | "notRequired";
+  credentialState: "stored" | "missing" | "notRequired" | "migrationRequired" | "cleanupPending" | "serviceUnavailable";
   loginSavePrompted: boolean;
 }
 
