@@ -6,15 +6,18 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 
 interface TooltipButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "title"> {
   label: string;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function TooltipButton({
   label,
+  buttonRef: externalButtonRef,
   children,
   onPointerEnter,
   onPointerLeave,
@@ -25,7 +28,8 @@ export function TooltipButton({
   ...props
 }: TooltipButtonProps) {
   const id = useId();
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const localButtonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = externalButtonRef ?? localButtonRef;
   const tooltipRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
@@ -72,7 +76,7 @@ export function TooltipButton({
     ))}px`;
     tooltip.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - bounds.height - margin))}px`;
     tooltip.style.visibility = "visible";
-  }, [label, open]);
+  }, [buttonRef, label, open]);
 
   return (
     <>

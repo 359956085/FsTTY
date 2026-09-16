@@ -134,6 +134,24 @@ function deferred<T>() {
 }
 
 describe("SettingsPage 本地 Agent 配置", () => {
+  it("导航收起后仍可返回应用，当前设置分类不变", () => {
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.getMcpPermissionCatalog.mockResolvedValue([]);
+    const onBack = vi.fn();
+    const props = { onBack, onChange: vi.fn(), settings, updater };
+    const page = render(<SettingsPage {...props} sidebarCollapsed={false} />);
+    expect(screen.getByRole("button", { name: "nav.backToApp" }).closest("nav")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
+    page.rerender(<SettingsPage {...props} sidebarCollapsed />);
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.getByRole("heading", { name: "settings.mcpTitle" })).not.toBeNull();
+    const back = screen.getByRole("button", { name: "nav.backToApp" });
+    expect(back.closest(".settings-content")).not.toBeNull();
+    fireEvent.click(back);
+    expect(onBack).toHaveBeenCalledOnce();
+    page.rerender(<SettingsPage {...props} sidebarCollapsed={false} />);
+    expect(screen.getByRole("button", { name: "settings.mcpTitle" }).getAttribute("aria-current")).toBe("page");
+  });
   it.each([false, true])("stdio 关闭时 HTTP 开关仍可操作，原状态为 %s", async (httpEnabled) => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
@@ -141,7 +159,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const next = { ...current, mcpHttpEnabled: !httpEnabled };
     mocks.updateMcpSettings.mockResolvedValueOnce(next);
     const onChange = vi.fn();
-    const page = render(<SettingsPage onChange={onChange} settings={current} updater={updater} />);
+    const page = render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={current} updater={updater} />);
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     const httpPanel = screen.getByRole("heading", { name: "settings.mcpHttp" }).closest("section")!;
     const toggle = within(httpPanel).getByRole("switch") as HTMLInputElement;
@@ -150,7 +168,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(next));
     expect(mocks.updateMcpSettings).toHaveBeenCalledWith(false, !httpEnabled, 37_653, []);
-    page.rerender(<SettingsPage onChange={onChange} settings={next} updater={updater} />);
+    page.rerender(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={next} updater={updater} />);
     expect(toggle.checked).toBe(!httpEnabled);
     expect(toggle.disabled).toBe(false);
   });
@@ -162,13 +180,13 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const next = { ...current, mcpEnabled: false };
     mocks.updateMcpSettings.mockResolvedValueOnce(next);
     const onChange = vi.fn();
-    const page = render(<SettingsPage onChange={onChange} settings={current} updater={updater} />);
+    const page = render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={current} updater={updater} />);
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     const stdioPanel = screen.getByRole("heading", { name: "settings.mcpEnabled" }).closest("section")!;
     fireEvent.click(within(stdioPanel).getByRole("switch"));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(next));
     expect(mocks.updateMcpSettings).toHaveBeenCalledWith(false, true, 37_653, []);
-    page.rerender(<SettingsPage onChange={onChange} settings={next} updater={updater} />);
+    page.rerender(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={next} updater={updater} />);
     const httpPanel = screen.getByRole("heading", { name: "settings.mcpHttp" }).closest("section")!;
     const toggle = within(httpPanel).getByRole("switch") as HTMLInputElement;
     expect(toggle.checked).toBe(true);
@@ -183,7 +201,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getAutostartState.mockReturnValueOnce(initial.promise);
     mocks.setAutostartEnabled.mockReturnValueOnce(save.promise);
     const onChange = vi.fn();
-    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={settings} updater={updater} />);
     const toggle = screen.getByRole("switch", { name: "settings.autostart" }) as HTMLInputElement;
     expect(toggle.disabled).toBe(true);
     expect(toggle.getAttribute("aria-busy")).toBe("true");
@@ -211,7 +229,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.getAutostartState.mockRejectedValueOnce(new Error("启动项读取失败"));
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
     expect((await screen.findByRole("alert")).textContent).toContain("启动项读取失败");
     const toggle = screen.getByRole("switch", { name: "settings.autostart" }) as HTMLInputElement;
     expect(toggle.disabled).toBe(true);
@@ -234,7 +252,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
         }),
     );
     const onChange = vi.fn();
-    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={settings} updater={updater} />);
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
     expect(headings).toEqual([
@@ -280,7 +298,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.openProjectLink.mockResolvedValue(undefined);
     mocks.writeText.mockResolvedValue(undefined);
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     expect(screen.queryByText("v1.0.0")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "settings.about" }));
@@ -307,7 +325,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const nextSettings = { ...settings, updateSource: "github" as const };
     mocks.updateAppSettings.mockResolvedValue(nextSettings);
     const onChange = vi.fn();
-    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={settings} updater={updater} />);
     fireEvent.click(screen.getByRole("button", { name: "settings.about" }));
 
     fireEvent.click(screen.getByRole("combobox", { name: "settings.updateSource" }));
@@ -323,7 +341,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.updateLogSettings.mockRejectedValue(new Error("保存失败"));
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     const switchElement = screen.getByRole("switch", {
       name: "settings.recordMcpToolInputs",
@@ -338,7 +356,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
   it("stdio 和 HTTP 各自提供提示词、复制配置及一键本地配置", () => {
     mocks.listSessions.mockResolvedValue([]);
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
 
@@ -386,7 +404,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.configureLocalAgents.mockReturnValueOnce(request.promise);
     mocks.getAppSettings.mockResolvedValueOnce(enabledSettings);
     const onChange = vi.fn();
-    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={settings} updater={updater} />);
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     fireEvent.click(screen.getByRole("button", { name: "settings.localAgentHttpOpen" }));
     await screen.findByRole("checkbox", { name: /Claude/ });
@@ -416,7 +434,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.getMcpStdioClientConfig.mockResolvedValue("dsh stdio config");
     mocks.getMcpHttpClientConfig.mockResolvedValue("dsh http config");
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     const stdioPanel = screen
@@ -455,7 +473,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpPermissionCatalog.mockResolvedValue([]);
     mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
     mocks.writeText.mockResolvedValue(undefined);
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     const stdioPanel = screen
@@ -508,7 +526,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
     mocks.writeText.mockResolvedValue(undefined);
     const onChange = vi.fn();
-    render(<SettingsPage onChange={onChange} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={onChange} settings={settings} updater={updater} />);
 
     fireEvent.click(screen.getByRole("button", { name: "settings.mcpTitle" }));
     fireEvent.click(screen.getByRole("button", { name: "settings.localAgentOpen" }));
@@ -560,7 +578,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
     mocks.writeText.mockResolvedValue(undefined);
     render(
-      <SettingsPage
+      <SettingsPage onBack={vi.fn()} sidebarCollapsed={false}
         onChange={vi.fn()}
         settings={{ ...settings, mcpEnabled: true }}
         updater={updater}
@@ -608,7 +626,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     mocks.getMcpAgentPrompt.mockResolvedValue("FsTTY prompt");
     mocks.writeText.mockRejectedValue(new Error("clipboard denied"));
     render(
-      <SettingsPage
+      <SettingsPage onBack={vi.fn()} sidebarCollapsed={false}
         onChange={vi.fn()}
         settings={{ ...settings, mcpEnabled: true }}
         updater={updater}
@@ -646,7 +664,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
       duplicateCount: 0,
       entryCount: 3,
     });
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     const panel = screen
       .getByRole("heading", { name: "settings.commandHistory" })
@@ -683,7 +701,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     });
     mocks.confirm.mockResolvedValue(true);
     mocks.updateCommandHistoryDeduplication.mockRejectedValue(new Error("去重保存失败"));
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     const historySwitch = await screen.findByRole("switch", {
       name: "settings.commandHistoryDedupe",
@@ -711,7 +729,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
       duplicateCount: 0,
       entryCount: 0,
     });
-    render(<SettingsPage onChange={vi.fn()} settings={settings} updater={updater} />);
+    render(<SettingsPage onBack={vi.fn()} sidebarCollapsed={false} onChange={vi.fn()} settings={settings} updater={updater} />);
 
     const panel = screen
       .getByRole("heading", { name: "settings.commandHistory" })

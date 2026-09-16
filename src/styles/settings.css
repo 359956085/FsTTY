@@ -6,6 +6,20 @@
   background: var(--page-bg);
 }
 
+.settings-page.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-sidebar-item.settings-back {
+  margin-bottom: 20px;
+  color: var(--text);
+}
+
+.settings-sidebar-item.settings-back-inline {
+  width: fit-content;
+  margin-bottom: 0;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -32,7 +46,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 38px 12px;
+  padding: 12px;
+  overflow-y: auto;
   border-right: 1px solid var(--border);
   background: var(--settings-sidebar-bg);
 }

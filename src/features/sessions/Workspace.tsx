@@ -1,7 +1,7 @@
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
@@ -98,6 +98,18 @@ export function Workspace({
   visible,
 }: WorkspaceProps) {
   const { t } = useTranslation();
+  const rightToggleRef = useRef<HTMLButtonElement>(null);
+  const focusRightToggle = useRef(false);
+  useLayoutEffect(() => {
+    if (focusRightToggle.current && visible) {
+      rightToggleRef.current?.focus();
+      focusRightToggle.current = false;
+    }
+  }, [rightCollapsed, visible]);
+  function toggleRight() {
+    focusRightToggle.current = true;
+    onToggleRight();
+  }
   const activeError = activeRuntime.error ?? error;
   const [tabContextMenu, setTabContextMenu] = useState<{
     x: number;
@@ -248,19 +260,26 @@ export function Workspace({
             <div className="workspace-empty">{t("sessions.noSession")}</div>
           ) : null}
         </div>
+        {rightCollapsed && (
+          <TooltipButton
+            aria-expanded={false}
+            buttonRef={rightToggleRef}
+            className="terminal-expand-right"
+            label={t("nav.expandFiles")}
+            onClick={toggleRight}
+            type="button"
+          >
+            <ChevronLeft aria-hidden="true" size={18} />
+          </TooltipButton>
+        )}
       </section>
 
-      {rightResizeHandle}
+      {!rightCollapsed && rightResizeHandle}
 
-      {rightCollapsed ? (
-        <aside className="collapsed-rail collapsed-rail-right">
-          <TooltipButton label={t("sessions.expand")} onClick={onToggleRight} type="button">
-            <ChevronLeft size={20} />
-          </TooltipButton>
-        </aside>
-      ) : (
+      {!rightCollapsed && (
         <aside className="right-rail">
           <FilesPane
+            collapseButtonRef={rightToggleRef}
             currentPath={activeRuntime.currentPath}
             files={activeRuntime.files}
             key={activeTabId ?? "no-session"}
@@ -271,7 +290,7 @@ export function Workspace({
             onDismissTransfer={() =>
               activeTabId && onDismissTransfer(activeTabId)
             }
-            onCollapse={onToggleRight}
+            onCollapse={toggleRight}
             onCreateDirectory={(name) =>
               activeTabId
                 ? onCreateRemoteDirectory(activeTabId, name)

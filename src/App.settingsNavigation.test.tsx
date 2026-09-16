@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { StrictMode, useEffect } from "react";
+import { StrictMode, useEffect, useState } from "react";
+import type { UsePaneLayoutResult } from "./features/sessions/usePaneLayout";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -21,18 +22,26 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./features/sessions/SessionsPage", () => ({
-  SessionsPage: () => {
+  SessionsPage: ({ paneLayout }: { paneLayout: UsePaneLayoutResult }) => {
     useEffect(() => {
       mocks.sessionMounts();
       return () => {
         mocks.sessionUnmounts();
       };
     }, []);
-    return <div>sessions-content-ready</div>;
+    return <div data-left-collapsed={paneLayout.layout.leftCollapsed} ref={paneLayout.rootRef}>sessions-content-ready</div>;
   },
 }));
 vi.mock("./features/settings/SettingsPage", () => ({
-  SettingsPage: () => <div>settings-content-ready</div>,
+  SettingsPage: ({ onBack, sidebarCollapsed }: { onBack: () => void; sidebarCollapsed: boolean }) => {
+    const [section, setSection] = useState("general");
+    return <div>
+      <span>settings-content-ready</span>
+      <span>{section}</span>
+      <button onClick={onBack}>nav.backToApp</button>
+      {!sidebarCollapsed && <button onClick={() => setSection("mcp")}>MCP</button>}
+    </div>;
+  },
 }));
 vi.mock("./features/settings/UpdateDialog", () => ({ UpdateDialog: () => null }));
 vi.mock("./features/settings/useAppUpdater", () => ({ useAppUpdater: () => ({ phase: mocks.updatePhase }) }));
@@ -55,6 +64,7 @@ afterEach(cleanup);
 describe("应用页面导航", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mocks.lightweightState.suppressConfirmation = false;
     mocks.updatePhase = "idle";
     mocks.enterLightweightMode.mockResolvedValue(undefined);
@@ -72,10 +82,31 @@ describe("应用页面导航", () => {
     expect(screen.getByText("settings-content-ready")).not.toBeNull();
     expect(screen.queryByText("common.loading")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "nav.sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "nav.backToApp" }));
     fireEvent.click(screen.getByRole("button", { name: "nav.settings" }));
     expect(mocks.sessionMounts).toHaveBeenCalledTimes(2);
     expect(mocks.sessionUnmounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("默认会话页且两页左栏独立记忆，返回后会话不重建", () => {
+    render(<App />);
+    expect(screen.queryByText("settings-content-ready")).toBeNull();
+    expect(screen.queryByRole("button", { name: "nav.sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "nav.collapseSessions" }));
+    expect(screen.getByText("sessions-content-ready").getAttribute("data-left-collapsed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "nav.settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "nav.settings" }));
+    expect(screen.getByText("mcp")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "nav.collapseSettings" }));
+    expect(screen.queryByRole("button", { name: "MCP" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "nav.backToApp" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "nav.settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "nav.expandSessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "nav.settings" }));
+    expect(screen.getByRole("button", { name: "nav.expandSettings" }).getAttribute("aria-expanded")).toBe("false");
+    expect(mocks.sessionMounts).toHaveBeenCalledOnce();
+    expect(mocks.sessionUnmounts).not.toHaveBeenCalled();
   });
 
   it("叶子按钮先确认且取消不会误保存不再提示", async () => {

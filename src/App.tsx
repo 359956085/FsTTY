@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Minus, Square, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Minus, PanelLeftClose, PanelLeftOpen, Settings, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { SessionsPage } from "./features/sessions/SessionsPage";
@@ -17,14 +17,20 @@ import {
   getInitialLightweightModeState,
 } from "./features/lightweight/lightweightMode";
 import { Button } from "./shared/ui/Button";
-
-import appIcon from "./assets/brand-icon.png";
+import { usePaneLayout } from "./features/sessions/usePaneLayout";
+import { TooltipButton } from "./shared/ui/TooltipButton";
 
 type AppView = "sessions" | "settings";
 
 export function App() {
   const { t, i18n } = useTranslation();
   const [view, setView] = useState<AppView>("sessions");
+  const paneLayout = usePaneLayout();
+  const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(false);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const sidebarCollapsed = view === "sessions"
+    ? paneLayout.layout.leftCollapsed
+    : settingsSidebarCollapsed;
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-CN",
     theme: readCachedThemePreference(),
@@ -78,14 +84,6 @@ export function App() {
       active = false;
     };
   }, [i18n]);
-
-  const navItems = useMemo(
-    () => [
-      { id: "sessions" as const, label: t("nav.sessions") },
-      { id: "settings" as const, label: t("nav.settings") },
-    ],
-    [t],
-  );
 
   const windowLabels = {
     minimize: t("nav.minimize"),
@@ -145,34 +143,31 @@ export function App() {
       onContextMenu={(event) => event.preventDefault()}
     >
       <header className="app-titlebar" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region>
-          <img
-            aria-hidden="true"
-            className="brand-mark"
-            data-tauri-drag-region
-            src={appIcon}
-            alt=""
-          />
-          <span data-tauri-drag-region>FsTTY</span>
-        </div>
-        <nav className="titlebar-nav" aria-label={t("nav.main")}>
-          {navItems.map((item) => {
-            return (
-              <button
-                aria-current={view === item.id ? "page" : undefined}
-                className={
-                  view === item.id
-                    ? "titlebar-nav-item titlebar-nav-item-active"
-                    : "titlebar-nav-item"
-                }
-                key={item.id}
-                onClick={() => setView(item.id)}
-                type="button"
-              >
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+        <nav className="titlebar-actions" aria-label={t("nav.main")}>
+          <TooltipButton
+            aria-controls={view === "sessions" ? "session-sidebar" : "settings-sidebar"}
+            aria-expanded={!sidebarCollapsed}
+            className="titlebar-action"
+            label={t(view === "sessions"
+              ? sidebarCollapsed ? "nav.expandSessions" : "nav.collapseSessions"
+              : sidebarCollapsed ? "nav.expandSettings" : "nav.collapseSettings")}
+            onClick={() => view === "sessions"
+              ? paneLayout.toggleLeftCollapsed()
+              : setSettingsSidebarCollapsed((collapsed) => !collapsed)}
+            type="button"
+          >
+            {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={19} /> : <PanelLeftClose aria-hidden="true" size={19} />}
+          </TooltipButton>
+          <TooltipButton
+            aria-pressed={view === "settings"}
+            buttonRef={settingsButtonRef}
+            className="titlebar-action"
+            label={t("nav.settings")}
+            onClick={() => setView("settings")}
+            type="button"
+          >
+            <Settings aria-hidden="true" size={19} />
+          </TooltipButton>
         </nav>
         <div aria-hidden="true" className="titlebar-drag-region" data-tauri-drag-region />
         <div className="window-controls">
@@ -233,6 +228,7 @@ export function App() {
           className={view === "sessions" ? "app-view" : "app-view app-view-hidden"}
         >
           <SessionsPage
+            paneLayout={paneLayout}
             allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
             theme={resolvedTheme}
             shortcuts={settings.shortcuts}
@@ -241,6 +237,11 @@ export function App() {
         </div>
         {view === "settings" ? (
           <SettingsPage
+            sidebarCollapsed={settingsSidebarCollapsed}
+            onBack={() => {
+              setView("sessions");
+              settingsButtonRef.current?.focus();
+            }}
             settings={settings}
             updater={updater}
             onChange={(nextSettings) => {

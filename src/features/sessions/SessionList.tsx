@@ -1,7 +1,6 @@
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import {
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Copy,
   Filter,
@@ -69,7 +68,6 @@ interface SessionListProps {
     targetGroup: string,
     targetIndex: number,
   ) => Promise<boolean>;
-  onCollapse: () => void;
 }
 
 type SessionContextMenu =
@@ -106,7 +104,6 @@ export function SessionList({
   filter,
   groups,
   mutationPending,
-  onCollapse,
   onCreate,
   onDelete,
   onDeleteGroup,
@@ -423,6 +420,7 @@ export function SessionList({
 
   return (
     <aside
+      id="session-sidebar"
       className={[
         "session-sidebar",
         dragAllowed ? "session-list-drag-enabled" : "",
@@ -440,7 +438,7 @@ export function SessionList({
     >
       <header className="session-sidebar-header">
         <h2>{t("sessions.title")}</h2>
-        <span className="session-sidebar-header-actions">
+        <div className="session-sidebar-header-actions">
           <TooltipButton
             label={t("sessions.new")}
             className="icon-button"
@@ -450,10 +448,53 @@ export function SessionList({
           >
             <Plus size={18} />
           </TooltipButton>
-          <TooltipButton label={t("sessions.collapse")} className="icon-button" onClick={onCollapse} type="button">
-            <ChevronLeft size={18} />
-          </TooltipButton>
-        </span>
+          <div
+            className="menu-anchor"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setFilterOpen(false);
+              }
+            }}
+          >
+            <button
+              aria-activedescendant={
+                filterOpen ? `session-filter-option-${filterActiveIndex}` : undefined
+              }
+              aria-controls="session-filter-options"
+              aria-expanded={filterOpen}
+              aria-haspopup="listbox"
+              aria-label={`${t("sessions.filter")}: ${filterOptions[selectedFilterIndex].label}`}
+              className={filter === "all" ? "icon-button" : "icon-button icon-button-active"}
+              onClick={() => (filterOpen ? setFilterOpen(false) : openFilterMenu())}
+              onKeyDown={handleFilterKeyDown}
+              role="combobox"
+              type="button"
+            >
+              <Filter size={17} />
+            </button>
+            {filterOpen ? (
+              <div
+                className="popup-menu popup-menu-right"
+                id="session-filter-options"
+                role="listbox"
+              >
+                {filterOptions.map((option, index) => (
+                  <SelectableOption
+                    active={index === filterActiveIndex}
+                    className="popup-menu-option"
+                    id={`session-filter-option-${index}`}
+                    key={option.value}
+                    label={option.label}
+                    onClick={() => selectFilterOption(index)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setFilterActiveIndex(index)}
+                    selected={filter === option.value}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
 
       <div className="session-search-row">
@@ -466,52 +507,6 @@ export function SessionList({
             value={query}
           />
         </label>
-        <div
-          className="menu-anchor"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setFilterOpen(false);
-            }
-          }}
-        >
-          <button
-            aria-activedescendant={
-              filterOpen ? `session-filter-option-${filterActiveIndex}` : undefined
-            }
-            aria-controls="session-filter-options"
-            aria-expanded={filterOpen}
-            aria-haspopup="listbox"
-            aria-label={`${t("sessions.filter")}: ${filterOptions[selectedFilterIndex].label}`}
-            className={filter === "all" ? "icon-button" : "icon-button icon-button-active"}
-            onClick={() => (filterOpen ? setFilterOpen(false) : openFilterMenu())}
-            onKeyDown={handleFilterKeyDown}
-            role="combobox"
-            type="button"
-          >
-            <Filter size={17} />
-          </button>
-          {filterOpen ? (
-            <div
-              className="popup-menu popup-menu-right"
-              id="session-filter-options"
-              role="listbox"
-            >
-              {filterOptions.map((option, index) => (
-                <SelectableOption
-                  active={index === filterActiveIndex}
-                  className="popup-menu-option"
-                  id={`session-filter-option-${index}`}
-                  key={option.value}
-                  label={option.label}
-                  onClick={() => selectFilterOption(index)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setFilterActiveIndex(index)}
-                  selected={filter === option.value}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
       </div>
 
       {copyError ? (

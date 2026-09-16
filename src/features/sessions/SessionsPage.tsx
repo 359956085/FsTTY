@@ -1,11 +1,9 @@
-import { TooltipButton } from "../../shared/ui/TooltipButton";
-import { ChevronRight } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
 import { SessionList } from "./SessionList";
-import { usePaneLayout } from "./usePaneLayout";
+import type { UsePaneLayoutResult } from "./usePaneLayout";
 import {
   createRuntime,
   useSessionConnections,
@@ -18,6 +16,7 @@ import type { ResolvedTheme } from "../../shared/theme";
 import { useLightweightRestore } from "../lightweight/useLightweightRestore";
 
 interface SessionsPageProps {
+  paneLayout: UsePaneLayoutResult;
   allowRemoteClipboardWrite: boolean;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
@@ -25,6 +24,7 @@ interface SessionsPageProps {
 }
 
 export function SessionsPage({
+  paneLayout,
   allowRemoteClipboardWrite,
   shortcuts,
   theme,
@@ -44,9 +44,8 @@ export function SessionsPage({
     beginResize,
     layout,
     rootRef,
-    toggleLeftCollapsed,
     toggleRightCollapsed,
-  } = usePaneLayout();
+  } = paneLayout;
   const validRuntimeIds = useMemo(
     () => new Set(sessionsState.openSessionTabs.map((tab) => tab.id)),
     [sessionsState.openSessionTabs],
@@ -110,17 +109,7 @@ export function SessionsPage({
       }
       ref={rootRef}
     >
-      {layout.leftCollapsed ? (
-        <aside className="collapsed-rail collapsed-rail-left">
-          <TooltipButton
-            label={t("sessions.expand")}
-            onClick={toggleLeftCollapsed}
-            type="button"
-          >
-            <ChevronRight size={20} />
-          </TooltipButton>
-        </aside>
-      ) : (
+      {!layout.leftCollapsed && (
         <SessionList
           collapsedGroupNames={sessionsState.collapsedGroupNames}
           favoriteSessionIds={sessionsState.favoriteSessionIds}
@@ -128,7 +117,6 @@ export function SessionsPage({
           groups={sessionsState.groups}
           mutationPending={sessionsState.listMutationPending}
           query={sessionsState.query}
-          onCollapse={toggleLeftCollapsed}
           onCreate={() => sessionsState.setDialogState({ mode: "create" })}
           onDelete={(sessionId) => void deleteSession(sessionId)}
           onDeleteGroup={deleteGroup}
@@ -150,16 +138,15 @@ export function SessionsPage({
         />
       )}
 
-      <ResizeHandle
+      {!layout.leftCollapsed && <ResizeHandle
         ariaLabel={t("sessions.resizeLeft")}
-        disabled={layout.leftCollapsed}
         onKeyboardResize={(direction) => adjustResize("left", direction)}
         onPointerDown={(event) => beginResize("left", event)}
         orientation="vertical"
         valueMax={WORKSPACE_LAYOUT_LIMITS.leftWidth.max}
         valueMin={WORKSPACE_LAYOUT_LIMITS.leftWidth.min}
         valueNow={layout.leftWidth}
-      />
+      />}
 
       <Workspace
         allowRemoteClipboardWrite={allowRemoteClipboardWrite}

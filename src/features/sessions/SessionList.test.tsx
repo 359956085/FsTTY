@@ -49,7 +49,6 @@ function renderSessionList(session: Session) {
       filter="all"
       groups={groups}
       mutationPending={false}
-      onCollapse={vi.fn()}
       onCreate={vi.fn()}
       onDelete={vi.fn()}
       onDeleteGroup={vi.fn().mockResolvedValue({ ok: true, value: [] })}

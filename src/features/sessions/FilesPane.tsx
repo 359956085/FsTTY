@@ -28,6 +28,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../../shared/api/types";
@@ -65,6 +66,7 @@ import {
 } from "./inlineRenameController";
 
 interface FilesPaneProps {
+  collapseButtonRef?: RefObject<HTMLButtonElement | null>;
   currentPath: string;
   files: FileEntry[];
   loading: boolean;
@@ -108,6 +110,7 @@ type RemoteMoveStatus =
   | { kind: "error"; message: string };
 
 export function FilesPane({
+  collapseButtonRef,
   currentPath,
   files,
   loading,
@@ -579,7 +582,9 @@ export function FilesPane({
             <Upload size={17} />
           </TooltipButton>
           <TooltipButton
-            label={t("sessions.collapse")}
+            aria-expanded
+            buttonRef={collapseButtonRef}
+            label={t("nav.collapseFiles")}
             className="icon-button"
             onClick={onCollapse}
             type="button"

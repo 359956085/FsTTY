@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Copy,
   Info,
   Plug,
@@ -23,6 +24,8 @@ import { useGeneralSettings } from "./useGeneralSettings";
 import { useMcpSettings } from "./useMcpSettings";
 
 interface SettingsPageProps {
+  onBack: () => void;
+  sidebarCollapsed: boolean;
   onChange: (settings: AppSettings) => void;
   settings: AppSettings;
   updater: AppUpdaterController;
@@ -30,7 +33,7 @@ interface SettingsPageProps {
 
 type SettingsSection = "about" | "general" | "mcp";
 
-export function SettingsPage({ settings, onChange, updater }: SettingsPageProps) {
+export function SettingsPage({ settings, onChange, updater, onBack, sidebarCollapsed }: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const configurationBusyRef = useRef(false);
@@ -150,11 +153,15 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
   }[activeSection];
 
   return (
-    <section aria-labelledby="settings-title" className="settings-page">
+    <section aria-labelledby="settings-title" className={sidebarCollapsed ? "settings-page sidebar-collapsed" : "settings-page"}>
       <h1 className="sr-only" id="settings-title">
         {t("settings.title")}
       </h1>
-      <nav aria-label={t("settings.navigationLabel")} className="settings-sidebar">
+      {!sidebarCollapsed && <nav aria-label={t("settings.navigationLabel")} className="settings-sidebar" id="settings-sidebar">
+        <button className="settings-sidebar-item settings-back" onClick={onBack} type="button">
+          <ArrowLeft aria-hidden="true" size={16} />
+          <span>{t("nav.backToApp")}</span>
+        </button>
         <button
           aria-current={activeSection === "general" ? "page" : undefined}
           className="settings-sidebar-item"
@@ -182,9 +189,13 @@ export function SettingsPage({ settings, onChange, updater }: SettingsPageProps)
           <Info aria-hidden="true" size={16} />
           <span>{t("settings.about")}</span>
         </button>
-      </nav>
+      </nav>}
 
       <div className="settings-content">
+        {sidebarCollapsed && <button className="settings-sidebar-item settings-back settings-back-inline" onClick={onBack} type="button">
+          <ArrowLeft aria-hidden="true" size={16} />
+          <span>{t("nav.backToApp")}</span>
+        </button>}
         <header className="settings-section-heading">
           <h2>{sectionTitle}</h2>
         </header>

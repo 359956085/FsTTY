@@ -2,11 +2,12 @@
 
 import { act, renderHook } from "@testing-library/react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneLayout } from "./usePaneLayout";
 
 const mocks = vi.hoisted(() => ({
   updateWorkspacePreferences: vi.fn(),
+  layout: { leftWidth: 260, rightWidth: 460, leftCollapsed: false, rightCollapsed: false },
 }));
 
 vi.mock("./workspacePreferences", async (importOriginal) => {
@@ -14,12 +15,7 @@ vi.mock("./workspacePreferences", async (importOriginal) => {
   return {
     ...actual,
     readWorkspacePreferences: () => ({
-      layout: {
-        leftWidth: 260,
-        rightWidth: 460,
-        leftCollapsed: false,
-        rightCollapsed: false,
-      },
+      layout: { ...mocks.layout },
     }),
     updateWorkspacePreferences: mocks.updateWorkspacePreferences,
   };
@@ -34,15 +30,15 @@ function pointerEvent(type: string, pointerId: number, clientX: number) {
   return event;
 }
 
-function installRoot(result: ReturnType<typeof renderHook<ReturnType<typeof usePaneLayout>, void>>["result"]) {
+function installRoot(result: ReturnType<typeof renderHook<ReturnType<typeof usePaneLayout>, void>>["result"], width = 1400) {
   const root = document.createElement("div");
   vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
     bottom: 800,
     height: 800,
     left: 0,
-    right: 1400,
+    right: width,
     top: 0,
-    width: 1400,
+    width,
     x: 0,
     y: 0,
     toJSON: () => undefined,
@@ -66,7 +62,56 @@ afterEach(() => {
   mocks.updateWorkspacePreferences.mockReset();
 });
 
+beforeEach(() => {
+  mocks.layout = { leftWidth: 260, rightWidth: 460, leftCollapsed: false, rightCollapsed: false };
+});
+
 describe("usePaneLayout", () => {
+  it("恢复旧收起偏好并保留宽度，两侧可分别展开", () => {
+    mocks.layout = { leftWidth: 300, rightWidth: 480, leftCollapsed: true, rightCollapsed: true };
+    const { result } = renderHook(() => usePaneLayout());
+    installRoot(result);
+    expect(result.current.layout).toEqual(mocks.layout);
+    act(() => result.current.toggleLeftCollapsed());
+    expect(result.current.layout).toEqual({ ...mocks.layout, leftCollapsed: false });
+    act(() => result.current.toggleRightCollapsed());
+    expect(result.current.layout).toEqual({ ...mocks.layout, leftCollapsed: false, rightCollapsed: false });
+    act(() => { result.current.toggleLeftCollapsed(); result.current.toggleRightCollapsed(); });
+    expect(result.current.layout).toEqual(mocks.layout);
+  });
+
+  it("收起右侧后不再为占位栏或其手柄预留宽度", () => {
+    mocks.layout.rightCollapsed = true;
+    const { result } = renderHook(() => usePaneLayout());
+    installRoot(result, 800);
+    act(() => {
+      for (let index = 0; index < 30; index += 1) result.current.adjustResize("left", 1);
+    });
+    expect(result.current.layout.leftWidth).toBe(356);
+    expect(result.current.layout.rightWidth).toBe(460);
+  });
+
+  it("收起左侧时右侧拖动按单个手柄计算边界", () => {
+    mocks.layout.leftCollapsed = true;
+    const { result } = renderHook(() => usePaneLayout());
+    installRoot(result, 1180);
+    act(() => {
+      for (let index = 0; index < 50; index += 1) result.current.adjustResize("right", -1);
+    });
+    expect(result.current.layout.rightWidth).toBe(736);
+  });
+
+  it("窄窗口展开时收缩面板，保证终端最小宽度", () => {
+    mocks.layout = { leftWidth: 420, rightWidth: 600, leftCollapsed: true, rightCollapsed: false };
+    const { result } = renderHook(() => usePaneLayout());
+    installRoot(result, 1180);
+    act(() => result.current.toggleLeftCollapsed());
+    const layout = result.current.layout;
+    expect(layout.leftCollapsed).toBe(false);
+    expect(layout.leftWidth + layout.rightWidth + 8 + 440).toBe(1180);
+    expect(layout.leftWidth).toBeGreaterThanOrEqual(220);
+    expect(layout.rightWidth).toBeGreaterThanOrEqual(360);
+  });
   it("忽略错误 Pointer，并在正确释放后持久化", () => {
     const { result } = renderHook(() => usePaneLayout());
     installRoot(result);

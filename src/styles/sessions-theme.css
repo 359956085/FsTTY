@@ -21,7 +21,6 @@
 }
 
 :root[data-theme="light"] .command-history-search,
-:root[data-theme="light"] .file-toolbar,
 :root[data-theme="light"] .file-inline-rename,
 :root[data-theme="light"] .transfer-progress {
   background: var(--input-bg);
@@ -50,11 +49,6 @@
 :root[data-theme="light"] .file-row.file-row-move-success {
   background: rgba(41, 145, 68, 0.1) !important;
   color: #216f36;
-}
-
-:root[data-theme="light"] .file-row-active {
-  outline-color: rgba(37, 136, 245, 0.55);
-  background: rgba(37, 136, 245, 0.1) !important;
 }
 
 :root[data-theme="light"] .metric-track {

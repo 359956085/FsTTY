@@ -3,7 +3,7 @@
   z-index: 210;
   max-width: min(280px, calc(100vw - 16px));
   padding: 6px 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel-3);
   color: var(--text);

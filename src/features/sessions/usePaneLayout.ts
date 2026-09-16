@@ -18,9 +18,7 @@ import {
 export type PaneResizeTarget = "left" | "right";
 export type ResizeDirection = -1 | 1;
 
-export const WORKSPACE_COLLAPSED_PANE_WIDTH = 72;
-
-interface UsePaneLayoutResult {
+export interface UsePaneLayoutResult {
   rootRef: RefObject<HTMLDivElement | null>;
   layout: WorkspaceLayoutPreferences;
   beginResize: (
@@ -45,7 +43,9 @@ interface ActiveDrag {
 }
 
 const KEYBOARD_WIDTH_STEP = 8;
-const VERTICAL_HANDLES_WIDTH = 8;
+function visibleHandlesWidth(layout: WorkspaceLayoutPreferences) {
+  return (layout.leftCollapsed ? 0 : 4) + (layout.rightCollapsed ? 0 : 4);
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -84,17 +84,17 @@ function getBoundedValue(
   const otherWidth =
     target === "left"
       ? layout.rightCollapsed
-        ? WORKSPACE_COLLAPSED_PANE_WIDTH
+        ? 0
         : layout.rightWidth
       : layout.leftCollapsed
-        ? WORKSPACE_COLLAPSED_PANE_WIDTH
+        ? 0
         : layout.leftWidth;
   const availableMax =
     rootWidth > 0
       ? rootWidth -
         otherWidth -
         WORKSPACE_LAYOUT_LIMITS.terminalMinWidth -
-        VERTICAL_HANDLES_WIDTH
+        visibleHandlesWidth(layout)
       : limits.max;
 
   return clamp(
@@ -136,15 +136,15 @@ function fitLayoutToRoot(
   let leftWidth = layout.leftWidth;
   let rightWidth = layout.rightWidth;
   const effectiveLeft = layout.leftCollapsed
-    ? WORKSPACE_COLLAPSED_PANE_WIDTH
+    ? 0
     : leftWidth;
   const effectiveRight = layout.rightCollapsed
-    ? WORKSPACE_COLLAPSED_PANE_WIDTH
+    ? 0
     : rightWidth;
   let overflow =
     effectiveLeft +
     effectiveRight +
-    VERTICAL_HANDLES_WIDTH +
+    visibleHandlesWidth(layout) +
     WORKSPACE_LAYOUT_LIMITS.terminalMinWidth -
     rootWidth;
 
@@ -199,10 +199,6 @@ export function usePaneLayout(): UsePaneLayoutResult {
 
   useLayoutEffect(() => {
     const root = rootRef.current;
-    root?.style.setProperty(
-      "--workspace-collapsed-pane-width",
-      `${WORKSPACE_COLLAPSED_PANE_WIDTH}px`,
-    );
     applyCssValue(root, "left", layout.leftWidth);
     applyCssValue(root, "right", layout.rightWidth);
   }, [layout]);
