@@ -11,6 +11,12 @@ void i18n.use(initReactI18next).init({
   resources: {
     "zh-CN": {
       translation: {
+        installation: {
+          title: "安装与启动入口",
+          hint: "当前目录用于更新和启动。旧目录中的程序不再作为有效安装。",
+          repair: "修复快捷方式、自启和 MCP",
+          restartAgent: "MCP 运行副本已更新，请重启 Agent 使新版本生效。",
+        },
         security: {
           title: "SSH 凭据保护",
           secretInputHint: "保存凭据及修改认证目标需在 Windows 安全窗口确认。密码、私钥和口令仅由独立服务保管，日常连接无需重复确认。",
@@ -485,6 +491,12 @@ void i18n.use(initReactI18next).init({
     },
     "en-US": {
       translation: {
+        installation: {
+          title: "Installation and launch entries",
+          hint: "Updates and launch entries use this directory. Copies in previous directories are no longer active installations.",
+          repair: "Repair shortcuts, autostart and MCP",
+          restartAgent: "The MCP runtime has been updated. Restart your Agent to use the new version.",
+        },
         security: {
           title: "SSH credential protection",
           secretInputHint: "Saving credentials or changing authentication targets requires confirmation in the Windows security window. The service holds passwords, private keys and passphrases. Routine connections need no confirmation.",

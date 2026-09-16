@@ -165,7 +165,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 
 优先前往 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases)，也可使用 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
-- 当前开发分支生成 `*-setup.exe`（NSIS），固定安装到 Program Files，强制安装凭据服务。
+- 当前开发分支生成 `*-setup.exe`（NSIS），桌面支持自选目录；凭据服务、管理工具及卸载入口固定在 Program Files。详见[安装与覆盖升级](doc/windows-installation.md)。
 - 旧版本发布页中的 MSI 不包含新的服务安装流程。
 
 NSIS 支持简体中文和英文，并跟随 Windows 显示语言。发布包暂未配置 Windows Authenticode 签名；若 SmartScreen 显示提示，请确认安装包来自本仓库 Releases 页面。

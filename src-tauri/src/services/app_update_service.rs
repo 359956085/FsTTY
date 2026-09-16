@@ -80,6 +80,11 @@ impl AppUpdateService {
     }
 
     pub async fn install(&self, on_progress: Channel<AppUpdateProgress>) -> Result<(), AppError> {
+        #[cfg(windows)]
+        fstty_broker::installation::check_desktop(
+            &std::env::current_exe().map_err(|_| AppError::Internal("无法定位当前程序".into()))?,
+        )
+        .map_err(AppError::Internal)?;
         if self.installing.swap(true, Ordering::AcqRel) {
             return Err(AppError::Busy("应用更新正在安装".to_owned()));
         }

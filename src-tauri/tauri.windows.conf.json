@@ -5,9 +5,11 @@
   "bundle": {
     "targets": ["nsis"],
     "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
       "allowDowngrades": false,
       "nsis": {
         "installMode": "perMachine",
+        "template": "windows/installer.nsi",
         "installerHooks": "windows/broker-hooks.nsh"
       }
     }

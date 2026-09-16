@@ -2,6 +2,7 @@ mod app_paths;
 mod commands;
 mod gui_lifecycle;
 mod gui_startup;
+mod installation;
 mod local_agent_setup;
 mod logging;
 mod mcp;
@@ -20,19 +21,20 @@ use commands::{
     delete_session_group, disconnect_session, download_file, export_command_history,
     export_mcp_command_policy, finish_lightweight_restore, forget_host_key, get_app_settings,
     get_autostart_state, get_command_history_settings, get_credential_service_status,
-    get_device_metrics_snapshot, get_device_status, get_lightweight_mode_state,
-    get_mcp_agent_prompt, get_mcp_http_client_config, get_mcp_http_status,
-    get_mcp_permission_catalog, get_mcp_stdio_client_config, get_system_clipboard_content_kind,
-    import_command_history, import_mcp_command_policy, inspect_local_agent_setup,
-    install_app_update, list_command_history, list_remote_files, list_sessions,
-    manage_ssh_credential, migrate_ssh_credential, migrate_ssh_credentials, move_remote_entry,
-    open_log_directory, open_project_link, rename_remote_entry, rename_session_group,
-    reorder_session, reorder_session_group, repair_credential_service, resize_terminal,
-    resolve_session_login_save_prompt, resolve_transfer_job_conflict, rotate_mcp_http_token,
-    set_autostart_enabled, set_ignored_update_version, set_language, set_session_credential,
-    set_theme, start_transfer_job, trust_host_key, update_app_settings,
-    update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
-    update_shortcut_settings, upload_file, write_terminal,
+    get_device_metrics_snapshot, get_device_status, get_installation_status,
+    get_lightweight_mode_state, get_mcp_agent_prompt, get_mcp_http_client_config,
+    get_mcp_http_status, get_mcp_permission_catalog, get_mcp_stdio_client_config,
+    get_system_clipboard_content_kind, import_command_history, import_mcp_command_policy,
+    inspect_local_agent_setup, install_app_update, list_command_history, list_remote_files,
+    list_sessions, manage_ssh_credential, migrate_ssh_credential, migrate_ssh_credentials,
+    move_remote_entry, open_log_directory, open_project_link, rename_remote_entry,
+    rename_session_group, reorder_session, reorder_session_group, repair_credential_service,
+    repair_installation_entries, resize_terminal, resolve_session_login_save_prompt,
+    resolve_transfer_job_conflict, rotate_mcp_http_token, set_autostart_enabled,
+    set_ignored_update_version, set_language, set_session_credential, set_theme,
+    start_transfer_job, trust_host_key, update_app_settings, update_command_history_deduplication,
+    update_log_settings, update_mcp_settings, update_session, update_shortcut_settings,
+    upload_file, write_terminal,
 };
 use gui_lifecycle::{create_main_window, request_app_exit, request_main_window, GuiLifecycle};
 use gui_startup::GuiStartupGuard;
@@ -79,6 +81,15 @@ fn keeps_lightweight_background(code: Option<i32>, active: bool) -> bool {
 }
 
 pub fn run_mcp_stdio() -> Result<(), String> {
+    #[cfg(windows)]
+    if let Some(record) = fstty_broker::installation::read()? {
+        use sha2::{Digest, Sha256};
+        let executable = std::env::current_exe().map_err(|_| "无法读取当前 MCP 版本")?;
+        let bytes = std::fs::read(executable).map_err(|_| "无法读取 MCP 程序")?;
+        if format!("{:x}", Sha256::digest(bytes)) != record.sha256 {
+            return Err("MCP 运行副本已过期，请启动当前 FsTTY 并重启 Agent".into());
+        }
+    }
     let paths = app_paths::prepare_app_paths()?;
     logging::prepare_log_directory(&paths.app_data_dir, &paths.log_dir)?;
     logging::init_stdio(paths.log_dir)?;
@@ -95,6 +106,14 @@ pub fn run_mcp_stdio() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if let Err(error) = std::env::current_exe()
+        .map_err(|_| "无法定位当前程序".to_owned())
+        .and_then(|exe| fstty_broker::installation::check_desktop(&exe))
+    {
+        fstty_broker::admin::show_error(&error);
+        return;
+    }
     let paths = app_paths::prepare_app_paths().expect("初始化 FsTTY 应用数据目录失败");
     let startup_guard =
         GuiStartupGuard::acquire(&paths.app_data_dir).expect("无法完成 FsTTY GUI 单实例启动检查");
@@ -130,6 +149,10 @@ pub fn run() {
             let runtime_app_data = paths.app_data_dir.clone();
             app.manage(state);
             tauri::async_runtime::spawn_blocking(move || {
+                let installation = crate::installation::repair(&runtime_app_data);
+                for issue in installation.issues {
+                    log::warn!("安装入口修复：{issue}");
+                }
                 let result = std::env::current_exe()
                     .map_err(|error| format!("无法获取 FsTTY 程序路径：{error}"))
                     .and_then(|executable| {
@@ -206,6 +229,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            get_installation_status,
+            repair_installation_entries,
             get_credential_service_status,
             repair_credential_service,
             migrate_ssh_credential,

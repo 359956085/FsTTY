@@ -51,6 +51,7 @@ zeroize = { version = "1", features = ["serde"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fstty-broker = { path = "broker" }
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_Foundation"] }
 auto-launch = "=0.5.0"
 clipboard-win = "5.4"
 keyring-core = "1"

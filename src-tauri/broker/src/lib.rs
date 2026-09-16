@@ -1,6 +1,8 @@
 #[cfg(windows)]
 pub mod admin;
 #[cfg(windows)]
+pub mod installation;
+#[cfg(windows)]
 pub mod paths;
 pub mod protocol;
 pub mod proxy;

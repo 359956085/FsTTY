@@ -151,7 +151,7 @@ Selecting a history entry with Enter or the mouse inserts it into the terminal w
 
 Prefer [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) in mainland China, or use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
 
-- The development branch produces `*-setup.exe` (NSIS), installs into Program Files, and requires the credential service.
+- The development branch produces `*-setup.exe` (NSIS) with a custom desktop directory; the required credential service, management tool, and uninstaller remain in Program Files. See the [installation guide](doc/windows-installation.md).
 - MSI packages from earlier releases do not include the new service installation workflow.
 
 The Windows development build uses an independent SSH credential service. Installation, migration, and authentication changes require UAC; daily connections do not. Original key files, clipboard contents, and remaining legacy copies are still accessible to programs running under the same account. Secrets cannot be exported. MCP Token storage is unchanged. See the [implementation and acceptance guide](doc/windows-credential-broker.md).

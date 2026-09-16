@@ -83,7 +83,7 @@ fn token_info(token: HANDLE, kind: TOKEN_INFORMATION_CLASS) -> crate::Result<Vec
     }
     Ok(buffer)
 }
-fn token_identity(token: HANDLE) -> crate::Result<Identity> {
+pub(crate) fn token_identity(token: HANDLE) -> crate::Result<Identity> {
     let info = token_info(token, TokenUser)?;
     let user = unsafe { &*info.as_ptr().cast::<TOKEN_USER>() };
     let mut text = null_mut();
@@ -189,7 +189,7 @@ fn open_service(access: u32) -> crate::Result<ScHandle> {
     }
 }
 
-fn service_pid() -> crate::Result<u32> {
+pub(crate) fn service_pid() -> crate::Result<u32> {
     let service = open_service(SERVICE_QUERY_STATUS)?;
     let mut status: SERVICE_STATUS_PROCESS = unsafe { zeroed() };
     let mut needed = 0;
@@ -330,7 +330,7 @@ fn crypt(bytes: &[u8], seal: bool) -> crate::Result<Zeroizing<Vec<u8>>> {
     Ok(result)
 }
 
-fn known_folder(id: &windows_sys::core::GUID) -> crate::Result<PathBuf> {
+pub(crate) fn known_folder(id: &windows_sys::core::GUID) -> crate::Result<PathBuf> {
     let mut path = null_mut();
     if unsafe { SHGetKnownFolderPath(id, 0, null_mut(), &mut path) } < 0 {
         return Err("无法定位系统目录".into());

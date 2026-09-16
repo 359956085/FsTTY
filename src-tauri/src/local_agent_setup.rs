@@ -12,7 +12,11 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 use uuid::Uuid;
 
 mod http;
+#[cfg(any(windows, test))]
+mod installation;
 pub use http::LocalAgentHttpConfig;
+#[cfg(windows)]
+pub use installation::repair_installation_paths;
 
 const PROMPT_BEGIN: &str = "<!-- fstty:begin -->";
 const PROMPT_END: &str = "<!-- fstty:end -->";

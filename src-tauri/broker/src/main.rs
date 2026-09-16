@@ -12,6 +12,30 @@ fn main() {
         [command] if command == "--restore-upgrade" => fstty_broker::windows::restore_upgrade(),
         [command] if command == "--stop" => fstty_broker::windows::stop(false),
         [command] if command == "--uninstall" => fstty_broker::windows::stop(true),
+        [command] if command == "--recover-installation" => fstty_broker::installation::recover(),
+        [command] if command == "--remove-desktop" => fstty_broker::installation::uninstall(),
+        [command, caller] if command == "--desktop-candidates" => caller
+            .parse::<u32>()
+            .map_err(|_| "调用者无效".into())
+            .and_then(fstty_broker::installation::export_candidates),
+        [command, caller] if command == "--launch-desktop" => caller
+            .parse::<u32>()
+            .map_err(|_| "调用者无效".into())
+            .and_then(fstty_broker::installation::launch_desktop),
+        [command, directory, caller, mode]
+            if command == "--deploy-desktop" && matches!(mode.as_str(), "install" | "update") =>
+        {
+            caller
+                .parse::<u32>()
+                .map_err(|_| "调用者无效".into())
+                .and_then(|pid| {
+                    fstty_broker::installation::deploy(
+                        std::path::Path::new(directory),
+                        pid,
+                        mode == "update",
+                    )
+                })
+        }
         [command, ticket] if command == "--manage" => fstty_broker::admin::manage(ticket),
         [command, ticket, flag, theme] if command == "--manage" && flag == "--theme" => {
             fstty_broker::admin::Theme::parse(theme)
@@ -21,6 +45,19 @@ fn main() {
         _ => Err("请通过 FsTTY 或安装程序管理凭据服务".into()),
     };
     if let Err(error) = result {
+        if args.first().is_some_and(|command| {
+            matches!(
+                command.as_str(),
+                "--desktop-candidates"
+                    | "--deploy-desktop"
+                    | "--remove-desktop"
+                    | "--recover-installation"
+                    | "--launch-desktop"
+            )
+        }) {
+            fstty_broker::installation::report_error(&error);
+        }
+        eprintln!("{error}");
         if args
             .first()
             .is_some_and(|a| a == "--manage" || a == "--update" || a == "--repair")

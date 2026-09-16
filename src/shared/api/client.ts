@@ -43,6 +43,12 @@ import type {
 } from "./types";
 
 export const api = {
+  getInstallationStatus() {
+    return invoke<{ directory: string | null; issues: string[]; restartAgent: boolean }>("get_installation_status");
+  },
+  repairInstallationEntries() {
+    return invoke<{ directory: string | null; issues: string[]; restartAgent: boolean }>("repair_installation_entries");
+  },
   getCredentialServiceStatus() {
     return invoke<{ required: boolean; available: boolean; message: string | null }>("get_credential_service_status");
   },

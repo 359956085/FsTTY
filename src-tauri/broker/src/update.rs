@@ -24,6 +24,8 @@ struct Manifest {
     owner: String,
     signature: String,
     expires: u64,
+    #[serde(default)]
+    caller_pid: u32,
 }
 fn now() -> crate::Result<u64> {
     SystemTime::now()
@@ -90,11 +92,23 @@ pub async fn receive(
         }
     }
     let ticket = uuid::Uuid::new_v4().to_string();
+    use std::os::windows::io::AsRawHandle;
+    let mut caller_pid = 0;
+    if unsafe {
+        windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId(
+            pipe.as_raw_handle(),
+            &mut caller_pid,
+        )
+    } == 0
+    {
+        return Err("无法保留更新调用者身份".into());
+    }
     let manifest = Manifest {
         ticket: ticket.clone(),
         owner: owner.into(),
         signature,
         expires: now()? + 300,
+        caller_pid,
     };
     std::fs::write(
         &metadata,
@@ -220,6 +234,10 @@ pub fn install(ticket: &str) -> crate::Result<()> {
     if manifest.ticket != ticket || manifest.expires < now()? {
         return Err("更新请求已失效".into());
     }
+    let caller = crate::installation::caller_token(manifest.caller_pid)?;
+    if windows::token_identity(caller.0)?.sid != manifest.owner {
+        return Err("更新调用者身份已变化，请重新检查更新".into());
+    }
     let path = dir.join("installer.exe");
     let mut file = std::fs::OpenOptions::new()
         .read(true)
@@ -260,6 +278,7 @@ pub fn install(ticket: &str) -> crate::Result<()> {
     use std::os::windows::process::CommandExt;
     std::process::Command::new(&path)
         .arg("/UPDATE")
+        .arg(format!("/CALLERPID={}", manifest.caller_pid))
         .current_dir(&dir)
         .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
         .spawn()
