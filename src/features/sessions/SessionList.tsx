@@ -1,3 +1,4 @@
+import { TooltipButton } from "../../shared/ui/TooltipButton";
 import {
   ChevronDown,
   ChevronLeft,
@@ -440,18 +441,18 @@ export function SessionList({
       <header className="session-sidebar-header">
         <h2>{t("sessions.title")}</h2>
         <span className="session-sidebar-header-actions">
-          <button
-            aria-label={t("sessions.new")}
+          <TooltipButton
+            label={t("sessions.new")}
             className="icon-button"
             disabled={mutationPending}
             onClick={onCreate}
             type="button"
           >
             <Plus size={18} />
-          </button>
-          <button aria-label={t("sessions.collapse")} className="icon-button" onClick={onCollapse} type="button">
+          </TooltipButton>
+          <TooltipButton label={t("sessions.collapse")} className="icon-button" onClick={onCollapse} type="button">
             <ChevronLeft size={18} />
-          </button>
+          </TooltipButton>
         </span>
       </header>
 

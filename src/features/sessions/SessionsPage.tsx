@@ -1,3 +1,4 @@
+import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronRight } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -111,13 +112,13 @@ export function SessionsPage({
     >
       {layout.leftCollapsed ? (
         <aside className="collapsed-rail collapsed-rail-left">
-          <button
-            aria-label={t("sessions.expand")}
+          <TooltipButton
+            label={t("sessions.expand")}
             onClick={toggleLeftCollapsed}
             type="button"
           >
             <ChevronRight size={20} />
-          </button>
+          </TooltipButton>
         </aside>
       ) : (
         <SessionList

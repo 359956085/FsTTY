@@ -1,3 +1,22 @@
+.button-tooltip {
+  position: fixed;
+  z-index: 210;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--panel-3);
+  color: var(--text);
+  box-shadow: 0 10px 26px var(--shadow-color);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .button {
   display: inline-flex;
   align-items: center;

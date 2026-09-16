@@ -1,3 +1,4 @@
+import { TooltipButton } from "../../shared/ui/TooltipButton";
 import {
   Ban,
   Clipboard,
@@ -568,23 +569,23 @@ export function FilesPane({
       <header className="panel-title">
         <h2>{t("sessions.files")}</h2>
         <span className="panel-title-actions">
-          <button
-            aria-label={t("sessions.upload")}
+          <TooltipButton
+            label={t("sessions.upload")}
             className="icon-button"
             disabled={operationBlocked}
             onClick={onUpload}
             type="button"
           >
             <Upload size={17} />
-          </button>
-          <button
-            aria-label={t("sessions.collapse")}
+          </TooltipButton>
+          <TooltipButton
+            label={t("sessions.collapse")}
             className="icon-button"
             onClick={onCollapse}
             type="button"
           >
             <ChevronRight size={18} />
-          </button>
+          </TooltipButton>
         </span>
       </header>
 

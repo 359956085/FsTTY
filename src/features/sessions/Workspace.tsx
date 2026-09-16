@@ -1,3 +1,4 @@
+import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -173,14 +174,14 @@ export function Workspace({
             </button>
           </div>
         ))}
-        <button
-          aria-label={t("sessions.new")}
+        <TooltipButton
+          label={t("sessions.new")}
           className="session-tab-add"
           onClick={onCreateSession}
           type="button"
         >
           <Plus size={20} />
-        </button>
+        </TooltipButton>
       </div>
 
       {tabContextMenu ? (
@@ -253,9 +254,9 @@ export function Workspace({
 
       {rightCollapsed ? (
         <aside className="collapsed-rail collapsed-rail-right">
-          <button aria-label={t("sessions.expand")} onClick={onToggleRight} type="button">
+          <TooltipButton label={t("sessions.expand")} onClick={onToggleRight} type="button">
             <ChevronLeft size={20} />
-          </button>
+          </TooltipButton>
         </aside>
       ) : (
         <aside className="right-rail">
