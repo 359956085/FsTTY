@@ -206,8 +206,8 @@ export function useGeneralSettings({
     [onChange, settings.allowRemoteClipboardWrite, settings.updateSource, translate],
   );
 
-  const saveProxy = useCallback(async () => {
-    if (savingProxyRef.current || proxy.trim() === settings.proxyAddress) {
+  const saveProxy = useCallback(async (enabled = settings.proxyEnabled) => {
+    if (savingProxyRef.current || (proxy.trim() === settings.proxyAddress && enabled === settings.proxyEnabled)) {
       return;
     }
     savingProxyRef.current = true;
@@ -216,7 +216,7 @@ export function useGeneralSettings({
     // 与更新设置共用串行队列，避免旧响应覆盖刚保存的代理状态。
     const save = updateSettingsSaveRef.current.then(async () => {
       try {
-        const nextSettings = await api.setProxyAddress(proxy.trim());
+        const nextSettings = await api.setProxySettings(enabled, proxy.trim());
         if (mountedRef.current) {
           setProxy(nextSettings.proxyAddress);
           onChange(nextSettings);
@@ -237,7 +237,7 @@ export function useGeneralSettings({
         setSavingProxy(false);
       }
     }
-  }, [onChange, proxy, settings.proxyAddress, translate]);
+  }, [onChange, proxy, settings.proxyAddress, settings.proxyEnabled, translate]);
 
   const checkForUpdates = useCallback(async () => {
     const saved = await saveUpdateSettings(settings.autoUpdate);

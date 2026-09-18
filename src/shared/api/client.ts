@@ -314,6 +314,9 @@ export const api = {
   setProxyAddress(address: string) {
     return invoke<AppSettings>("set_proxy_address", { address });
   },
+  setProxySettings(enabled: boolean, address: string) {
+    return invoke<AppSettings>("set_proxy_settings", { enabled, address });
+  },
   updateLogSettings(recordMcpToolInputs: boolean) {
     return invoke<AppSettings>("update_log_settings", { recordMcpToolInputs });
   },

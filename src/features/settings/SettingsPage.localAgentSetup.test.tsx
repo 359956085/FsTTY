@@ -106,6 +106,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
   proxyAddress: "",
+  proxyEnabled: false,
   updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };
@@ -257,6 +258,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     const headings = screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
     expect(headings).toEqual([
       "settings.generalSettings",
+      "settings.proxyTitle",
       "settings.shortcuts",
       "settings.commandHistory",
       "settings.logs",

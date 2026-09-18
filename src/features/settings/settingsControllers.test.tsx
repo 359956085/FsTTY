@@ -15,7 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   rotateMcpHttpToken: vi.fn(),
   setTheme: vi.fn(),
-  setProxyAddress: vi.fn(),
+  setProxySettings: vi.fn(),
   updateAppSettings: vi.fn(),
   updateMcpSettings: vi.fn(),
   writeText: vi.fn(),
@@ -58,6 +58,7 @@ const settings: AppSettings = {
   recordMcpToolInputs: false,
   shortcuts,
   proxyAddress: "",
+  proxyEnabled: false,
   updateSource: "auto",
 };
 
@@ -174,13 +175,13 @@ describe("设置状态控制器", () => {
     expect(apiMocks.updateAppSettings.mock.calls[0]).toEqual([true, false, "auto"]);
     expect(apiMocks.updateAppSettings.mock.calls[1]).toEqual([true, false, "github"]);
     expect(apiMocks.updateAppSettings.mock.calls[2]).toEqual([true, false, "cnb"]);
-    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
   });
 
 
   it("代理独立保存、去除首尾空格、重复提交防护及失败重试", async () => {
     const request = deferred<AppSettings>();
-    apiMocks.setProxyAddress.mockReturnValueOnce(request.promise);
+    apiMocks.setProxySettings.mockReturnValueOnce(request.promise);
     const onChange = vi.fn();
     const { result } = renderHook(() => useGeneralSettings({
       onChange, settings, translate: (key) => key, updater: {} as AppUpdaterController,
@@ -193,8 +194,8 @@ describe("设置状态控制器", () => {
     });
     await act(async () => Promise.resolve());
     expect(result.current.savingProxy).toBe(true);
-    expect(apiMocks.setProxyAddress).toHaveBeenCalledTimes(1);
-    expect(apiMocks.setProxyAddress).toHaveBeenCalledWith("http://127.0.0.1:7890");
+    expect(apiMocks.setProxySettings).toHaveBeenCalledTimes(1);
+    expect(apiMocks.setProxySettings).toHaveBeenCalledWith(false, "http://127.0.0.1:7890");
     await act(async () => {
       request.reject(new Error("代理保存失败"));
       await save;
@@ -204,7 +205,7 @@ describe("设置状态控制器", () => {
     expect(result.current.savingProxy).toBe(false);
     expect(onChange).not.toHaveBeenCalled();
     const saved = { ...settings, proxyAddress: "http://127.0.0.1:7890" };
-    apiMocks.setProxyAddress.mockResolvedValueOnce(saved);
+    apiMocks.setProxySettings.mockResolvedValueOnce(saved);
     await act(async () => result.current.saveProxy());
     expect(onChange).toHaveBeenCalledWith(saved);
     expect(result.current.proxyError).toBeNull();
@@ -212,24 +213,47 @@ describe("设置状态控制器", () => {
     expect(apiMocks.updateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("未修改代理不提交，清空已保存代理明确保存直连", async () => {
+  it("未修改代理不提交，关闭时清空已保存地址仍保持关闭", async () => {
     const configured = { ...settings, proxyAddress: "socks5://127.0.0.1:1080" };
     const { result } = renderHook(() => useGeneralSettings({
       onChange: vi.fn(), settings: configured, translate: (key) => key, updater: {} as AppUpdaterController,
     }));
     await act(async () => result.current.saveProxy());
-    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
-    apiMocks.setProxyAddress.mockResolvedValueOnce(settings);
+    expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
+    apiMocks.setProxySettings.mockResolvedValueOnce(settings);
     act(() => result.current.setProxy(""));
     await act(async () => result.current.saveProxy());
-    expect(apiMocks.setProxyAddress).toHaveBeenCalledWith("");
+    expect(apiMocks.setProxySettings).toHaveBeenCalledWith(false, "");
+  });
+
+  it("开关失败保持关闭，成功开启后关闭仍保留地址", async () => {
+    const onChange = vi.fn();
+    const options = { onChange, settings, translate: (key: string) => key, updater: {} as AppUpdaterController };
+    const { result, rerender } = renderHook((props) => useGeneralSettings(props), { initialProps: options });
+    apiMocks.setProxySettings.mockRejectedValueOnce(new Error("开启代理前请输入代理地址"));
+    await act(async () => result.current.saveProxy(true));
+    expect(apiMocks.setProxySettings).toHaveBeenLastCalledWith(true, "");
+    expect(result.current.proxyError).toBe("开启代理前请输入代理地址");
+    expect(onChange).not.toHaveBeenCalled();
+    act(() => result.current.setProxy("socks5://127.0.0.1:1080"));
+    const enabled = { ...settings, proxyEnabled: true, proxyAddress: "socks5://127.0.0.1:1080" };
+    apiMocks.setProxySettings.mockResolvedValueOnce(enabled);
+    await act(async () => result.current.saveProxy(true));
+    expect(onChange).toHaveBeenLastCalledWith(enabled);
+    rerender({ ...options, settings: enabled });
+    const disabled = { ...enabled, proxyEnabled: false };
+    apiMocks.setProxySettings.mockResolvedValueOnce(disabled);
+    await act(async () => result.current.saveProxy(false));
+    expect(apiMocks.setProxySettings).toHaveBeenLastCalledWith(false, enabled.proxyAddress);
+    expect(onChange).toHaveBeenLastCalledWith(disabled);
+    expect(result.current.proxy).toBe(enabled.proxyAddress);
   });
 
   it("更新与代理交叉保存保持提交顺序，不遗留忙状态", async () => {
     const flags = deferred<AppSettings>();
     const proxy = deferred<AppSettings>();
     apiMocks.updateAppSettings.mockReturnValueOnce(flags.promise);
-    apiMocks.setProxyAddress.mockReturnValueOnce(proxy.promise);
+    apiMocks.setProxySettings.mockReturnValueOnce(proxy.promise);
     const { result } = renderHook(() => useGeneralSettings({
       onChange: vi.fn(), settings, translate: (key) => key, updater: {} as AppUpdaterController,
     }));
@@ -241,10 +265,10 @@ describe("设置状态控制器", () => {
       proxySave = result.current.saveProxy();
     });
     await act(async () => Promise.resolve());
-    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
     await act(async () => { flags.resolve(settings); await flagsSave; });
     expect(result.current.savingUpdateSettings).toBe(false);
-    expect(apiMocks.setProxyAddress).toHaveBeenCalledTimes(1);
+    expect(apiMocks.setProxySettings).toHaveBeenCalledTimes(1);
     await act(async () => {
       proxy.resolve({ ...settings, proxyAddress: "http://127.0.0.1:7890" });
       await proxySave;
@@ -261,10 +285,10 @@ describe("设置状态控制器", () => {
     }));
     act(() => result.current.setProxy("http://draft:7890"));
     await act(async () => result.current.saveUpdateSettings(false, true, "cnb"));
-    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
     expect(result.current.proxy).toBe("http://draft:7890");
     const proxy = deferred<AppSettings>();
-    apiMocks.setProxyAddress.mockReturnValueOnce(proxy.promise);
+    apiMocks.setProxySettings.mockReturnValueOnce(proxy.promise);
     let save!: Promise<void>;
     act(() => { save = result.current.saveProxy(); });
     await act(async () => Promise.resolve());

@@ -13,7 +13,6 @@ import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import { CredentialSecuritySection } from "./CredentialSecuritySection";
-import { InstallationSection } from "./InstallationSection";
 
 interface GeneralSettingsPanelProps {
   activeTooltipKey: string | null;
@@ -22,6 +21,7 @@ interface GeneralSettingsPanelProps {
   onClipboardChange: (enabled: boolean) => void;
   onProxyChange: (value: string) => void;
   onProxyCommit: () => void;
+  onProxyEnabledChange: (enabled: boolean) => void;
   proxy: string;
   proxyError: string | null;
   savingProxy: boolean;
@@ -47,6 +47,7 @@ export function GeneralSettingsPanel({
   onClipboardChange,
   onProxyChange,
   onProxyCommit,
+  onProxyEnabledChange,
   proxy,
   proxyError,
   savingProxy,
@@ -69,7 +70,6 @@ export function GeneralSettingsPanel({
 
   return (
     <>
-      <InstallationSection />
       <section aria-labelledby="general-settings-title" className="settings-panel">
         <header className="settings-panel-header">
           <h3 id="general-settings-title">{t("settings.generalSettings")}</h3>
@@ -145,6 +145,26 @@ export function GeneralSettingsPanel({
             disabled={savingUpdateSettings}
             id="remote-clipboard-write"
             onChange={(event) => onClipboardChange(event.target.checked)}
+            role="switch"
+            type="checkbox"
+          />
+        </div>
+      </section>
+
+      <section aria-labelledby="proxy-settings-title" className="settings-panel">
+        <header className="settings-panel-header">
+          <h3 id="proxy-settings-title">{t("settings.proxyTitle")}</h3>
+        </header>
+        <div className="settings-row">
+          <label className="settings-row-label" htmlFor="proxy-enabled">{t("settings.proxyEnable")}</label>
+          <input
+            aria-label={t("settings.proxyEnable")}
+            aria-busy={savingProxy}
+            checked={settings.proxyEnabled}
+            className="settings-auto-update-toggle"
+            disabled={savingProxy}
+            id="proxy-enabled"
+            onChange={(event) => onProxyEnabledChange(event.target.checked)}
             role="switch"
             type="checkbox"
           />

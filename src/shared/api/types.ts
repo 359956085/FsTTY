@@ -9,6 +9,7 @@ export interface AppSettings {
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;
   proxyAddress: string;
+  proxyEnabled: boolean;
   allowRemoteClipboardWrite: boolean;
   recordMcpToolInputs: boolean;
   ignoredUpdateVersion: string | null;

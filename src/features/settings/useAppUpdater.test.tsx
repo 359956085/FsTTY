@@ -33,6 +33,7 @@ vi.mock("../../shared/api/client", () => ({
 
 const settings = {
   proxyAddress: "",
+  proxyEnabled: false,
 } as AppSettings;
 
 afterEach(cleanup);

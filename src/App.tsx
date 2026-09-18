@@ -37,6 +37,7 @@ export function App() {
     autoUpdate: true,
     updateSource: "auto",
     proxyAddress: "",
+    proxyEnabled: false,
     allowRemoteClipboardWrite: true,
     ignoredUpdateVersion: null,
     mcpEnabled: false,

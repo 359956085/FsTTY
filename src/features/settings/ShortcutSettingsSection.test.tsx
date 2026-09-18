@@ -35,6 +35,7 @@ function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
     recordMcpToolInputs: false,
     shortcuts,
     proxyAddress: "",
+    proxyEnabled: false,
     updateSource: "auto",
   };
 }

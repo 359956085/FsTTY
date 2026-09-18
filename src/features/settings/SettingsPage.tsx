@@ -220,6 +220,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             onSettingsChange={onChange}
             onProxyChange={setProxy}
             onProxyCommit={() => void saveProxy()}
+            onProxyEnabledChange={(enabled) => void saveProxy(enabled)}
             proxy={proxy}
             proxyError={proxyError}
             savingProxy={savingProxy}

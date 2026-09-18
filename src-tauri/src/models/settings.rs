@@ -11,6 +11,8 @@ pub struct AppSettings {
     pub update_source: UpdateSourcePreference,
     #[serde(default, alias = "updateProxy")]
     pub proxy_address: String,
+    #[serde(default)]
+    pub proxy_enabled: bool,
     #[serde(default = "default_allow_remote_clipboard_write")]
     pub allow_remote_clipboard_write: bool,
     #[serde(default)]
@@ -38,6 +40,7 @@ impl std::fmt::Debug for AppSettings {
             .field("theme", &self.theme)
             .field("auto_update", &self.auto_update)
             .field("update_source", &self.update_source)
+            .field("proxy_enabled", &self.proxy_enabled)
             .field(
                 "proxy_address",
                 &fstty_network::ProxySnapshot(self.proxy_address.clone()),

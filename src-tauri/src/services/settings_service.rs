@@ -76,7 +76,16 @@ impl SettingsService {
     }
 
     pub fn proxy_snapshot(&self) -> fstty_network::ProxySnapshot {
-        fstty_network::ProxySnapshot(self.settings.proxy_address.clone())
+        fstty_network::ProxySnapshot(if self.settings.proxy_enabled {
+            if self.settings.proxy_address.trim().is_empty() {
+                // 损坏的“已启用但无地址”配置必须失败关闭，不能意外直连。
+                "http://".to_owned()
+            } else {
+                self.settings.proxy_address.clone()
+            }
+        } else {
+            String::new()
+        })
     }
 
     pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
@@ -91,6 +100,7 @@ impl SettingsService {
         }
         self.settings.record_mcp_tool_inputs = store.settings.record_mcp_tool_inputs;
         self.settings.proxy_address = store.settings.proxy_address;
+        self.settings.proxy_enabled = store.settings.proxy_enabled;
         Ok(())
     }
 
@@ -138,8 +148,24 @@ impl SettingsService {
 
     pub fn set_proxy_address(&mut self, address: String) -> Result<AppSettings, AppError> {
         fstty_network::parse_proxy(&address).map_err(AppError::Validation)?;
+        self.set_proxy_settings(!address.trim().is_empty(), address)
+    }
+
+    pub fn set_proxy_settings(
+        &mut self,
+        enabled: bool,
+        address: String,
+    ) -> Result<AppSettings, AppError> {
+        if enabled
+            && fstty_network::parse_proxy(&address)
+                .map_err(AppError::Validation)?
+                .is_none()
+        {
+            return Err(AppError::Validation("开启代理前请输入代理地址".into()));
+        }
         let mut next = self.settings.clone();
         next.proxy_address = address.trim().to_owned();
+        next.proxy_enabled = enabled;
         self.replace(next)
     }
 
@@ -272,6 +298,7 @@ fn default_settings() -> AppSettings {
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
         proxy_address: String::new(),
+        proxy_enabled: false,
         allow_remote_clipboard_write: true,
         record_mcp_tool_inputs: false,
         ignored_update_version: None,
@@ -409,7 +436,20 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
     }
     let content =
         fs::read(path).map_err(|_| AppError::Persistence("无法读取设置数据".to_owned()))?;
-    let store = serde_json::from_slice::<SettingsStore>(&content)
+    let mut wire: serde_json::Value = serde_json::from_slice(&content)
+        .map_err(|_| AppError::Persistence("设置数据格式无效".to_owned()))?;
+    if let Some(object) = wire.as_object_mut() {
+        // 旧版以非空地址表示启用；显式保存的关闭状态不得被旧地址覆盖。
+        if !object.contains_key("proxyEnabled") {
+            let enabled = object
+                .get("proxyAddress")
+                .or_else(|| object.get("updateProxy"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|address| !address.trim().is_empty());
+            object.insert("proxyEnabled".into(), serde_json::Value::Bool(enabled));
+        }
+    }
+    let store = serde_json::from_value::<SettingsStore>(wire)
         .map_err(|_| AppError::Persistence("设置数据格式无效".to_owned()))?;
     if store.version != STORE_VERSION {
         return Err(AppError::Persistence("设置存储版本无效".to_owned()));
@@ -457,6 +497,7 @@ mod tests {
             expected.auto_update = false;
             expected.allow_remote_clipboard_write = false;
             expected.proxy_address = address.into();
+            expected.proxy_enabled = true;
             let mut json = serde_json::to_value(SettingsStore {
                 version: STORE_VERSION,
                 settings: expected.clone(),
@@ -464,6 +505,7 @@ mod tests {
             .unwrap();
             let object = json.as_object_mut().unwrap();
             object.remove("proxyAddress");
+            object.remove("proxyEnabled");
             object.insert("updateProxy".into(), serde_json::json!(address));
             fs::write(
                 directory.join(STORE_FILE),
@@ -495,6 +537,109 @@ mod tests {
             assert!(!format!("{:?}", service.get()).contains("socks5://"));
             let _ = fs::remove_dir_all(directory);
         }
+    }
+
+    #[test]
+    fn 代理开关独立保存且关闭快照不使用保留地址() {
+        let directory = test_directory("proxy-toggle");
+        let mut service = SettingsService::load(&directory);
+        assert!(!service.get().proxy_enabled);
+        assert_eq!(service.proxy_snapshot().0, "");
+        service
+            .set_proxy_settings(false, "  待填写地址  ".into())
+            .unwrap();
+        assert_eq!(service.get().proxy_address, "待填写地址");
+        assert_eq!(service.proxy_snapshot().0, "");
+        let saved = service.get();
+        for address in ["", "http://proxy:0", "ftp://proxy:80"] {
+            assert!(service.set_proxy_settings(true, address.into()).is_err());
+            assert_eq!(service.get(), saved);
+        }
+        service
+            .set_proxy_settings(true, "socks5://127.0.0.1:1080".into())
+            .unwrap();
+        assert_eq!(service.proxy_snapshot().0, "socks5://127.0.0.1:1080");
+        service
+            .set_proxy_settings(false, service.get().proxy_address)
+            .unwrap();
+        let restored = SettingsService::load(&directory);
+        assert!(!restored.get().proxy_enabled);
+        assert_eq!(restored.get().proxy_address, "socks5://127.0.0.1:1080");
+        assert_eq!(restored.proxy_snapshot().0, "");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn 旧地址启用迁移及显式关闭状态优先() {
+        for field in ["proxyAddress", "updateProxy"] {
+            for address in ["", "http://127.0.0.1:7890", "http://proxy:0"] {
+                let directory = test_directory("proxy-enabled-migration");
+                let mut json = serde_json::to_value(SettingsStore::default()).unwrap();
+                let object = json.as_object_mut().unwrap();
+                object.remove("proxyEnabled");
+                object.remove("proxyAddress");
+                object.insert(field.into(), serde_json::json!(address));
+                fs::write(
+                    directory.join(STORE_FILE),
+                    serde_json::to_vec(&json).unwrap(),
+                )
+                .unwrap();
+                let mut service = SettingsService::load(&directory);
+                assert_eq!(service.get().proxy_enabled, !address.is_empty());
+                assert_eq!(service.proxy_snapshot().0, address);
+                if address.ends_with(":0") {
+                    assert!(fstty_network::parse_proxy(&service.proxy_snapshot().0).is_err());
+                }
+                service.set_proxy_settings(false, address.into()).unwrap();
+                let restored = SettingsService::load(&directory);
+                assert!(!restored.get().proxy_enabled);
+                assert_eq!(restored.get().proxy_address, address);
+                assert_eq!(restored.proxy_snapshot().0, "");
+                fs::remove_dir_all(directory).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn 已启用但地址为空时联网快照拒绝直连() {
+        let directory = test_directory("proxy-enabled-empty");
+        let mut json = serde_json::to_value(SettingsStore::default()).unwrap();
+        let object = json.as_object_mut().unwrap();
+        object.insert("proxyEnabled".into(), serde_json::Value::Bool(true));
+        object.insert(
+            "proxyAddress".into(),
+            serde_json::Value::String(String::new()),
+        );
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let service = SettingsService::load(&directory);
+        assert!(fstty_network::parse_proxy(&service.proxy_snapshot().0).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn 代理开关热加载同步到独立进程且兼容旧设置命令() {
+        let directory = test_directory("proxy-toggle-reload");
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .set_proxy_address("http://127.0.0.1:7890".into())
+            .unwrap();
+        let mut reader = SettingsService::load(&directory);
+        assert!(reader.get().proxy_enabled);
+        writer
+            .set_proxy_settings(false, writer.get().proxy_address)
+            .unwrap();
+        reader.reload_mcp_runtime_settings().unwrap();
+        assert!(!reader.get().proxy_enabled);
+        assert_eq!(reader.get().proxy_address, "http://127.0.0.1:7890");
+        assert_eq!(reader.proxy_snapshot().0, "");
+        writer.set_proxy_address("".into()).unwrap();
+        assert!(!writer.get().proxy_enabled);
+        assert_eq!(writer.get().proxy_address, "");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -911,6 +1056,11 @@ mod tests {
             .set_proxy_address("http://127.0.0.1:7890".into())
             .is_err());
         assert_eq!(service.get().proxy_address, "");
+        assert!(!service.get().proxy_enabled);
+        assert!(service
+            .set_proxy_settings(false, "待填写地址".into())
+            .is_err());
+        assert_eq!(service.get(), default_settings());
         let _ = fs::remove_dir_all(directory);
     }
 }

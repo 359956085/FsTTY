@@ -39,6 +39,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
   proxyAddress: "",
+  proxyEnabled: false,
   updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };

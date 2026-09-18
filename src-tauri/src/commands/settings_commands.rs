@@ -112,6 +112,21 @@ pub fn set_proxy_address(
 }
 
 #[tauri::command]
+pub fn set_proxy_settings(
+    state: State<'_, AppState>,
+    enabled: bool,
+    address: String,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    let settings = service.set_proxy_settings(enabled, address)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
+}
+
+#[tauri::command]
 pub fn update_log_settings(
     state: State<'_, AppState>,
     record_mcp_tool_inputs: bool,

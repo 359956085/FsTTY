@@ -11,7 +11,6 @@ vi.mock("./useAutostartSettings", () => ({ useAutostartSettings: () => ({
   confirmed: true, enabled: false, error: null, loading: false, saving: false,
   refresh: vi.fn(), save: vi.fn(),
 }) }));
-vi.mock("./InstallationSection", () => ({ InstallationSection: () => null }));
 vi.mock("./ShortcutSettingsSection", () => ({ ShortcutSettingsSection: () => null }));
 vi.mock("./CommandHistorySettingsSection", () => ({ CommandHistorySettingsSection: () => (
   <section className="settings-panel"><h3>历史命令</h3></section>
@@ -31,6 +30,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
   proxyAddress: "",
+  proxyEnabled: false,
   updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };
@@ -44,6 +44,7 @@ describe("常规设置分组顺序", () => {
       onClipboardChange={vi.fn()}
       onProxyChange={vi.fn()}
       onProxyCommit={vi.fn()}
+      onProxyEnabledChange={vi.fn()}
       proxy=""
       proxyError={null}
       savingProxy={false}
@@ -71,8 +72,10 @@ describe("常规设置分组顺序", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     const proxy = screen.getByRole("textbox", { name: "settings.proxyAddress" });
     const basic = screen.getByRole("heading", { name: "settings.generalSettings" }).closest("section");
-    expect(proxy.closest("section")).toBe(basic);
-    expect(basic?.querySelector(".settings-row:last-child")?.contains(proxy)).toBe(true);
+    const group = screen.getByRole("heading", { name: "settings.proxyTitle" }).closest("section");
+    expect(proxy.closest("section")).toBe(group);
+    expect(basic?.nextElementSibling).toBe(group);
+    expect(screen.queryByRole("heading", { name: "installation.title" })).toBeNull();
     expect(screen.getAllByRole("textbox", { name: "settings.proxyAddress" })).toHaveLength(1);
   });
 });
