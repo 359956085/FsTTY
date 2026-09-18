@@ -6,10 +6,14 @@ use tauri::{ipc::Channel, AppHandle, State};
 pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
-    proxy: String,
     source: UpdateSourcePreference,
 ) -> Result<Option<AppUpdateInfo>, AppError> {
-    state.app_update_service.check(&app, &proxy, source).await
+    let proxy = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("代理配置不可用".into()))?
+        .proxy_snapshot();
+    state.app_update_service.check(&app, &proxy.0, source).await
 }
 
 #[tauri::command]
@@ -18,7 +22,15 @@ pub async fn install_app_update(
     on_progress: Channel<AppUpdateProgress>,
 ) -> Result<(), AppError> {
     let _activity = state.lightweight_mode_service.try_gui_activity()?;
-    state.app_update_service.install(on_progress).await
+    let proxy = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("代理配置不可用".into()))?
+        .proxy_snapshot();
+    state
+        .app_update_service
+        .install(on_progress, &proxy.0)
+        .await
 }
 
 #[tauri::command]

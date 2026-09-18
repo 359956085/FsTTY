@@ -147,7 +147,7 @@ async fn serve(
         }
         return Ok(());
     }
-    if let Request::Connect { id } = &request {
+    if let Request::Connect { id, proxy: route } = &request {
         let loaded = store
             .lock()
             .map_err(|_| "服务存储不可用")?
@@ -177,7 +177,7 @@ async fn serve(
         };
         tokio::pin!(invalidated);
         let authenticated = tokio::select! {
-            result=proxy::authenticate(&profile,secrets)=>result,
+            result=proxy::authenticate(&profile,secrets,route)=>result,
             _=&mut invalidated=>return Err("认证配置已变更，连接已取消".into()),
             _=tokio::io::AsyncReadExt::read_u8(&mut pipe)=>return Err("客户端已退出或连接协议无效".into()),
         };
@@ -232,17 +232,22 @@ async fn process(
         Request::Batch { tickets } => Ok(Response::Staged {
             ticket: db.batch(&peer.sid, tickets)?,
         }),
-        Request::Stage { change } => Ok(Response::Staged {
-            ticket: db.stage(&peer.sid, change, None)?,
+        Request::Stage { change, proxy } => Ok(Response::Staged {
+            ticket: db.stage_with_proxy(&peer.sid, change, None, proxy)?,
         }),
-        Request::StageImport { target, secrets } => Ok(Response::Staged {
-            ticket: db.stage(
+        Request::StageImport {
+            target,
+            secrets,
+            proxy,
+        } => Ok(Response::Staged {
+            ticket: db.stage_with_proxy(
                 &peer.sid,
                 Change::Configure {
                     target,
                     replace_secret: true,
                 },
                 Some(secrets),
+                proxy,
             )?,
         }),
         Request::Approve { ticket, secrets } => {
@@ -262,7 +267,7 @@ async fn process(
 }
 
 async fn review(ticket: &str, store: &Arc<Mutex<Store>>) -> crate::Result<Review> {
-    let (mut review, target) = {
+    let (mut review, target, route) = {
         let db = store.lock().map_err(|_| "服务存储不可用")?;
         let p = db.pending(ticket)?;
         let old = db.load(&p.owner, change_id(&p.change))?;
@@ -292,10 +297,11 @@ async fn review(ticket: &str, store: &Arc<Mutex<Store>>) -> crate::Result<Review
             } else {
                 Some(db.target(ticket)?)
             },
+            p.proxy.clone(),
         )
     };
     if let Some(target) = target {
-        let key = proxy::probe(&target).await?;
+        let key = proxy::probe(&target, &route).await?;
         review.target = Some(target);
         review.fingerprint = proxy::fingerprint(&key);
         store

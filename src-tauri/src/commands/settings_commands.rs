@@ -85,7 +85,6 @@ pub fn set_theme(
 pub fn update_app_settings(
     state: State<'_, AppState>,
     auto_update: bool,
-    update_proxy: String,
     allow_remote_clipboard_write: bool,
     update_source: UpdateSourcePreference,
 ) -> Result<AppSettings, AppError> {
@@ -93,12 +92,21 @@ pub fn update_app_settings(
         .settings_service
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
-    let settings = service.update(
-        auto_update,
-        update_proxy,
-        allow_remote_clipboard_write,
-        update_source,
-    )?;
+    let settings = service.update(auto_update, allow_remote_clipboard_write, update_source)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
+}
+
+#[tauri::command]
+pub fn set_proxy_address(
+    state: State<'_, AppState>,
+    address: String,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    let settings = service.set_proxy_address(address)?;
     drop(service);
     hydrate_mcp_permissions(&state, settings)
 }
@@ -918,20 +926,21 @@ mod tests {
         let loaded = hydrate_mcp_permissions(&state, settings).expect("通用设置读取不应失败");
         assert!(loaded.auto_update);
 
+        state
+            .settings_service
+            .lock()
+            .expect("应锁定设置服务")
+            .set_proxy_address("http://127.0.0.1:7890".into())
+            .expect("代理应保存");
         let updated = state
             .settings_service
             .lock()
             .expect("应锁定设置服务")
-            .update(
-                false,
-                "http://127.0.0.1:7890".to_owned(),
-                true,
-                UpdateSourcePreference::Auto,
-            )
+            .update(false, true, UpdateSourcePreference::Auto)
             .expect("更新设置应保存");
         let updated = hydrate_mcp_permissions(&state, updated).expect("更新设置返回不应失败");
         assert!(!updated.auto_update);
-        assert_eq!(updated.update_proxy, "http://127.0.0.1:7890");
+        assert_eq!(updated.proxy_address, "http://127.0.0.1:7890");
 
         assert!(state
             .mcp_command_policy_service

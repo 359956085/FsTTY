@@ -42,13 +42,30 @@ fn reject_secret(action: &CredentialAction) -> Result<(), AppError> {
 }
 
 impl SessionService {
+    pub fn with_settings(
+        mut self,
+        settings: std::sync::Arc<std::sync::Mutex<crate::services::SettingsService>>,
+    ) -> Self {
+        self.settings_service = Some(settings);
+        self
+    }
+
+    fn proxy_snapshot(&self) -> Result<fstty_network::ProxySnapshot, AppError> {
+        self.settings_service
+            .as_ref()
+            .ok_or_else(|| AppError::Internal("代理配置不可用".into()))?
+            .lock()
+            .map(|settings| settings.proxy_snapshot())
+            .map_err(|_| AppError::Internal("代理配置不可用".into()))
+    }
+
     pub async fn migrate_batch_to_broker(&mut self, ids: &[String]) -> Result<(), AppError> {
         self.ensure_writable()?;
         let sessions = ids
             .iter()
             .map(|id| self.find(id))
             .collect::<Result<Vec<_>, _>>()?;
-        broker::migrate_batch(&sessions).await?;
+        broker::migrate_batch(&sessions, &self.proxy_snapshot()?).await?;
         for id in ids {
             self.migrate_to_broker(id).await?;
         }
@@ -139,7 +156,8 @@ impl SessionService {
             auth: auth(&payload.auth)?,
             login_save_prompted: true,
         };
-        let approved = broker::configure(broker::target(&session), true).await?;
+        let approved =
+            broker::configure(broker::target(&session), true, &self.proxy_snapshot()?).await?;
         broker::apply_profile(&mut session, &approved);
         let mut sessions = self.store.sessions.clone();
         sessions.push(session.clone());
@@ -188,7 +206,7 @@ impl SessionService {
             let replace = existing
                 .as_ref()
                 .is_none_or(|p| p.target.private_key != target.private_key);
-            Some(broker::configure(target, replace).await?)
+            Some(broker::configure(target, replace, &self.proxy_snapshot()?).await?)
         } else {
             existing
         };
@@ -212,7 +230,7 @@ impl SessionService {
     pub async fn migrate_to_broker(&mut self, id: &str) -> Result<SessionProfile, AppError> {
         self.ensure_writable()?;
         let mut session = self.find(id)?;
-        let approved = broker::migrate(&session).await?;
+        let approved = broker::migrate(&session, &self.proxy_snapshot()?).await?;
         broker::apply_profile(&mut session, &approved);
         let mut sessions = self.store.sessions.clone();
         *sessions
@@ -235,7 +253,8 @@ impl SessionService {
         if let Some(profile) = existing {
             broker::apply_profile(&mut session, &profile);
         }
-        let approved = broker::configure(broker::target(&session), true).await?;
+        let approved =
+            broker::configure(broker::target(&session), true, &self.proxy_snapshot()?).await?;
         broker::apply_profile(&mut session, &approved);
         let mut sessions = self.store.sessions.clone();
         *sessions

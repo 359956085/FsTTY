@@ -252,8 +252,8 @@ export const api = {
   setAutostartEnabled(enabled: boolean) {
     return invoke<boolean>("set_autostart_enabled", { enabled });
   },
-  checkAppUpdate(proxy: string, source: UpdateSourcePreference) {
-    return invoke<AppUpdateInfo | null>("check_app_update", { proxy, source });
+  checkAppUpdate(source: UpdateSourcePreference) {
+    return invoke<AppUpdateInfo | null>("check_app_update", { source });
   },
   installAppUpdate(onProgress: Channel<AppUpdateProgress>) {
     return invoke<void>("install_app_update", { onProgress });
@@ -302,16 +302,17 @@ export const api = {
   },
   updateAppSettings(
     autoUpdate: boolean,
-    updateProxy: string,
     allowRemoteClipboardWrite: boolean,
     updateSource: UpdateSourcePreference,
   ) {
     return invoke<AppSettings>("update_app_settings", {
       autoUpdate,
-      updateProxy,
       allowRemoteClipboardWrite,
       updateSource,
     });
+  },
+  setProxyAddress(address: string) {
+    return invoke<AppSettings>("set_proxy_address", { address });
   },
   updateLogSettings(recordMcpToolInputs: boolean) {
     return invoke<AppSettings>("update_log_settings", { recordMcpToolInputs });

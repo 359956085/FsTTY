@@ -169,7 +169,12 @@ mod acceptance {
                     Response::Profiles { profiles } => profiles.iter().any(|p| p.target.id == *id),
                     _ => return Err("列表响应无效".into()),
                 };
-                let rejected = request(Request::Connect { id: id.clone() }).await.is_err();
+                let rejected = request(Request::Connect {
+                    id: id.clone(),
+                    proxy: Default::default(),
+                })
+                .await
+                .is_err();
                 std::fs::write(
                     report,
                     serde_json::to_vec(
@@ -215,6 +220,7 @@ mod acceptance {
         let id = uuid::Uuid::new_v4().to_string();
         let pending = ticket(
             request(Request::StageImport {
+                proxy: Default::default(),
                 target: Target {
                     id: id.clone(),
                     host: "127.0.0.1".into(),
@@ -241,6 +247,7 @@ mod acceptance {
         .await?;
         let pending = ticket(
             request(Request::Stage {
+                proxy: Default::default(),
                 change: Change::Trust { id: id.clone() },
             })
             .await?,
@@ -290,6 +297,7 @@ mod acceptance {
         request(Request::Cancel { ticket: pending }).await?;
         let deletion = ticket(
             request(Request::Stage {
+                proxy: Default::default(),
                 change: Change::Delete { id: id.clone() },
             })
             .await?,
@@ -469,7 +477,14 @@ mod acceptance {
             GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid);
         }
         check(pid == status.dwProcessId, "连接的是 SCM 登记的服务进程")?;
-        fstty_broker::protocol::write(&mut pipe, &Request::Connect { id: id.into() }).await?;
+        fstty_broker::protocol::write(
+            &mut pipe,
+            &Request::Connect {
+                id: id.into(),
+                proxy: Default::default(),
+            },
+        )
+        .await?;
         match fstty_broker::protocol::read(&mut pipe).await? {
             Response::Connected => {}
             Response::Error { message } => return Err(message),

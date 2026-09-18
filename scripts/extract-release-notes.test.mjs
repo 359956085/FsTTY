@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { extractVersionReleaseNotes } from "./extract-release-notes.mjs";
 
@@ -11,6 +12,32 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
+  it("从真实日志提取 v1.5.0 的三项双语说明和保护边界", () => {
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    expect(changelog).toContain("## [1.5.0] - 2026-09-18");
+    const notes = extractVersionReleaseNotes(changelog, "v1.5.0");
+    expect(notes.match(/^- /gm)).toHaveLength(6);
+    for (const expected of [
+      "Windows 新增独立 SSH 凭据服务",
+      "未提权恶意程序直接读取已托管",
+      "优化 UI、布局与交互体验。",
+      "将应用更新中的代理地址移至「常规 → 基础设置」，改为全局代理",
+      "不代表阻止所有注入攻击。",
+      "Added an independent SSH credential service on Windows",
+      "preventing unelevated malware",
+      "Improved the UI, layout, and interaction experience.",
+      "Moved the application update proxy address to General → Basic Settings",
+      "does not prevent all injection attacks.",
+      "<!-- release-notes:zh-CN:start -->",
+      "<!-- release-notes:en-US:start -->",
+    ]) {
+      expect(notes).toContain(expected);
+    }
+    expect(notes).not.toContain("Unreleased");
+    expect(notes).not.toContain("## [1.4.0]");
+    expect(notes).not.toContain("新增 Windows 当前用户开机自启");
+  });
+
   it("按标签精确提取双语版本内容", () => {
     const changelog = `# Changelog
 

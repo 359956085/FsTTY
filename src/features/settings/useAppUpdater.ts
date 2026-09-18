@@ -42,7 +42,6 @@ export interface AppUpdaterController extends AppUpdaterState {
   busy: boolean;
   checkForUpdates: (
     trigger?: "manual" | "automatic",
-    proxyOverride?: string,
     updateSourceOverride?: UpdateSourcePreference,
   ) => Promise<void>;
   dismissUpdate: () => Promise<void>;
@@ -54,7 +53,6 @@ interface UseAppUpdaterOptions {
   autoUpdate: boolean;
   ignoredUpdateVersion: string | null;
   onSettingsChange: (settings: AppSettings) => void;
-  proxy: string;
   updateSource: UpdateSourcePreference;
   startupReady: boolean;
 }
@@ -91,7 +89,6 @@ export function useAppUpdater({
   autoUpdate,
   ignoredUpdateVersion,
   onSettingsChange,
-  proxy,
   updateSource,
   startupReady,
 }: UseAppUpdaterOptions): AppUpdaterController {
@@ -113,7 +110,6 @@ export function useAppUpdater({
   const checkForUpdates = useCallback(
     async (
       trigger: "manual" | "automatic" = "manual",
-      proxyOverride = proxy,
       updateSourceOverride = updateSource,
     ) => {
       if (checkingRef.current || ignoringRef.current || installingRef.current) {
@@ -135,8 +131,7 @@ export function useAppUpdater({
       }
 
       try {
-        const normalizedProxy = proxyOverride.trim();
-        const update = await api.checkAppUpdate(normalizedProxy, updateSourceOverride);
+        const update = await api.checkAppUpdate(updateSourceOverride);
         if (!mountedRef.current) {
           if (update) {
             await api.closeAppUpdate().catch(() => undefined);
@@ -180,7 +175,7 @@ export function useAppUpdater({
         checkingRef.current = false;
       }
     },
-    [ignoredUpdateVersion, proxy, releaseUpdate, updateSource],
+    [ignoredUpdateVersion, releaseUpdate, updateSource],
   );
 
   const dismissUpdate = useCallback(async () => {
@@ -348,9 +343,9 @@ export function useAppUpdater({
     }
     startupCheckStartedRef.current = true;
     if (autoUpdate) {
-      void checkForUpdates("automatic", proxy, updateSource);
+      void checkForUpdates("automatic", updateSource);
     }
-  }, [autoUpdate, checkForUpdates, proxy, startupReady, updateSource]);
+  }, [autoUpdate, checkForUpdates, startupReady, updateSource]);
 
   useEffect(() => {
     mountedRef.current = true;

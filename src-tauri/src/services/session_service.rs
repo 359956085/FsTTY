@@ -37,6 +37,8 @@ const MAX_PRIVATE_KEY_BYTES: u64 = 1024 * 1024;
 const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
 
 pub struct SessionService {
+    #[cfg(all(windows, not(test)))]
+    settings_service: Option<std::sync::Arc<std::sync::Mutex<super::SettingsService>>>,
     store: SessionStore,
     store_path: PathBuf,
     backup_path: PathBuf,
@@ -87,6 +89,8 @@ impl SessionService {
             temp_path,
             primary_trusted,
             blocked_error,
+            #[cfg(all(windows, not(test)))]
+            settings_service: None,
         }
     }
 

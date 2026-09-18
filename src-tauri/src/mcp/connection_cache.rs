@@ -93,6 +93,33 @@ mod tests {
     use tokio::time::timeout;
 
     #[tokio::test]
+    async fn 独立进程同步代理不驱逐已有mcp连接() {
+        use crate::services::SettingsService;
+        let directory =
+            std::env::temp_dir().join(format!("fstty-proxy-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut writer = SettingsService::load(&directory);
+        writer
+            .set_proxy_address("http://127.0.0.1:7890".into())
+            .unwrap();
+        let mut reader = SettingsService::load(&directory);
+        let old_snapshot = reader.proxy_snapshot();
+        let cache = ConnectionCache::default();
+        cache.insert("session".into(), "connected".into()).await;
+        writer
+            .set_proxy_address("socks5://127.0.0.1:1080".into())
+            .unwrap();
+        reader.reload_mcp_runtime_settings().unwrap();
+        assert_eq!(old_snapshot.0, "http://127.0.0.1:7890");
+        assert_eq!(reader.proxy_snapshot().0, "socks5://127.0.0.1:1080");
+        assert!(
+            matches!(cache.lookup("session", Duration::from_secs(300)).await,
+            CacheLookup::Reusable(id) if id == "connected")
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
     async fn 同会话复用门闩且不同会话互不阻塞() {
         let cache = ConnectionCache::default();
         let first = cache.session_gate("a").await;

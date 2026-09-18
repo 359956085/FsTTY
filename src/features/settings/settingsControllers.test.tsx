@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   rotateMcpHttpToken: vi.fn(),
   setTheme: vi.fn(),
+  setProxyAddress: vi.fn(),
   updateAppSettings: vi.fn(),
   updateMcpSettings: vi.fn(),
   writeText: vi.fn(),
@@ -56,7 +57,7 @@ const settings: AppSettings = {
   mcpHttpPort: 37653,
   recordMcpToolInputs: false,
   shortcuts,
-  updateProxy: "",
+  proxyAddress: "",
   updateSource: "auto",
 };
 
@@ -96,20 +97,20 @@ describe("设置状态控制器", () => {
     let firstSave!: Promise<AppSettings | null>;
     let secondSave!: Promise<AppSettings | null>;
     act(() => {
-      firstSave = result.current.saveUpdateSettings(true, "http://first");
-      secondSave = result.current.saveUpdateSettings(true, "http://second");
+      firstSave = result.current.saveUpdateSettings(true, false, "github");
+      secondSave = result.current.saveUpdateSettings(false, true, "cnb");
     });
     await act(async () => Promise.resolve());
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
 
-    const firstResult = { ...settings, updateProxy: "http://first" };
+    const firstResult = { ...settings, updateSource: "github" as const };
     await act(async () => {
       first.resolve(firstResult);
       await firstSave;
     });
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(2);
 
-    const secondResult = { ...settings, updateProxy: "http://second" };
+    const secondResult = { ...settings, updateSource: "cnb" as const };
     await act(async () => {
       second.resolve(secondResult);
       await secondSave;
@@ -146,14 +147,12 @@ describe("设置状态控制器", () => {
     apiMocks.updateAppSettings.mockImplementation(
       async (
         autoUpdate: boolean,
-        updateProxy: string,
         allowRemoteClipboardWrite: boolean,
         updateSource: AppSettings["updateSource"],
       ) => ({
         ...settings,
         allowRemoteClipboardWrite,
         autoUpdate,
-        updateProxy,
         updateSource,
       }),
     );
@@ -168,13 +167,111 @@ describe("设置状态控制器", () => {
 
     for (const source of ["auto", "github", "cnb"] as const) {
       await act(async () => {
-        await result.current.saveUpdateSettings(true, "", false, source);
+        await result.current.saveUpdateSettings(true, false, source);
       });
     }
 
-    expect(apiMocks.updateAppSettings.mock.calls[0]?.[3]).toBe("auto");
-    expect(apiMocks.updateAppSettings.mock.calls[1]?.[3]).toBe("github");
-    expect(apiMocks.updateAppSettings.mock.calls[2]?.[3]).toBe("cnb");
+    expect(apiMocks.updateAppSettings.mock.calls[0]).toEqual([true, false, "auto"]);
+    expect(apiMocks.updateAppSettings.mock.calls[1]).toEqual([true, false, "github"]);
+    expect(apiMocks.updateAppSettings.mock.calls[2]).toEqual([true, false, "cnb"]);
+    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+  });
+
+
+  it("代理独立保存、去除首尾空格、重复提交防护及失败重试", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.setProxyAddress.mockReturnValueOnce(request.promise);
+    const onChange = vi.fn();
+    const { result } = renderHook(() => useGeneralSettings({
+      onChange, settings, translate: (key) => key, updater: {} as AppUpdaterController,
+    }));
+    act(() => result.current.setProxy("  http://127.0.0.1:7890  "));
+    let save!: Promise<void>;
+    act(() => {
+      save = result.current.saveProxy();
+      void result.current.saveProxy();
+    });
+    await act(async () => Promise.resolve());
+    expect(result.current.savingProxy).toBe(true);
+    expect(apiMocks.setProxyAddress).toHaveBeenCalledTimes(1);
+    expect(apiMocks.setProxyAddress).toHaveBeenCalledWith("http://127.0.0.1:7890");
+    await act(async () => {
+      request.reject(new Error("代理保存失败"));
+      await save;
+    });
+    expect(result.current.proxyError).toBe("代理保存失败");
+    expect(result.current.proxy).toBe("  http://127.0.0.1:7890  ");
+    expect(result.current.savingProxy).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    const saved = { ...settings, proxyAddress: "http://127.0.0.1:7890" };
+    apiMocks.setProxyAddress.mockResolvedValueOnce(saved);
+    await act(async () => result.current.saveProxy());
+    expect(onChange).toHaveBeenCalledWith(saved);
+    expect(result.current.proxyError).toBeNull();
+    expect(result.current.proxy).toBe(saved.proxyAddress);
+    expect(apiMocks.updateAppSettings).not.toHaveBeenCalled();
+  });
+
+  it("未修改代理不提交，清空已保存代理明确保存直连", async () => {
+    const configured = { ...settings, proxyAddress: "socks5://127.0.0.1:1080" };
+    const { result } = renderHook(() => useGeneralSettings({
+      onChange: vi.fn(), settings: configured, translate: (key) => key, updater: {} as AppUpdaterController,
+    }));
+    await act(async () => result.current.saveProxy());
+    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    apiMocks.setProxyAddress.mockResolvedValueOnce(settings);
+    act(() => result.current.setProxy(""));
+    await act(async () => result.current.saveProxy());
+    expect(apiMocks.setProxyAddress).toHaveBeenCalledWith("");
+  });
+
+  it("更新与代理交叉保存保持提交顺序，不遗留忙状态", async () => {
+    const flags = deferred<AppSettings>();
+    const proxy = deferred<AppSettings>();
+    apiMocks.updateAppSettings.mockReturnValueOnce(flags.promise);
+    apiMocks.setProxyAddress.mockReturnValueOnce(proxy.promise);
+    const { result } = renderHook(() => useGeneralSettings({
+      onChange: vi.fn(), settings, translate: (key) => key, updater: {} as AppUpdaterController,
+    }));
+    act(() => result.current.setProxy("http://127.0.0.1:7890"));
+    let flagsSave!: Promise<AppSettings | null>;
+    let proxySave!: Promise<void>;
+    act(() => {
+      flagsSave = result.current.saveUpdateSettings(false);
+      proxySave = result.current.saveProxy();
+    });
+    await act(async () => Promise.resolve());
+    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    await act(async () => { flags.resolve(settings); await flagsSave; });
+    expect(result.current.savingUpdateSettings).toBe(false);
+    expect(apiMocks.setProxyAddress).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      proxy.resolve({ ...settings, proxyAddress: "http://127.0.0.1:7890" });
+      await proxySave;
+    });
+    expect(result.current.savingProxy).toBe(false);
+    expect(apiMocks.updateAppSettings).toHaveBeenCalledWith(false, false, "auto");
+  });
+
+  it("其他设置保存不提交代理草稿，代理卸载后不回写状态", async () => {
+    apiMocks.updateAppSettings.mockResolvedValue(settings);
+    const onChange = vi.fn();
+    const { result, unmount } = renderHook(() => useGeneralSettings({
+      onChange, settings, translate: (key) => key, updater: {} as AppUpdaterController,
+    }));
+    act(() => result.current.setProxy("http://draft:7890"));
+    await act(async () => result.current.saveUpdateSettings(false, true, "cnb"));
+    expect(apiMocks.setProxyAddress).not.toHaveBeenCalled();
+    expect(result.current.proxy).toBe("http://draft:7890");
+    const proxy = deferred<AppSettings>();
+    apiMocks.setProxyAddress.mockReturnValueOnce(proxy.promise);
+    let save!: Promise<void>;
+    act(() => { save = result.current.saveProxy(); });
+    await act(async () => Promise.resolve());
+    unmount();
+    proxy.resolve({ ...settings, proxyAddress: "http://draft:7890" });
+    await save;
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("主题保存成功、失败和重复点击均保持一致状态", async () => {
@@ -232,7 +329,6 @@ describe("设置状态控制器", () => {
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
     expect(checkForUpdates).toHaveBeenCalledWith(
       "manual",
-      settings.updateProxy,
       settings.updateSource,
     );
   });

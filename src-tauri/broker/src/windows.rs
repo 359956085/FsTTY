@@ -274,7 +274,8 @@ pub async fn request(request: &Request) -> crate::Result<Response> {
         protocol::read(&mut pipe),
     )
     .await
-    .map_err(|_| "服务请求超时")??;
+    .map_err(|_| "服务请求超时，请修复凭据服务")?
+    .map_err(|message| format!("{message}；请修复凭据服务，确认使用协议 v2"))?;
     match result {
         Response::Error { message } => Err(message),
         other => Ok(other),

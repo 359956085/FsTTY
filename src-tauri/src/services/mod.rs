@@ -65,6 +65,10 @@ impl AppState {
                 log::error!("无法从设置文件移除已迁移的 MCP 权限：{error}");
             }
         }
+        let settings_service = Arc::new(StdMutex::new(settings_service));
+        let session_service = SessionService::load(&app_data_dir);
+        #[cfg(all(windows, not(test)))]
+        let session_service = session_service.with_settings(settings_service.clone());
         Self {
             app_update_service: AppUpdateService::default(),
             autostart_service: AutostartService::default(),
@@ -73,12 +77,15 @@ impl AppState {
             command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
                 &app_data_dir,
             ))),
-            session_service: Arc::new(Mutex::new(SessionService::load(&app_data_dir))),
+            session_service: Arc::new(Mutex::new(session_service)),
             credential_service: CredentialService::new(),
-            connection_manager: ConnectionManager::new(&app_data_dir),
+            connection_manager: ConnectionManager::new_with_settings(
+                &app_data_dir,
+                settings_service.clone(),
+            ),
             device_service: DeviceService,
             lightweight_mode_service: LightweightModeService::load(&app_data_dir),
-            settings_service: Arc::new(StdMutex::new(settings_service)),
+            settings_service,
             transfer_job_service: TransferJobService::default(),
             mcp_command_policy_service: Arc::new(StdMutex::new(policy_service)),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),

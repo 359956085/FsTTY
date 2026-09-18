@@ -34,7 +34,7 @@ function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
     mcpHttpPort: 37_653,
     recordMcpToolInputs: false,
     shortcuts,
-    updateProxy: "",
+    proxyAddress: "",
     updateSource: "auto",
   };
 }

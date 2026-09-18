@@ -32,7 +32,7 @@ vi.mock("../../shared/api/client", () => ({
 }));
 
 const settings = {
-  updateProxy: "",
+  proxyAddress: "",
 } as AppSettings;
 
 afterEach(cleanup);
@@ -53,7 +53,6 @@ describe("应用启动自动更新", () => {
           autoUpdate: true,
           ignoredUpdateVersion: null,
           onSettingsChange: vi.fn(),
-          proxy: "",
           updateSource: "auto",
           startupReady: true,
         }),
@@ -65,7 +64,7 @@ describe("应用启动自动更新", () => {
 
     expect(result.current.phase).toBe("idle");
     expect(result.current.dialogOpen).toBe(false);
-    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("", "auto");
+    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("auto");
   });
 
   it("启动检查发现新版本时打开更新弹窗", async () => {
@@ -76,7 +75,6 @@ describe("应用启动自动更新", () => {
           autoUpdate: true,
           ignoredUpdateVersion: null,
           onSettingsChange: vi.fn(),
-          proxy: "",
           updateSource: "github",
           startupReady: true,
         }),
@@ -88,7 +86,7 @@ describe("应用启动自动更新", () => {
     expect(mocks.checkAppUpdate).toHaveBeenCalledTimes(1);
     expect(result.current.phase).toBe("available");
     expect(result.current.availableUpdate?.version).toBe("1.3.0");
-    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("", "github");
+    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("github");
   });
 
   it("启动检查忽略已忽略版本且关闭更新句柄", async () => {
@@ -99,7 +97,6 @@ describe("应用启动自动更新", () => {
           autoUpdate: true,
           ignoredUpdateVersion: "1.3.0",
           onSettingsChange: vi.fn(),
-          proxy: "",
           updateSource: "cnb",
           startupReady: true,
         }),
@@ -111,6 +108,6 @@ describe("应用启动自动更新", () => {
     expect(mocks.checkAppUpdate).toHaveBeenCalledTimes(1);
     expect(result.current.phase).toBe("idle");
     expect(result.current.dialogOpen).toBe(false);
-    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("", "cnb");
+    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("cnb");
   });
 });

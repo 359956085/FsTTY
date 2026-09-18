@@ -47,6 +47,9 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
     openLogDirectory,
     openingLogDirectory,
     proxy,
+    proxyError,
+    saveProxy,
+    savingProxy,
     saveLogSettings,
     saveUpdateSettings,
     savingLanguage,
@@ -206,7 +209,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             logDirectoryError={logDirectoryError}
             logSettingsError={logSettingsError}
             onClipboardChange={(enabled) =>
-              void saveUpdateSettings(settings.autoUpdate, proxy, enabled)
+              void saveUpdateSettings(settings.autoUpdate, enabled)
             }
             onHideTooltip={() => setMcpPermissionTooltip(null)}
             onLanguageChange={(language) => void handleLanguageChange(language)}
@@ -215,6 +218,11 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
             onShowTooltip={showMcpPermissionTooltip}
             onSettingsChange={onChange}
+            onProxyChange={setProxy}
+            onProxyCommit={() => void saveProxy()}
+            proxy={proxy}
+            proxyError={proxyError}
+            savingProxy={savingProxy}
             openingLogDirectory={openingLogDirectory}
             savingLanguage={savingLanguage}
             savingTheme={savingTheme}
@@ -227,17 +235,13 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             error={visibleError}
             onAutoUpdateChange={(enabled) => void saveUpdateSettings(enabled)}
             onCheckUpdates={() => void handleCheckForUpdates()}
-            onProxyChange={setProxy}
-            onProxyCommit={() => void saveUpdateSettings(settings.autoUpdate)}
             onUpdateSourceChange={(source) =>
               void saveUpdateSettings(
                 settings.autoUpdate,
-                proxy,
                 settings.allowRemoteClipboardWrite,
                 source,
               )
             }
-            proxy={proxy}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}
             status={status}

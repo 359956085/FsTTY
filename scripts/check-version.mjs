@@ -16,13 +16,25 @@ function readVersion(relativePath, pattern) {
   return match[1];
 }
 
+const packageLock = readJson("package-lock.json");
 const versions = {
   packageJson: readJson("package.json").version,
+  packageLock: packageLock.version ?? null,
+  packageLockRoot: packageLock.packages?.[""]?.version ?? null,
   cargo: readVersion("src-tauri/Cargo.toml", /^version\s*=\s*"([^"]+)"/m),
   broker: readVersion("src-tauri/broker/Cargo.toml", /^version\s*=\s*"([^"]+)"/m),
+  network: readVersion("src-tauri/network/Cargo.toml", /^version\s*=\s*"([^"]+)"/m),
   cargoLock: readVersion(
     "src-tauri/Cargo.lock",
     /\[\[package\]\]\s+name\s*=\s*"fstty"\s+version\s*=\s*"([^"]+)"/m,
+  ),
+  brokerLock: readVersion(
+    "src-tauri/Cargo.lock",
+    /\[\[package\]\]\s+name\s*=\s*"fstty-broker"\s+version\s*=\s*"([^"]+)"/m,
+  ),
+  networkLock: readVersion(
+    "src-tauri/Cargo.lock",
+    /\[\[package\]\]\s+name\s*=\s*"fstty-network"\s+version\s*=\s*"([^"]+)"/m,
   ),
   tauri: readJson("src-tauri/tauri.conf.json").version,
   readme: readVersion("README.md", /badge\/version-([^/-]+)-/),

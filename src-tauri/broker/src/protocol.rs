@@ -2,8 +2,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroizing;
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const SERVICE: &str = "FsTTYBroker";
+// 保持 IPC 地址稳定；消息协议拒绝旧服务，提示修复而不降级直连。
 pub const PIPE: &str = r"\\.\pipe\FsTTYBroker-v1";
 pub const MAX_FRAME: usize = 2 * 1024 * 1024;
 pub const MAX_KEY: usize = 1024 * 1024;
@@ -82,9 +83,11 @@ pub enum Request {
     List,
     Connect {
         id: String,
+        proxy: fstty_network::ProxySnapshot,
     },
     Stage {
         change: Change,
+        proxy: fstty_network::ProxySnapshot,
     },
     Batch {
         tickets: Vec<String>,
@@ -103,6 +106,7 @@ pub enum Request {
     StageImport {
         target: Target,
         secrets: Secrets,
+        proxy: fstty_network::ProxySnapshot,
     },
     CleanupComplete {
         id: String,
@@ -187,10 +191,15 @@ pub async fn read<T: DeserializeOwned, R: AsyncRead + Unpin>(stream: &mut R) -> 
         .read_exact(&mut bytes)
         .await
         .map_err(|_| "服务消息不完整")?;
-    let envelope: Envelope<T> = serde_json::from_slice(&bytes).map_err(|_| "服务消息格式无效")?;
-    if envelope.version != VERSION {
+    #[derive(Deserialize)]
+    struct VersionOnly {
+        version: u32,
+    }
+    let version: VersionOnly = serde_json::from_slice(&bytes).map_err(|_| "服务消息格式无效")?;
+    if version.version != VERSION {
         return Err("FsTTY 与凭据服务版本不兼容，请修复安装".into());
     }
+    let envelope: Envelope<T> = serde_json::from_slice(&bytes).map_err(|_| "服务消息格式无效")?;
     Ok(envelope.body)
 }
 
@@ -207,21 +216,25 @@ mod tests {
     fn 接口没有读取秘密或指定连接目标的入口() {
         for value in [
             r#"{"operation":"getSecret"}"#,
-            r#"{"operation":"connect","id":"x","host":"evil"}"#,
+            r#"{"operation":"connect","id":"x","proxy":"","host":"evil"}"#,
         ] {
             assert!(serde_json::from_str::<Request>(value).is_err());
         }
     }
     #[tokio::test]
     async fn 版本不匹配拒绝执行() {
-        let (mut tx, mut rx) = tokio::io::duplex(1024);
-        let bytes = br#"{"version":2,"body":{"operation":"status"}}"#;
-        tx.write_u32(bytes.len() as u32).await.unwrap();
-        tx.write_all(bytes).await.unwrap();
-        assert!(read::<Request, _>(&mut rx)
-            .await
-            .err()
-            .unwrap()
-            .contains("版本"));
+        for bytes in [
+            br#"{"version":1,"body":{"operation":"status"}}"#.as_slice(),
+            br#"{"version":1,"body":{"operation":"connect","id":"x"}}"#.as_slice(),
+        ] {
+            let (mut tx, mut rx) = tokio::io::duplex(1024);
+            tx.write_u32(bytes.len() as u32).await.unwrap();
+            tx.write_all(bytes).await.unwrap();
+            assert!(read::<Request, _>(&mut rx)
+                .await
+                .err()
+                .unwrap()
+                .contains("版本"));
+        }
     }
 }

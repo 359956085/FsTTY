@@ -6,25 +6,29 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-18
+
+<!-- release-notes:zh-CN:start -->
 ### 简体中文
 
-- Windows 桌面可自选目录并原地覆盖旧版；凭据服务、管理工具及卸载入口保持在 Program Files，换目录后统一启动与更新入口。
-- 新增安装记录、程序与登记回滚、旧快捷方式和 stdio 路径修复，以及设置中的修复状态入口。
-- 修复 Rust 依赖审计失败：更新 rustls 安全版本，替换 chacha20 和 wnaf 的撤回版本。
-- Windows 默认由独立 `FsTTYBroker` 服务持有 SSH 凭据和连接；普通桌面与 MCP 进程只接收终端和远程操作数据。
-- 新增 UAC 后的原生认证配置窗口、批量迁移及旧副本清理状态；认证目标和主机指纹变更由服务确认。
-- Windows 使用机器范围 NSIS 安装，包含强制服务安装、受保护更新暂存、提权端独立验签和升级恢复流程。
-- MCP Token、其他平台的凭据存储及现有分组权限保持原有行为。私钥原件需要自行保管，不提供托管秘密导出。
+- Windows 新增独立 SSH 凭据服务，提高其他应用访问凭据所需权限，防止当前 Windows 账号下未提权恶意程序直接读取已托管的密码、私钥和口令，降低中转站内容注入等攻击引发凭据泄露的风险。
+- 优化 UI、布局与交互体验。
+- 将应用更新中的代理地址移至「常规 → 基础设置」，改为全局代理，统一用于应用外连。
 
+保护范围不包含管理员、原私钥文件、剪贴板、未清理旧副本或已授权 MCP 操作；不代表阻止所有注入攻击。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
 ### English
 
-- Windows desktop installations support custom directories and in-place upgrades while the credential service, management tool, and uninstaller remain in Program Files.
-- Added an active installation record, program and registration rollback, and repair of legacy shortcuts and stdio paths.
-- Fixed the Rust dependency audit by updating rustls and replacing the yanked chacha20 and wnaf versions.
-- Windows now uses the independent `FsTTYBroker` service to own SSH credentials and connections. Desktop and MCP processes receive terminal and remote-operation data only.
-- Added a native credential approval window after UAC, batch migration, and legacy-copy cleanup status. Authentication targets and host keys are managed by the service.
-- Windows NSIS installs per machine with a mandatory service, protected update staging, independent elevated signature verification, and upgrade recovery.
-- MCP Token storage, other platforms, and existing group permissions retain their behavior. Original key files remain the user's responsibility; managed secrets cannot be exported.
+- Added an independent SSH credential service on Windows, raising the privileges required for other applications to access credentials and preventing unelevated malware running under the current Windows account from directly reading managed passwords, private keys, and passphrases. This reduces the risk of credential exposure from attacks such as injected content from intermediary services.
+- Improved the UI, layout, and interaction experience.
+- Moved the application update proxy address to General → Basic Settings and made it a global proxy for outbound application connections.
+
+This protection does not cover administrators, original private-key files, clipboard contents, remaining legacy copies, or authorized MCP operations, and does not prevent all injection attacks.
+
+<!-- release-notes:en-US:end -->
 
 ## [1.4.0] - 2026-09-07
 

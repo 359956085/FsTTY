@@ -62,9 +62,14 @@ async fn approve(request: Request) -> Result<(), AppError> {
     }
     result
 }
-pub async fn configure(target: Target, replace_secret: bool) -> Result<Profile, AppError> {
+pub async fn configure(
+    target: Target,
+    replace_secret: bool,
+    proxy: &fstty_network::ProxySnapshot,
+) -> Result<Profile, AppError> {
     let id = target.id.clone();
     approve(Request::Stage {
+        proxy: proxy.clone(),
         change: Change::Configure {
             target,
             replace_secret,
@@ -88,6 +93,7 @@ pub async fn configure(target: Target, replace_secret: bool) -> Result<Profile, 
 }
 pub async fn delete(id: &str) -> Result<(), AppError> {
     approve(Request::Stage {
+        proxy: fstty_network::ProxySnapshot::default(),
         change: Change::Delete { id: id.into() },
     })
     .await?;
@@ -114,6 +120,7 @@ pub async fn delete_batch(ids: &[String]) -> Result<(), AppError> {
     let result = async {
         for id in ids {
             match windows::request(&Request::Stage {
+                proxy: fstty_network::ProxySnapshot::default(),
                 change: Change::Delete { id: id.clone() },
             })
             .await
@@ -138,8 +145,9 @@ pub async fn delete_batch(ids: &[String]) -> Result<(), AppError> {
     }
     Ok(())
 }
-pub async fn trust(id: &str) -> Result<(), AppError> {
+pub async fn trust(id: &str, proxy: &fstty_network::ProxySnapshot) -> Result<(), AppError> {
     approve(Request::Stage {
+        proxy: proxy.clone(),
         change: Change::Trust { id: id.into() },
     })
     .await
@@ -159,14 +167,17 @@ pub fn apply_profile(session: &mut StoredSession, profile: &Profile) {
     };
     session.login_save_prompted = true;
 }
-pub async fn migrate(session: &StoredSession) -> Result<Profile, AppError> {
+pub async fn migrate(
+    session: &StoredSession,
+    proxy: &fstty_network::ProxySnapshot,
+) -> Result<Profile, AppError> {
     let existing = profiles()
         .await?
         .into_iter()
         .find(|p| p.target.id == session.id);
     let legacy = super::CredentialService::legacy_for_migration();
     if existing.is_none() {
-        let request = migration_request(session).await?;
+        let request = migration_request(session, proxy).await?;
         approve(request).await?;
     }
     let profile = profiles()
@@ -197,7 +208,10 @@ pub async fn migrate(session: &StoredSession) -> Result<Profile, AppError> {
     })
 }
 
-async fn migration_request(session: &StoredSession) -> Result<Request, AppError> {
+async fn migration_request(
+    session: &StoredSession,
+    proxy: &fstty_network::ProxySnapshot,
+) -> Result<Request, AppError> {
     let legacy = super::CredentialService::legacy_for_migration();
     let password = legacy.get(&session.id).await?.unwrap_or_default();
     let private_key = match &session.auth {
@@ -239,6 +253,7 @@ async fn migration_request(session: &StoredSession) -> Result<Request, AppError>
     };
     if password.is_empty() && matches!(session.auth, SessionAuth::Password) {
         Ok(Request::Stage {
+            proxy: proxy.clone(),
             change: Change::Configure {
                 target: target(session),
                 replace_secret: true,
@@ -246,6 +261,7 @@ async fn migration_request(session: &StoredSession) -> Result<Request, AppError>
         })
     } else {
         Ok(Request::StageImport {
+            proxy: proxy.clone(),
             target: target(session),
             secrets: Secrets {
                 password,
@@ -255,7 +271,10 @@ async fn migration_request(session: &StoredSession) -> Result<Request, AppError>
     }
 }
 
-pub async fn migrate_batch(sessions: &[StoredSession]) -> Result<(), AppError> {
+pub async fn migrate_batch(
+    sessions: &[StoredSession],
+    proxy: &fstty_network::ProxySnapshot,
+) -> Result<(), AppError> {
     if sessions.len() > 32 {
         return Err(error("一次最多迁移 32 个会话".into()));
     }
@@ -266,7 +285,7 @@ pub async fn migrate_batch(sessions: &[StoredSession]) -> Result<(), AppError> {
             if existing.iter().any(|p| p.target.id == session.id) {
                 continue;
             }
-            let request = migration_request(session).await?;
+            let request = migration_request(session, proxy).await?;
             if !matches!(request, Request::StageImport { .. }) {
                 return Err(error(format!(
                     "会话 {} 缺少旧凭据，请先单独配置",
@@ -292,24 +311,31 @@ pub async fn migrate_batch(sessions: &[StoredSession]) -> Result<(), AppError> {
     }
     result?;
     for session in sessions {
-        migrate(session).await?;
+        migrate(session, proxy).await?;
     }
     Ok(())
 }
 pub async fn connect_stream(
     id: &str,
+    proxy: &fstty_network::ProxySnapshot,
 ) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, AppError> {
     let mut pipe = windows::connect().await.map_err(error)?;
-    fstty_broker::protocol::write(&mut pipe, &Request::Connect { id: id.into() })
-        .await
-        .map_err(error)?;
+    fstty_broker::protocol::write(
+        &mut pipe,
+        &Request::Connect {
+            id: id.into(),
+            proxy: proxy.clone(),
+        },
+    )
+    .await
+    .map_err(error)?;
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(55),
         fstty_broker::protocol::read(&mut pipe),
     )
     .await
-    .map_err(|_| error("服务连接超时".into()))?
-    .map_err(error)?;
+    .map_err(|_| error("服务连接超时，请修复凭据服务，确认使用协议 v2".into()))?
+    .map_err(|message| error(format!("{message}；请修复凭据服务，确认使用协议 v2")))?;
     match response {
         Response::Connected => Ok(pipe),
         Response::Error { message } => Err(error(message)),

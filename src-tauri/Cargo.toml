@@ -1,6 +1,6 @@
 [package]
 name = "fstty"
-version = "1.4.0"
+version = "1.5.0"
 description = "FsTTY"
 authors = ["fengshi"]
 edition = "2021"
@@ -10,7 +10,7 @@ name = "fstty_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [workspace]
-members = ["broker"]
+members = ["broker", "network"]
 default-members = ["."]
 resolver = "2"
 
@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 fs2 = "0.4"
+fstty-network = { path = "network" }
+reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 log = "0.4"
 jsonc-parser = { version = "0.33", features = ["cst", "serde"] }
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
@@ -48,6 +50,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 vt100 = "0.16.2"
 zeroize = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fstty-broker = { path = "broker" }

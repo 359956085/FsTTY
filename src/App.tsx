@@ -36,7 +36,7 @@ export function App() {
     theme: readCachedThemePreference(),
     autoUpdate: true,
     updateSource: "auto",
-    updateProxy: "",
+    proxyAddress: "",
     allowRemoteClipboardWrite: true,
     ignoredUpdateVersion: null,
     mcpEnabled: false,
@@ -58,7 +58,6 @@ export function App() {
     autoUpdate: settings.autoUpdate,
     ignoredUpdateVersion: settings.ignoredUpdateVersion,
     onSettingsChange: setSettings,
-    proxy: settings.updateProxy,
     updateSource: settings.updateSource,
     startupReady: settingsLoaded,
   });

@@ -30,7 +30,7 @@ const settings: AppSettings = {
   mcpHttpEnabled: false,
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
-  updateProxy: "",
+  proxyAddress: "",
   updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };
@@ -42,6 +42,11 @@ describe("常规设置分组顺序", () => {
       logDirectoryError={null}
       logSettingsError={null}
       onClipboardChange={vi.fn()}
+      onProxyChange={vi.fn()}
+      onProxyCommit={vi.fn()}
+      proxy=""
+      proxyError={null}
+      savingProxy={false}
       onHideTooltip={vi.fn()}
       onLanguageChange={vi.fn()}
       onThemeChange={vi.fn()}
@@ -64,5 +69,10 @@ describe("常规设置分组顺序", () => {
     expect(screen.getAllByText("security.title")).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "security.title" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+    const proxy = screen.getByRole("textbox", { name: "settings.proxyAddress" });
+    const basic = screen.getByRole("heading", { name: "settings.generalSettings" }).closest("section");
+    expect(proxy.closest("section")).toBe(basic);
+    expect(basic?.querySelector(".settings-row:last-child")?.contains(proxy)).toBe(true);
+    expect(screen.getAllByRole("textbox", { name: "settings.proxyAddress" })).toHaveLength(1);
   });
 });

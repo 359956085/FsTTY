@@ -1,6 +1,6 @@
 use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub language: Language,
@@ -9,7 +9,8 @@ pub struct AppSettings {
     pub auto_update: bool,
     #[serde(default)]
     pub update_source: UpdateSourcePreference,
-    pub update_proxy: String,
+    #[serde(default, alias = "updateProxy")]
+    pub proxy_address: String,
     #[serde(default = "default_allow_remote_clipboard_write")]
     pub allow_remote_clipboard_write: bool,
     #[serde(default)]
@@ -27,6 +28,33 @@ pub struct AppSettings {
     pub mcp_group_permissions: Vec<McpGroupPermission>,
     #[serde(default)]
     pub shortcuts: ShortcutSettings,
+}
+
+impl std::fmt::Debug for AppSettings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppSettings")
+            .field("language", &self.language)
+            .field("theme", &self.theme)
+            .field("auto_update", &self.auto_update)
+            .field("update_source", &self.update_source)
+            .field(
+                "proxy_address",
+                &fstty_network::ProxySnapshot(self.proxy_address.clone()),
+            )
+            .field(
+                "allow_remote_clipboard_write",
+                &self.allow_remote_clipboard_write,
+            )
+            .field("record_mcp_tool_inputs", &self.record_mcp_tool_inputs)
+            .field("ignored_update_version", &self.ignored_update_version)
+            .field("mcp_enabled", &self.mcp_enabled)
+            .field("mcp_http_enabled", &self.mcp_http_enabled)
+            .field("mcp_http_port", &self.mcp_http_port)
+            .field("mcp_group_permissions", &self.mcp_group_permissions)
+            .field("shortcuts", &self.shortcuts)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

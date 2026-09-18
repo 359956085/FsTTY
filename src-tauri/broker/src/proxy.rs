@@ -37,14 +37,17 @@ pub fn fingerprint(key: &str) -> String {
         .unwrap_or_default()
 }
 
-pub async fn probe(target: &Target) -> crate::Result<String> {
+pub async fn probe(target: &Target, proxy: &fstty_network::ProxySnapshot) -> crate::Result<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let stream =
+        fstty_network::connect(&target.host, target.port, proxy, Duration::from_secs(15)).await?;
     let observed = Arc::new(Mutex::new(None));
     // 探测仅进行主机密钥交换，不发送账号密码或私钥签名。
-    let _ = tokio::time::timeout(
-        Duration::from_secs(15),
-        client::connect(
+    let _ = tokio::time::timeout_at(
+        deadline,
+        client::connect_stream(
             client_config(),
-            (target.host.as_str(), target.port),
+            stream,
             Remote {
                 expected: String::new(),
                 observed: observed.clone(),
@@ -63,14 +66,18 @@ pub async fn probe(target: &Target) -> crate::Result<String> {
 pub async fn authenticate(
     profile: &Profile,
     secrets: Secrets,
+    proxy: &fstty_network::ProxySnapshot,
 ) -> crate::Result<client::Handle<Remote>> {
     let target = &profile.target;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let stream =
+        fstty_network::connect(&target.host, target.port, proxy, Duration::from_secs(20)).await?;
     let observed = Arc::new(Mutex::new(None));
-    let mut handle = tokio::time::timeout(
-        Duration::from_secs(20),
-        client::connect(
+    let mut handle = tokio::time::timeout_at(
+        deadline,
+        client::connect_stream(
             client_config(),
-            (target.host.as_str(), target.port),
+            stream,
             Remote {
                 expected: profile.host_key.clone(),
                 observed: observed.clone(),

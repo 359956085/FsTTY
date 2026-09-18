@@ -8,7 +8,7 @@ export interface AppSettings {
   theme: ThemePreference;
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;
-  updateProxy: string;
+  proxyAddress: string;
   allowRemoteClipboardWrite: boolean;
   recordMcpToolInputs: boolean;
   ignoredUpdateVersion: string | null;

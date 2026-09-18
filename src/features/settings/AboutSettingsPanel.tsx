@@ -6,7 +6,6 @@ import { api } from "../../shared/api/client";
 import type { AppSettings, UpdateSourcePreference } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
-import { TextInput } from "../../shared/ui/TextInput";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 const PROJECT_URL = "https://github.com/359956085/FsTTY";
@@ -22,10 +21,7 @@ interface AboutSettingsPanelProps {
   error: string | null;
   onAutoUpdateChange: (enabled: boolean) => void;
   onCheckUpdates: () => void;
-  onProxyChange: (value: string) => void;
-  onProxyCommit: () => void;
   onUpdateSourceChange: (source: UpdateSourcePreference) => void;
-  proxy: string;
   savingUpdateSettings: boolean;
   settings: AppSettings;
   status: string | null;
@@ -36,10 +32,7 @@ export function AboutSettingsPanel({
   error,
   onAutoUpdateChange,
   onCheckUpdates,
-  onProxyChange,
-  onProxyCommit,
   onUpdateSourceChange,
-  proxy,
   savingUpdateSettings,
   settings,
   status,
@@ -141,37 +134,6 @@ export function AboutSettingsPanel({
         </div>
         <div className="settings-row">
           <div className="settings-row-copy">
-            <span className="settings-row-label">{t("settings.updateSource")}</span>
-            <small>{t("settings.updateSourceHint")}</small>
-          </div>
-          <Select<UpdateSourcePreference>
-            ariaLabel={t("settings.updateSource")}
-            className="settings-update-source-select"
-            disabled={savingUpdateSettings || updater.busy}
-            onChange={onUpdateSourceChange}
-            options={[
-              { value: "auto", label: t("settings.updateSourceAuto") },
-              { value: "github", label: "GitHub" },
-              { value: "cnb", label: "CNB" },
-            ]}
-            value={settings.updateSource}
-          />
-        </div>
-        <div className="settings-row">
-          <div className="settings-row-copy">
-            <span className="settings-row-label">{t("settings.updateHistory")}</span>
-            <small>{t("settings.updateHistoryHint")}</small>
-          </div>
-          <Button
-            icon={<History aria-hidden="true" size={16} />}
-            onClick={() => setHistoryOpen(true)}
-            variant="ghost"
-          >
-            {t("settings.viewUpdateHistory")}
-          </Button>
-        </div>
-        <div className="settings-row">
-          <div className="settings-row-copy">
             <label className="settings-row-label" htmlFor="auto-update">
               {t("settings.autoUpdate")}
             </label>
@@ -188,27 +150,36 @@ export function AboutSettingsPanel({
             type="checkbox"
           />
         </div>
-        <div className="settings-row settings-proxy-row">
+        <div className="settings-row">
           <div className="settings-row-copy">
-            <label className="settings-row-label" htmlFor="update-proxy">
-              {t("settings.updateProxy")}
-            </label>
-            <small>{t("settings.updateProxyHint")}</small>
+            <span className="settings-row-label">{t("settings.updateSource")}</span>
+            <small>{t("settings.updateSourceHint")}</small>
           </div>
-          <TextInput
-            className="settings-proxy-input"
-            disabled={savingUpdateSettings || updater.phase === "downloading"}
-            id="update-proxy"
-            onBlur={onProxyCommit}
-            onChange={(event) => onProxyChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              }
-            }}
-            placeholder="http://127.0.0.1:7890"
-            value={proxy}
+          <Select<UpdateSourcePreference>
+            ariaLabel={t("settings.updateSource")}
+            className="settings-update-source-select"
+            disabled={savingUpdateSettings || updater.busy}
+            onChange={onUpdateSourceChange}
+            options={[
+              { value: "auto", label: t("settings.updateSourceAuto") },
+              { value: "github", label: "GitHub" },
+              { value: "cnb", label: "CNB" },
+            ]}
+            value={settings.updateSource}
           />
+        </div>
+        <div className="settings-row settings-about-last-row">
+          <div className="settings-row-copy">
+            <span className="settings-row-label">{t("settings.updateHistory")}</span>
+            <small>{t("settings.updateHistoryHint")}</small>
+          </div>
+          <Button
+            icon={<History aria-hidden="true" size={16} />}
+            onClick={() => setHistoryOpen(true)}
+            variant="ghost"
+          >
+            {t("settings.viewUpdateHistory")}
+          </Button>
         </div>
         {error ? <div className="form-error settings-error">{error}</div> : null}
       </section>

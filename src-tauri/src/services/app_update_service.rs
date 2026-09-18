@@ -79,7 +79,12 @@ impl AppUpdateService {
         Ok(Some(info))
     }
 
-    pub async fn install(&self, on_progress: Channel<AppUpdateProgress>) -> Result<(), AppError> {
+    pub async fn install(
+        &self,
+        on_progress: Channel<AppUpdateProgress>,
+        proxy: &str,
+    ) -> Result<(), AppError> {
+        let proxy = parse_proxy(proxy)?;
         #[cfg(windows)]
         fstty_broker::installation::check_desktop(
             &std::env::current_exe().map_err(|_| AppError::Internal("无法定位当前程序".into()))?,
@@ -94,7 +99,7 @@ impl AppUpdateService {
             .await
             .clone()
             .ok_or_else(|| AppError::NotFound("没有待安装的应用更新".to_owned()));
-        let pending = match pending {
+        let mut pending = match pending {
             Ok(pending) => pending,
             Err(error) => {
                 self.installing.store(false, Ordering::Release);
@@ -102,6 +107,8 @@ impl AppUpdateService {
             }
         };
 
+        // 下载使用开始时的配置快照，不沿用检查更新时的旧代理，也不改变进行中的下载。
+        apply_download_proxy(&mut pending.update, proxy);
         let mut started = false;
         #[cfg(not(windows))]
         let result = pending
@@ -121,7 +128,11 @@ impl AppUpdateService {
                 },
             )
             .await
-            .map_err(|error| AppError::Internal(format!("下载或安装应用更新失败：{error}")));
+            .map_err(|_| {
+                AppError::Internal(
+                    "下载或安装应用更新失败，请检查网络、代理、证书及更新签名".into(),
+                )
+            });
         #[cfg(windows)]
         let result = async {
             let bytes = pending
@@ -139,7 +150,9 @@ impl AppUpdateService {
                     || {},
                 )
                 .await
-                .map_err(|error| AppError::Internal(format!("下载应用更新失败：{error}")))?;
+                .map_err(|_| {
+                    AppError::Internal("下载应用更新失败，请检查网络、代理、证书及更新签名".into())
+                })?;
             let ticket = fstty_broker::update::stage(&bytes, pending.update.signature.clone())
                 .await
                 .map_err(AppError::Internal)?;
@@ -166,8 +179,13 @@ impl AppUpdateService {
     }
 }
 
-async fn check_source(
-    app: &AppHandle,
+fn apply_download_proxy(update: &mut Update, proxy: Option<Url>) {
+    update.no_proxy = proxy.is_none();
+    update.proxy = proxy;
+}
+
+async fn check_source<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     source: AppUpdateSource,
     endpoint: &str,
     proxy: Option<Url>,
@@ -182,13 +200,15 @@ async fn check_source(
         .timeout(CHECK_TIMEOUT);
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
+    } else {
+        builder = builder.no_proxy();
     }
     let update = builder
         .build()
         .map_err(|error| format!("{source:?} 更新器创建失败：{error}"))?
         .check()
         .await
-        .map_err(|error| format!("{source:?} 更新检查失败：{error}"))?;
+        .map_err(|_| format!("{source:?} 更新检查失败，请检查网络、代理认证及证书"))?;
     if let Some(update) = &update {
         Version::parse(update.version.trim_start_matches('v'))
             .map_err(|error| format!("{source:?} 更新版本 {} 无效：{error}", update.version))?;
@@ -244,20 +264,20 @@ fn update_info(pending: &PendingAppUpdate) -> AppUpdateInfo {
 }
 
 fn parse_proxy(proxy: &str) -> Result<Option<Url>, AppError> {
-    let proxy = proxy.trim();
-    if proxy.is_empty() {
-        return Ok(None);
+    let mut proxy = fstty_network::parse_proxy(proxy).map_err(AppError::Validation)?;
+    if let Some(url) = &mut proxy {
+        if url.scheme() == "socks5" {
+            // 更新请求与 SSH 一样由代理解析目标域名，避免本机 DNS 绕过代理。
+            url.set_scheme("socks5h")
+                .map_err(|_| AppError::Validation("SOCKS5 代理地址无效".into()))?;
+        }
     }
-    if proxy.len() > 512 || proxy.chars().any(char::is_control) {
-        return Err(AppError::Validation("更新代理地址无效".to_owned()));
-    }
-    let parsed =
-        Url::parse(proxy).map_err(|_| AppError::Validation("更新代理地址无效".to_owned()))?;
-    if !matches!(parsed.scheme(), "http" | "https" | "socks5") {
-        return Err(AppError::Validation("更新代理地址无效".to_owned()));
-    }
-    Ok(Some(parsed))
+    Ok(proxy)
 }
+
+#[cfg(test)]
+#[path = "app_update_service/proxy_tests.rs"]
+mod proxy_tests;
 
 #[cfg(test)]
 mod tests {

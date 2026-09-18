@@ -7,6 +7,7 @@ import type {
 } from "../../shared/api/types";
 import { Select } from "../../shared/ui/Select";
 import { Button } from "../../shared/ui/Button";
+import { TextInput } from "../../shared/ui/TextInput";
 import { useAutostartSettings } from "./useAutostartSettings";
 import { SettingsIconAction } from "./SettingsIconAction";
 import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
@@ -19,6 +20,11 @@ interface GeneralSettingsPanelProps {
   logDirectoryError: string | null;
   logSettingsError: string | null;
   onClipboardChange: (enabled: boolean) => void;
+  onProxyChange: (value: string) => void;
+  onProxyCommit: () => void;
+  proxy: string;
+  proxyError: string | null;
+  savingProxy: boolean;
   onHideTooltip: () => void;
   onLanguageChange: (language: Language) => void;
   onThemeChange: (theme: ThemePreference) => void;
@@ -39,6 +45,11 @@ export function GeneralSettingsPanel({
   logDirectoryError,
   logSettingsError,
   onClipboardChange,
+  onProxyChange,
+  onProxyCommit,
+  proxy,
+  proxyError,
+  savingProxy,
   onHideTooltip,
   onLanguageChange,
   onThemeChange,
@@ -138,6 +149,31 @@ export function GeneralSettingsPanel({
             type="checkbox"
           />
         </div>
+        <div className="settings-row settings-proxy-row">
+          <div className="settings-row-copy">
+            <label className="settings-row-label" htmlFor="proxy-address">
+              {t("settings.proxyAddress")}
+            </label>
+            <small>{t("settings.proxyAddressHint")}</small>
+            {savingProxy ? <small aria-live="polite">{t("settings.proxySaving")}</small> : null}
+          </div>
+          <TextInput
+            aria-busy={savingProxy}
+            className="settings-proxy-input"
+            disabled={savingProxy}
+            id="proxy-address"
+            onBlur={onProxyCommit}
+            onChange={(event) => onProxyChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+            }}
+            placeholder="http://127.0.0.1:7890"
+            value={proxy}
+          />
+        </div>
+        {proxyError ? <div className="form-error settings-error" role="alert">{proxyError}</div> : null}
       </section>
 
       <ShortcutSettingsSection onChange={onSettingsChange} settings={settings.shortcuts} />

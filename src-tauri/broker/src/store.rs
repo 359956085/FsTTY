@@ -21,6 +21,7 @@ struct Record {
 }
 
 pub struct Pending {
+    pub proxy: fstty_network::ProxySnapshot,
     pub owner: String,
     pub change: Change,
     pub revision: u64,
@@ -146,12 +147,29 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn stage(
         &mut self,
         owner: &str,
         change: Change,
         imported: Option<Secrets>,
     ) -> crate::Result<String> {
+        self.stage_with_proxy(
+            owner,
+            change,
+            imported,
+            fstty_network::ProxySnapshot::default(),
+        )
+    }
+
+    pub fn stage_with_proxy(
+        &mut self,
+        owner: &str,
+        change: Change,
+        imported: Option<Secrets>,
+        proxy: fstty_network::ProxySnapshot,
+    ) -> crate::Result<String> {
+        fstty_network::parse_proxy(&proxy.0)?;
         self.pending
             .retain(|_, p| p.created.elapsed() < Duration::from_secs(300));
         self.batches
@@ -186,6 +204,7 @@ impl Store {
         self.pending.insert(
             ticket.clone(),
             Pending {
+                proxy,
                 owner: owner.into(),
                 change,
                 revision,
@@ -416,6 +435,56 @@ mod tests {
             password: Zeroizing::new("唯一测试秘密".into()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn 审批保留代理快照且不改变目标和持久化凭据() {
+        let mut store = store();
+        let target = target();
+        let mut proxy = fstty_network::ProxySnapshot("http://user:pass@localhost:7890".into());
+        let ticket = store
+            .stage_with_proxy(
+                "owner",
+                Change::Configure {
+                    target: target.clone(),
+                    replace_secret: true,
+                },
+                Some(secret()),
+                proxy.clone(),
+            )
+            .unwrap();
+        proxy.0 = "socks5://localhost:1080".into();
+        assert_eq!(
+            store.pending(&ticket).unwrap().proxy.0,
+            "http://user:pass@localhost:7890"
+        );
+        assert_eq!(store.target(&ticket).unwrap(), target);
+        store
+            .set_observed_key(&ticket, "已确认的主机密钥".into())
+            .unwrap();
+        store.approve(&ticket, true, None).unwrap();
+        let (profile, _) = store.load("owner", &target.id).unwrap().unwrap();
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(!json.contains("proxy"));
+        assert!(!json.contains("user:pass"));
+        assert_eq!(profile.target, target);
+    }
+
+    #[test]
+    fn 非法代理不进入审批暂存且不产生默认直连请求() {
+        let mut store = store();
+        assert!(store
+            .stage_with_proxy(
+                "owner",
+                Change::Configure {
+                    target: target(),
+                    replace_secret: true,
+                },
+                None,
+                fstty_network::ProxySnapshot("http://proxy:0".into())
+            )
+            .is_err());
+        assert!(store.pending.is_empty());
     }
 
     #[test]

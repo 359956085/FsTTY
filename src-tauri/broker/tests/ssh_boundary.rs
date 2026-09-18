@@ -9,6 +9,64 @@ use std::sync::{
 };
 use tokio::time::{timeout, Duration};
 use zeroize::Zeroizing;
+#[path = "../../network/tests/support/mod.rs"]
+mod proxy_fixture;
+
+#[tokio::test]
+async fn 经代理探测与认证支持命令和文件并拒绝变化指纹() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    timeout(Duration::from_secs(20), async {
+        for socks in [false, true] {
+            let (profile, secrets, attempts, server) = remote().await;
+            let (route, count, tunnel) = proxy_fixture::tunnel(profile.target.port, socks).await;
+            let key = proxy::probe(&profile.target, &route).await.unwrap();
+            assert_eq!(key, profile.host_key);
+            assert_eq!(attempts.load(Ordering::SeqCst), 0);
+            let remote = proxy::authenticate(&profile, secrets.clone(), &route)
+                .await
+                .unwrap();
+            let channel = remote.channel_open_session().await.unwrap();
+            channel.request_subsystem(true, "sftp").await.unwrap();
+            let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+                .await
+                .unwrap();
+            let mut file = sftp.create("/fixture").await.unwrap();
+            file.write_all(b"proxy file transfer").await.unwrap();
+            file.shutdown().await.unwrap();
+            // 修改后续连接的路由不影响已经建立的 SSH 与传输。
+            let mut changed = profile.clone();
+            changed.host_key = "已变化的指纹".into();
+            assert!(proxy::authenticate(&changed, secrets, &route)
+                .await
+                .is_err());
+            assert_eq!(attempts.load(Ordering::SeqCst), 1);
+            tunnel.abort();
+            let mut file = sftp.open("/fixture").await.unwrap();
+            let mut content = Vec::new();
+            file.read_to_end(&mut content).await.unwrap();
+            assert_eq!(content, b"proxy file transfer");
+            let mut exec = remote.channel_open_session().await.unwrap();
+            exec.exec(true, b"mcp-device-status".to_vec())
+                .await
+                .unwrap();
+            let mut output = Vec::new();
+            while let Some(message) = exec.wait().await {
+                if let ChannelMsg::Data { data } = message {
+                    output.extend_from_slice(&data);
+                }
+            }
+            assert_eq!(output, b"mcp-device-status");
+            assert!(count.load(Ordering::SeqCst) >= 3);
+            remote
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await
+                .unwrap();
+            server.abort();
+        }
+    })
+    .await
+    .expect("代理 SSH/SFTP 操作应及时完成");
+}
 
 struct TestServer {
     attempts: Arc<AtomicUsize>,
@@ -197,7 +255,9 @@ async fn 服务代理传输大于窗口的文件并在取消后关闭连接() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     timeout(Duration::from_secs(20), async {
         let (profile, secrets, _, server) = remote().await;
-        let remote = proxy::authenticate(&profile, secrets).await.unwrap();
+        let remote = proxy::authenticate(&profile, secrets, &Default::default())
+            .await
+            .unwrap();
         let (service_stream, client_stream) = tokio::io::duplex(4096);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         let proxy = tokio::spawn(proxy::serve_until(
@@ -331,11 +391,13 @@ async fn 带口令私钥由服务解锁签名且错误口令不发送认证() {
             password: Zeroizing::new(password.into()),
             private_key: Zeroizing::new(encrypted.to_string()),
         };
-        assert!(proxy::authenticate(&profile, secret("错误口令"))
-            .await
-            .is_err());
+        assert!(
+            proxy::authenticate(&profile, secret("错误口令"), &Default::default())
+                .await
+                .is_err()
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 0);
-        let remote = proxy::authenticate(&profile, secret("测试专用口令"))
+        let remote = proxy::authenticate(&profile, secret("测试专用口令"), &Default::default())
             .await
             .unwrap();
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
@@ -353,7 +415,9 @@ async fn 带口令私钥由服务解锁签名且错误口令不发送认证() {
 async fn 主机指纹不匹配时绝不发送保存的密码() {
     let (mut profile, secrets, attempts, server) = remote().await;
     profile.host_key = "伪造的主机指纹".into();
-    assert!(proxy::authenticate(&profile, secrets).await.is_err());
+    assert!(proxy::authenticate(&profile, secrets, &Default::default())
+        .await
+        .is_err());
     assert_eq!(attempts.load(Ordering::SeqCst), 0);
     server.abort();
 }
@@ -362,7 +426,7 @@ async fn 主机指纹不匹配时绝不发送保存的密码() {
 async fn 通道代理支持终端与命令并传递退出码() {
     timeout(Duration::from_secs(15),async {
         let (profile,secrets,attempts,server)=remote().await;
-        let remote=proxy::authenticate(&profile,secrets).await.unwrap();
+        let remote=proxy::authenticate(&profile,secrets,&Default::default()).await.unwrap();
         assert_eq!(attempts.load(Ordering::SeqCst),1);
         let (service_stream,client_stream)=tokio::io::duplex(65536);
         let config=proxy::server_config().unwrap();

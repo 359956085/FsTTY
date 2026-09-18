@@ -115,6 +115,7 @@ pub struct OneTimeLogin {
 }
 
 struct ConnectionManagerInner {
+    settings_service: Arc<StdMutex<super::SettingsService>>,
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
     registry: RwLock<ConnectionRegistry>,
@@ -291,6 +292,7 @@ enum AuthenticationOutcome {
 
 #[cfg_attr(all(windows, not(test)), allow(dead_code))]
 enum TransportError {
+    Network(AppError),
     #[cfg(all(windows, not(test)))]
     Broker(AppError),
     Timeout,
@@ -303,7 +305,8 @@ impl ConnectionManager {
         &self,
         session: &StoredSession,
     ) -> Result<client::Handle<SshClient>, TransportError> {
-        let pipe = super::broker_service::connect_stream(&session.id)
+        let proxy = self.proxy_snapshot().map_err(TransportError::Network)?;
+        let pipe = super::broker_service::connect_stream(&session.id, &proxy)
             .await
             .map_err(TransportError::Broker)?;
         let (mut handler, _) = self.ssh_client(session);
@@ -349,18 +352,30 @@ impl ConnectionManager {
         session: &StoredSession,
         _challenge_id: &str,
     ) -> Result<(), AppError> {
-        super::broker_service::trust(&session.id).await
+        super::broker_service::trust(&session.id, &self.proxy_snapshot()?).await
     }
 
     #[cfg(all(windows, not(test)))]
     pub async fn forget_host_key(&self, session: &StoredSession) -> Result<bool, AppError> {
-        super::broker_service::trust(&session.id).await?;
+        super::broker_service::trust(&session.id, &self.proxy_snapshot()?).await?;
         Ok(true)
     }
 
+    #[cfg(test)]
     pub fn new(app_data_dir: &Path) -> Self {
+        Self::new_with_settings(
+            app_data_dir,
+            Arc::new(StdMutex::new(super::SettingsService::load(app_data_dir))),
+        )
+    }
+
+    pub fn new_with_settings(
+        app_data_dir: &Path,
+        settings_service: Arc<StdMutex<super::SettingsService>>,
+    ) -> Self {
         Self {
             inner: Arc::new(ConnectionManagerInner {
+                settings_service,
                 known_hosts_path: app_data_dir.join("known_hosts"),
                 known_hosts_lock: Arc::new(StdMutex::new(())),
                 registry: RwLock::new(ConnectionRegistry::default()),
@@ -370,6 +385,14 @@ impl ConnectionManager {
                 device_metrics_stopped: AtomicBool::new(false),
             }),
         }
+    }
+
+    fn proxy_snapshot(&self) -> Result<fstty_network::ProxySnapshot, AppError> {
+        self.inner
+            .settings_service
+            .lock()
+            .map(|settings| settings.proxy_snapshot())
+            .map_err(|_| AppError::Internal("代理配置不可用".into()))
     }
 
     fn ssh_client(
@@ -400,13 +423,18 @@ impl ConnectionManager {
             nodelay: true,
             ..Default::default()
         };
-        let connection = time::timeout(
+        let deadline = time::Instant::now() + CONNECT_TIMEOUT;
+        let stream = fstty_network::connect(
+            &session.host,
+            session.port,
+            &self.proxy_snapshot().map_err(TransportError::Network)?,
             CONNECT_TIMEOUT,
-            client::connect(
-                Arc::new(config),
-                (session.host.as_str(), session.port),
-                handler,
-            ),
+        )
+        .await
+        .map_err(|error| TransportError::Network(AppError::Connection(error)))?;
+        let connection = time::timeout_at(
+            deadline,
+            client::connect_stream(Arc::new(config), stream, handler),
         )
         .await
         .map_err(|_| TransportError::Timeout)?;
@@ -551,6 +579,7 @@ impl ConnectionManager {
         match error {
             #[cfg(all(windows, not(test)))]
             TransportError::Broker(error) => Err(error),
+            TransportError::Network(error) => Err(error),
             TransportError::Timeout => Err(AppError::Connection("连接服务器超时".to_owned())),
             TransportError::Handshake(observed) => match *observed {
                 Some(HostObservation::Unknown(key)) => {
@@ -580,6 +609,7 @@ impl ConnectionManager {
         match error {
             #[cfg(all(windows, not(test)))]
             TransportError::Broker(error) => error,
+            TransportError::Network(error) => error,
             TransportError::Timeout => AppError::Connection("连接服务器超时".to_owned()),
             TransportError::Handshake(observed) => match *observed {
                 Some(HostObservation::Unknown(_)) => {

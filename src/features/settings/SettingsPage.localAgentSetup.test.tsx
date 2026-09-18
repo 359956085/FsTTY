@@ -105,7 +105,7 @@ const settings: AppSettings = {
   mcpHttpEnabled: false,
   mcpHttpPort: 37_653,
   recordMcpToolInputs: false,
-  updateProxy: "",
+  proxyAddress: "",
   updateSource: "auto",
   shortcuts: DEFAULT_SHORTCUTS,
 };
@@ -332,7 +332,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
     fireEvent.click(screen.getByRole("option", { name: "GitHub" }));
 
     await waitFor(() =>
-      expect(mocks.updateAppSettings).toHaveBeenCalledWith(false, "", false, "github"),
+      expect(mocks.updateAppSettings).toHaveBeenCalledWith(false, false, "github"),
     );
     expect(onChange).toHaveBeenCalledWith(nextSettings);
   });

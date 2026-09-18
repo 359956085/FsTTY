@@ -75,6 +75,10 @@ impl SettingsService {
         self.settings.clone()
     }
 
+    pub fn proxy_snapshot(&self) -> fstty_network::ProxySnapshot {
+        fstty_network::ProxySnapshot(self.settings.proxy_address.clone())
+    }
+
     pub fn reload_mcp_runtime_settings(&mut self) -> Result<(), AppError> {
         // MCP 独立进程同步传输开关和通用运行时字段；分组授权由独立数据库实时读取。
         let store = read_store(&self.store_path)?
@@ -86,6 +90,7 @@ impl SettingsService {
             self.settings.mcp_group_permissions = store.settings.mcp_group_permissions;
         }
         self.settings.record_mcp_tool_inputs = store.settings.record_mcp_tool_inputs;
+        self.settings.proxy_address = store.settings.proxy_address;
         Ok(())
     }
 
@@ -121,16 +126,20 @@ impl SettingsService {
     pub fn update(
         &mut self,
         auto_update: bool,
-        update_proxy: String,
         allow_remote_clipboard_write: bool,
         update_source: UpdateSourcePreference,
     ) -> Result<AppSettings, AppError> {
-        validate_update_proxy(&update_proxy)?;
         let mut next = self.settings.clone();
         next.auto_update = auto_update;
-        next.update_proxy = update_proxy;
         next.allow_remote_clipboard_write = allow_remote_clipboard_write;
         next.update_source = update_source;
+        self.replace(next)
+    }
+
+    pub fn set_proxy_address(&mut self, address: String) -> Result<AppSettings, AppError> {
+        fstty_network::parse_proxy(&address).map_err(AppError::Validation)?;
+        let mut next = self.settings.clone();
+        next.proxy_address = address.trim().to_owned();
         self.replace(next)
     }
 
@@ -262,7 +271,7 @@ fn default_settings() -> AppSettings {
         theme: ThemePreference::System,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
-        update_proxy: String::new(),
+        proxy_address: String::new(),
         allow_remote_clipboard_write: true,
         record_mcp_tool_inputs: false,
         ignored_update_version: None,
@@ -389,19 +398,6 @@ fn validate_release_version(version: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn validate_update_proxy(update_proxy: &str) -> Result<(), AppError> {
-    if update_proxy.len() > 512
-        || update_proxy.chars().any(char::is_control)
-        || (!update_proxy.is_empty()
-            && !["http://", "https://", "socks5://"]
-                .iter()
-                .any(|prefix| update_proxy.starts_with(prefix)))
-    {
-        return Err(AppError::Validation("更新代理地址无效".to_owned()));
-    }
-    Ok(())
-}
-
 fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
@@ -418,7 +414,7 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
     if store.version != STORE_VERSION {
         return Err(AppError::Persistence("设置存储版本无效".to_owned()));
     }
-    validate_update_proxy(&store.settings.update_proxy)?;
+    // 旧代理配置可能不符合新规则；保留其他设置，在建连和保存时严格校验，禁止直连回退。
     validate_shortcut_settings(&store.settings.shortcuts)?;
     let mut store = store;
     store.settings.mcp_group_permissions =
@@ -452,18 +448,66 @@ mod tests {
     }
 
     #[test]
+    fn 旧代理字段迁移不丢失设置且非法旧代理禁止直连回退() {
+        for address in ["http://127.0.0.1:7890", "http://proxy:0"] {
+            let directory = test_directory("legacy-global-proxy");
+            let mut expected = default_settings();
+            expected.language = Language::EnUs;
+            expected.theme = ThemePreference::Dark;
+            expected.auto_update = false;
+            expected.allow_remote_clipboard_write = false;
+            expected.proxy_address = address.into();
+            let mut json = serde_json::to_value(SettingsStore {
+                version: STORE_VERSION,
+                settings: expected.clone(),
+            })
+            .unwrap();
+            let object = json.as_object_mut().unwrap();
+            object.remove("proxyAddress");
+            object.insert("updateProxy".into(), serde_json::json!(address));
+            fs::write(
+                directory.join(STORE_FILE),
+                serde_json::to_vec(&json).unwrap(),
+            )
+            .unwrap();
+            let mut service = SettingsService::load(&directory);
+            assert_eq!(service.get(), expected);
+            service
+                .update(false, false, UpdateSourcePreference::Cnb)
+                .unwrap();
+            assert_eq!(service.get().proxy_address, address);
+            let content = fs::read_to_string(directory.join(STORE_FILE)).unwrap();
+            assert!(content.contains("proxyAddress"));
+            assert!(!content.contains("updateProxy"));
+            if address.ends_with(":0") {
+                assert!(fstty_network::parse_proxy(&service.proxy_snapshot().0).is_err());
+            }
+            service
+                .set_proxy_address("  socks5://127.0.0.1:1080  ".into())
+                .unwrap();
+            let restored = SettingsService::load(&directory).get();
+            assert_eq!(restored.proxy_address, "socks5://127.0.0.1:1080");
+            assert_eq!(restored.language, Language::EnUs);
+            assert_eq!(restored.theme, ThemePreference::Dark);
+            assert!(!restored.auto_update);
+            assert!(!restored.allow_remote_clipboard_write);
+            assert_eq!(restored.update_source, UpdateSourcePreference::Cnb);
+            assert!(!format!("{:?}", service.get()).contains("socks5://"));
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
+
+    #[test]
     fn uses_defaults_and_restores_persisted_settings() {
         let directory = test_directory("settings-persist");
         let mut service = SettingsService::load(&directory);
         assert_eq!(service.get(), default_settings());
 
         service
-            .update(
-                false,
-                "http://127.0.0.1:7890".to_owned(),
-                false,
-                UpdateSourcePreference::GitHub,
-            )
+            .set_proxy_address("http://127.0.0.1:7890".into())
+            .expect("保存代理失败");
+        service
+            .update(false, false, UpdateSourcePreference::GitHub)
             .expect("保存更新设置失败");
         service.set_language(Language::EnUs).expect("保存语言失败");
         service
@@ -473,7 +517,7 @@ mod tests {
         let restored = SettingsService::load(&directory).get();
         assert_eq!(restored.language, Language::EnUs);
         assert!(!restored.auto_update);
-        assert_eq!(restored.update_proxy, "http://127.0.0.1:7890");
+        assert_eq!(restored.proxy_address, "http://127.0.0.1:7890");
         assert!(!restored.allow_remote_clipboard_write);
         assert_eq!(restored.update_source, UpdateSourcePreference::GitHub);
         assert_eq!(restored.ignored_update_version.as_deref(), Some("0.5.0"));
@@ -539,7 +583,7 @@ mod tests {
   "version": 1,
   "language": "zh-CN",
   "autoUpdate": true,
-  "updateProxy": ""
+  "proxyAddress": ""
 }"#,
         )
         .expect("无法写入旧设置文件");
@@ -573,7 +617,7 @@ mod tests {
   "version": 1,
   "language": "zh-CN",
   "autoUpdate": true,
-  "updateProxy": "",
+  "proxyAddress": "",
   "mcpGroupPermissions": [{
     "groupName": "生产",
     "enabled": true,
@@ -662,7 +706,7 @@ mod tests {
         reader.settings.mcp_enabled = false;
         reader.settings.mcp_http_enabled = false;
         reader.settings.mcp_http_port = 40_000;
-        reader.settings.update_proxy = "socks5://127.0.0.1:7890".to_owned();
+        reader.settings.proxy_address = "socks5://127.0.0.1:7890".to_owned();
 
         writer
             .update_mcp(true, true, 45_678, vec![mcp_permission(true)])
@@ -670,6 +714,9 @@ mod tests {
         writer
             .update_log_settings(true)
             .expect("保存 MCP 日志设置失败");
+        writer
+            .set_proxy_address("http://127.0.0.1:7891".into())
+            .expect("保存代理失败");
         reader
             .reload_mcp_runtime_settings()
             .expect("热加载权限失败");
@@ -680,7 +727,7 @@ mod tests {
         assert!(settings.mcp_enabled);
         assert!(settings.mcp_http_enabled);
         assert_eq!(settings.mcp_http_port, 40_000);
-        assert_eq!(settings.update_proxy, "socks5://127.0.0.1:7890");
+        assert_eq!(settings.proxy_address, "http://127.0.0.1:7891");
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -748,7 +795,7 @@ mod tests {
   "version": 1,
   "language": "zh-CN",
   "autoUpdate": true,
-  "updateProxy": ""
+  "proxyAddress": ""
 }"#,
         )
         .expect("无法写入旧设置文件");
@@ -786,7 +833,7 @@ mod tests {
             .set_language(Language::EnUs)
             .expect("保存第一版设置失败");
         service
-            .update(false, String::new(), true, UpdateSourcePreference::Auto)
+            .update(false, true, UpdateSourcePreference::Auto)
             .expect("保存第二版设置失败");
         fs::write(directory.join(STORE_FILE), b"damaged").expect("无法损坏主设置文件");
 
@@ -794,15 +841,13 @@ mod tests {
         assert_eq!(recovered.get().language, Language::EnUs);
         assert!(recovered.get().auto_update);
         recovered
-            .update(
-                false,
-                "socks5://127.0.0.1:7890".to_owned(),
-                true,
-                UpdateSourcePreference::Cnb,
-            )
+            .update(false, true, UpdateSourcePreference::Cnb)
             .expect("无法替换损坏的设置文件");
+        recovered
+            .set_proxy_address("socks5://127.0.0.1:7890".into())
+            .expect("保存代理失败");
         assert_eq!(
-            SettingsService::load(&directory).get().update_proxy,
+            SettingsService::load(&directory).get().proxy_address,
             "socks5://127.0.0.1:7890"
         );
         let _ = fs::remove_dir_all(directory);
@@ -832,12 +877,7 @@ mod tests {
         let mut service = SettingsService::load(&directory);
 
         assert!(service
-            .update(
-                true,
-                "ftp://127.0.0.1".to_owned(),
-                true,
-                UpdateSourcePreference::Auto,
-            )
+            .set_proxy_address("ftp://127.0.0.1".to_owned())
             .is_err());
         assert_eq!(service.get(), default_settings());
         let _ = fs::remove_dir_all(directory);
@@ -867,6 +907,10 @@ mod tests {
         assert_eq!(service.get(), default_settings());
         assert!(service.update_log_settings(true).is_err());
         assert!(!service.get().record_mcp_tool_inputs);
+        assert!(service
+            .set_proxy_address("http://127.0.0.1:7890".into())
+            .is_err());
+        assert_eq!(service.get().proxy_address, "");
         let _ = fs::remove_dir_all(directory);
     }
 }

@@ -26,7 +26,10 @@ export function useGeneralSettings({
   const [logDirectoryError, setLogDirectoryError] = useState<string | null>(null);
   const [logSettingsError, setLogSettingsError] = useState<string | null>(null);
   const [openingLogDirectory, setOpeningLogDirectory] = useState(false);
-  const [proxy, setProxy] = useState(settings.updateProxy);
+  const [proxy, setProxy] = useState(settings.proxyAddress);
+  const [proxyError, setProxyError] = useState<string | null>(null);
+  const [savingProxy, setSavingProxy] = useState(false);
+  const savingProxyRef = useRef(false);
   const [savingLanguage, setSavingLanguage] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
   const [savingLogSettings, setSavingLogSettings] = useState(false);
@@ -37,8 +40,9 @@ export function useGeneralSettings({
   const savingThemeRef = useRef(false);
   const savingLogSettingsRef = useRef(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingUpdateSettingsSavesRef = useRef(0);
 
-  useEffect(() => setProxy(settings.updateProxy), [settings.updateProxy]);
+  useEffect(() => setProxy(settings.proxyAddress), [settings.proxyAddress]);
   useEffect(() => {
     // StrictMode 会重放 Effect；每次建立生命周期都必须恢复挂载状态。
     mountedRef.current = true;
@@ -156,10 +160,10 @@ export function useGeneralSettings({
   const saveUpdateSettings = useCallback(
     async (
       autoUpdate: boolean,
-      updateProxy = proxy,
       allowRemoteClipboardWrite = settings.allowRemoteClipboardWrite,
       updateSource: UpdateSourcePreference = settings.updateSource,
     ) => {
+      pendingUpdateSettingsSavesRef.current += 1;
       if (mountedRef.current) {
         setSavingUpdateSettings(true);
       }
@@ -170,12 +174,10 @@ export function useGeneralSettings({
         try {
           const nextSettings = await api.updateAppSettings(
             autoUpdate,
-            updateProxy.trim(),
             allowRemoteClipboardWrite,
             updateSource,
           );
           if (mountedRef.current) {
-            setProxy(nextSettings.updateProxy);
             onChange(nextSettings);
           }
           return nextSettings;
@@ -195,18 +197,52 @@ export function useGeneralSettings({
       try {
         return await save;
       } finally {
-        if (mountedRef.current && updateSettingsSaveRef.current === queueTail) {
-          setSavingUpdateSettings(false);
+        pendingUpdateSettingsSavesRef.current -= 1;
+        if (mountedRef.current) {
+          setSavingUpdateSettings(pendingUpdateSettingsSavesRef.current > 0);
         }
       }
     },
-    [onChange, proxy, settings.allowRemoteClipboardWrite, settings.updateSource, translate],
+    [onChange, settings.allowRemoteClipboardWrite, settings.updateSource, translate],
   );
+
+  const saveProxy = useCallback(async () => {
+    if (savingProxyRef.current || proxy.trim() === settings.proxyAddress) {
+      return;
+    }
+    savingProxyRef.current = true;
+    setSavingProxy(true);
+    setProxyError(null);
+    // 与更新设置共用串行队列，避免旧响应覆盖刚保存的代理状态。
+    const save = updateSettingsSaveRef.current.then(async () => {
+      try {
+        const nextSettings = await api.setProxyAddress(proxy.trim());
+        if (mountedRef.current) {
+          setProxy(nextSettings.proxyAddress);
+          onChange(nextSettings);
+        }
+      } catch (nextError) {
+        if (mountedRef.current) {
+          setProxyError(resolveApiError(nextError, translate("errors.unknown")));
+        }
+      }
+    });
+    const queueTail = save.then(() => undefined, () => undefined);
+    updateSettingsSaveRef.current = queueTail;
+    try {
+      await save;
+    } finally {
+      savingProxyRef.current = false;
+      if (mountedRef.current) {
+        setSavingProxy(false);
+      }
+    }
+  }, [onChange, proxy, settings.proxyAddress, translate]);
 
   const checkForUpdates = useCallback(async () => {
     const saved = await saveUpdateSettings(settings.autoUpdate);
     if (mountedRef.current && saved) {
-      await updater.checkForUpdates("manual", saved.updateProxy, saved.updateSource);
+      await updater.checkForUpdates("manual", saved.updateSource);
     }
   }, [saveUpdateSettings, settings.autoUpdate, updater]);
 
@@ -220,6 +256,9 @@ export function useGeneralSettings({
     openLogDirectory,
     openingLogDirectory,
     proxy,
+    proxyError,
+    saveProxy,
+    savingProxy,
     saveLogSettings,
     saveUpdateSettings,
     savingLanguage,
