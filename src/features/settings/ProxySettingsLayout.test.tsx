@@ -23,7 +23,7 @@ vi.mock("./useAutostartSettings", () => ({ useAutostartSettings: () => ({
 }) }));
 
 const settings: AppSettings = {
-  language: "zh-CN", theme: "system", autoUpdate: true, updateSource: "auto", proxyAddress: "", proxyEnabled: false,
+  language: "zh-CN", theme: "system", terminalColorScheme: "default", autoUpdate: true, updateSource: "auto", proxyAddress: "", proxyEnabled: false,
   allowRemoteClipboardWrite: true, recordMcpToolInputs: false, ignoredUpdateVersion: null,
   mcpEnabled: false, mcpHttpEnabled: false, mcpHttpPort: 37653, mcpGroupPermissions: [],
   shortcuts: DEFAULT_SHORTCUTS,
@@ -33,6 +33,7 @@ function general(overrides: Partial<ComponentProps<typeof GeneralSettingsPanel>>
   return render(<GeneralSettingsPanel
     activeTooltipKey={null} logDirectoryError={null} logSettingsError={null}
     onClipboardChange={vi.fn()} onHideTooltip={vi.fn()} onLanguageChange={vi.fn()} onThemeChange={vi.fn()}
+    onTerminalColorSchemeChange={vi.fn()} savingTerminalColorScheme={false}
     onOpenLogDirectory={vi.fn()} onRecordMcpToolInputsChange={vi.fn()} onShowTooltip={vi.fn()}
     onSettingsChange={vi.fn()} openingLogDirectory={false} savingLanguage={false} savingTheme={false}
     savingLogSettings={false} savingUpdateSettings={false} settings={settings}
@@ -43,6 +44,23 @@ function general(overrides: Partial<ComponentProps<typeof GeneralSettingsPanel>>
 afterEach(() => { cleanup(); locale.language = "zh-CN"; });
 
 describe("全局代理及应用更新布局", () => {
+  it.each(["zh-CN", "en-US"])("文字配色可独立选择，保存时禁用配色和主题：%s", (language) => {
+    locale.language = language;
+    const t = i18n.getFixedT(language);
+    const onTerminalColorSchemeChange = vi.fn();
+    const onThemeChange = vi.fn();
+    const { unmount } = general({ onTerminalColorSchemeChange, onThemeChange });
+    fireEvent.click(screen.getByRole("combobox", { name: t("settings.terminalColorScheme") }));
+    expect(screen.getAllByRole("option")).toHaveLength(5);
+    fireEvent.click(screen.getByRole("option", { name: "Dracula" }));
+    expect(onTerminalColorSchemeChange).toHaveBeenCalledExactlyOnceWith("dracula");
+    expect(onThemeChange).not.toHaveBeenCalled();
+    unmount();
+    general({ savingTerminalColorScheme: true });
+    expect((screen.getByRole("combobox", { name: t("settings.terminalColorScheme") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("combobox", { name: t("settings.theme") }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it.each(["zh-CN", "en-US"])("代理独立放在基础设置下方，更新顺序准确：%s", (language) => {
     locale.language = language;
     const t = i18n.getFixedT(language);

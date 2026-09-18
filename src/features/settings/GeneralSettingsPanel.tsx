@@ -4,6 +4,7 @@ import type {
   AppSettings,
   Language,
   ThemePreference,
+  TerminalColorScheme,
 } from "../../shared/api/types";
 import { Select } from "../../shared/ui/Select";
 import { Button } from "../../shared/ui/Button";
@@ -28,6 +29,7 @@ interface GeneralSettingsPanelProps {
   onHideTooltip: () => void;
   onLanguageChange: (language: Language) => void;
   onThemeChange: (theme: ThemePreference) => void;
+  onTerminalColorSchemeChange: (colorScheme: TerminalColorScheme) => void;
   onOpenLogDirectory: () => void;
   onRecordMcpToolInputsChange: (enabled: boolean) => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
@@ -35,6 +37,7 @@ interface GeneralSettingsPanelProps {
   openingLogDirectory: boolean;
   savingLanguage: boolean;
   savingTheme: boolean;
+  savingTerminalColorScheme: boolean;
   savingLogSettings: boolean;
   savingUpdateSettings: boolean;
   settings: AppSettings;
@@ -54,6 +57,7 @@ export function GeneralSettingsPanel({
   onHideTooltip,
   onLanguageChange,
   onThemeChange,
+  onTerminalColorSchemeChange,
   onOpenLogDirectory,
   onRecordMcpToolInputsChange,
   onShowTooltip,
@@ -61,6 +65,7 @@ export function GeneralSettingsPanel({
   openingLogDirectory,
   savingLanguage,
   savingTheme,
+  savingTerminalColorScheme,
   savingLogSettings,
   savingUpdateSettings,
   settings,
@@ -93,7 +98,7 @@ export function GeneralSettingsPanel({
           <Select<ThemePreference>
             ariaLabel={t("settings.theme")}
             className="settings-language-select"
-            disabled={savingTheme}
+            disabled={savingTheme || savingTerminalColorScheme}
             onChange={onThemeChange}
             options={[
               { value: "system", label: t("settings.themeSystem") },
@@ -101,6 +106,26 @@ export function GeneralSettingsPanel({
               { value: "dark", label: t("settings.themeDark") },
             ]}
             value={settings.theme}
+          />
+        </div>
+        <div className="settings-row settings-language-row">
+          <div className="settings-row-copy">
+            <span className="settings-row-label">{t("settings.terminalColorScheme")}</span>
+            <small>{t("settings.terminalColorSchemeHint")}</small>
+          </div>
+          <Select<TerminalColorScheme>
+            ariaLabel={t("settings.terminalColorScheme")}
+            className="settings-language-select settings-terminal-color-select"
+            disabled={savingTheme || savingTerminalColorScheme}
+            onChange={onTerminalColorSchemeChange}
+            options={[
+              { value: "default", label: t("settings.terminalColorSchemeDefault") },
+              { value: "dracula", label: "Dracula" },
+              { value: "catppuccin", label: "Catppuccin Mocha" },
+              { value: "nord", label: "Nord" },
+              { value: "solarized", label: "Solarized" },
+            ]}
+            value={settings.terminalColorScheme}
           />
         </div>
         <div className="settings-row">

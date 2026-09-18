@@ -34,6 +34,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-CN",
     theme: readCachedThemePreference(),
+    terminalColorScheme: "default",
     autoUpdate: true,
     updateSource: "auto",
     proxyAddress: "",
@@ -231,6 +232,7 @@ export function App() {
             paneLayout={paneLayout}
             allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
             theme={resolvedTheme}
+            terminalColorScheme={settings.terminalColorScheme}
             shortcuts={settings.shortcuts}
             visible={view === "sessions"}
           />

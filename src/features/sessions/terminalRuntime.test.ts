@@ -15,4 +15,29 @@ describe("终端主题", () => {
     expect(light.overviewRulerBorder).toBe("#00000000");
     expect(dark.overviewRulerBorder).toBe("#00000000");
   });
+
+  it.each(["dracula", "catppuccin", "nord", "solarized"] as const)(
+    "预设只改变 ANSI 配色，保留明暗背景、普通文字和选区：%s",
+    (colorScheme) => {
+      for (const theme of ["light", "dark"] as const) {
+        const base = getTerminalTheme(theme);
+        const selected = getTerminalTheme(theme, colorScheme);
+        expect(selected.red).not.toBe(base.red);
+        expect(selected.brightBlue).toMatch(/^#[\da-f]{6}$/);
+        for (const key of ["background", "foreground", "cursor", "cursorAccent", "selectionBackground", "overviewRulerBorder"] as const) {
+          expect(selected[key]).toBe(base[key]);
+        }
+      }
+    },
+  );
+
+  it("切回默认配色不会残留预设颜色或修改内置配色", () => {
+    const original = getTerminalTheme("dark");
+    const selected = getTerminalTheme("dark", "dracula");
+    expect(selected.red).toBe("#ff5555");
+    expect(selected.brightBlue).toBe("#d6acff");
+    selected.red = "#000000";
+    expect(getTerminalTheme("dark", "default")).toEqual(original);
+    expect(getTerminalTheme("dark", "dracula").red).toBe("#ff5555");
+  });
 });

@@ -8,6 +8,7 @@ import type {
   FileEntry,
   SshConnection,
   ShortcutSettings,
+  TerminalColorScheme,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
@@ -31,6 +32,7 @@ interface WorkspaceProps {
   rightResizeHandle: ReactNode;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
+  terminalColorScheme: TerminalColorScheme;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   visible: boolean;
   onCancelTransfer: (tabId: string) => void;
@@ -94,6 +96,7 @@ export function Workspace({
   rightResizeHandle,
   shortcuts,
   theme,
+  terminalColorScheme,
   runtimes,
   visible,
 }: WorkspaceProps) {
@@ -250,6 +253,7 @@ export function Workspace({
                     session={tab.session}
                     shortcuts={shortcuts}
                     theme={theme}
+                    terminalColorScheme={terminalColorScheme}
                     visible={visible}
                   />
                 ) : null}

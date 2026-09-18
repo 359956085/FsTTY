@@ -30,6 +30,7 @@ import type {
   SessionGroup,
   ShortcutSettings,
   TerminalEvent,
+  TerminalColorScheme,
   TerminalResumeEvent,
   PreservedTerminalAttachment,
   StartTransferJobRequest,
@@ -296,6 +297,9 @@ export const api = {
   },
   setTheme(theme: ThemePreference) {
     return invoke<AppSettings>("set_theme", { theme });
+  },
+  setTerminalColorScheme(colorScheme: TerminalColorScheme) {
+    return invoke<AppSettings>("set_terminal_color_scheme", { colorScheme });
   },
   setIgnoredUpdateVersion(version: string) {
     return invoke<AppSettings>("set_ignored_update_version", { version });

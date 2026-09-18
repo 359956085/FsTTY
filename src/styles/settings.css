@@ -359,6 +359,14 @@
   width: 160px;
 }
 
+.settings-terminal-color-select {
+  width: 200px;
+}
+
+.settings-terminal-color-select .form-select-menu {
+  max-height: 220px;
+}
+
 .settings-update-source-select {
   width: 120px;
 }

@@ -31,7 +31,7 @@ function Preview({ withTerminal = false, initiallyCollapsed = false }) {
       session: { id: "session", name: "测试会话", host: "example.test", port: 22, username: "test",
         group: "", tags: [], auth: { kind: "password" }, credentialState: "stored", loginSavePrompted: true } }] : [],
     rightCollapsed, rightResizeHandle: <div role="separator" aria-label="右栏宽度" />,
-    shortcuts: DEFAULT_SHORTCUTS, theme: "dark", runtimes: { tab: runtime }, visible: true,
+    shortcuts: DEFAULT_SHORTCUTS, theme: "dark", terminalColorScheme: "default", runtimes: { tab: runtime }, visible: true,
     onCancelTransfer: noop, onDismissTransfer: noop, onCloseTab: noop, onConnected: noop,
     onCredentialSaved: noop, onCreateRemoteDirectory: noop, onCreateSession: noop,
     onDeleteRemoteEntry: noop, onDirectoryChange: noop, onDownload: noop,

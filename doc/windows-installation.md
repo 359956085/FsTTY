@@ -14,6 +14,27 @@
 
 新版首次运行修复匹配旧目录的快捷方式、自启和 stdio 配置；保留自启关闭状态、命令参数、其他服务器配置及提示词。MCP 使用稳定启动器和更新后的独立运行副本。旧副本不能通过新版本的哈希检查时提示重启 Agent。无法识别的自定义命令保留并提示重新一键配置；设置中的“安装与启动入口”可查看失败项和重试。
 
+## 本地开发与 RustRover 调试
+
+Windows 桌面启动时读取有效安装记录，核对当前程序的路径和版本，Debug 构建同样执行此检查。已有安装记录时，从 RustRover、`cargo run` 或 `npm run tauri dev` 启动 `target/debug/fstty.exe` 会显示“这份 FsTTY 已不是当前安装”，并给出应启动的安装路径。这是应用的启动校验，不是 RustRover 的编译错误；管理员权限也不能使路径匹配。当前没有与现有安装隔离的开发启动模式。
+
+在项目根目录构建本地 Debug 验证安装包：
+
+```powershell
+npm ci
+npm run tauri -- build --debug --bundles nsis --config src-tauri/windows/validation.conf.json
+```
+
+已有匹配的 `node_modules` 时无需重复 `npm ci`。Windows 配置的 `beforeBuildCommand` 自动构建前端和静态链接运行库的凭据服务；无需单独手工复制程序。安装包位于 `src-tauri/target/debug/bundle/nsis/`。从普通权限桌面双击安装包，由安装器请求 UAC，完成后启动它登记的安装目录中的 `fstty.exe`。直接打开构建目录里的程序仍会触发路径校验。验证包不含正式在线更新签名，不能用于发布。
+
+构建前关闭开发版的报错对话框或停止 RustRover 中的运行进程。对话框未关闭时，`target/debug/fstty.exe` 仍被进程占用，Cargo 可能显示 `failed to remove file` 和“拒绝访问”。
+
+安装包会更新当前有效桌面、凭据服务和安装登记；若需保留日常使用的安装，请在 Windows Sandbox 或可还原的虚拟机中安装验证包。
+
+在安装了对应 Debug 验证包的机器上调试时，打开同一份源码并在 RustRover 中附加 `src-tauri/Cargo.toml`，保留本次构建生成的 `src-tauri/target/debug/fstty.pdb`。启动已安装的桌面后，使用 **Run → Attach to Process**（`Ctrl+Alt+F5`），选择对应的 `fstty.exe` 进程；检查其路径与安装记录一致。程序和调试符号必须来自同一次构建。需要检查启动阶段时，可使用 **Run → Attach to an Unstarted Process**，指定已安装程序的完整路径后再启动它。菜单及调试器支持见 [RustRover 附加调试文档](https://www.jetbrains.com/help/rust/attach-to-process.html)。在 Sandbox 或虚拟机中测试时，调试器也需运行在对应测试环境中。
+
+自动回归使用 `npm run verify:all`，不需要启动桌面或替换已安装的服务。仅检查前端布局时运行 `npm run dev`，在浏览器访问 `http://127.0.0.1:1430/`；浏览器没有 Tauri 后端，SSH 连接和配置保存不能通过这种方式验证。
+
 ## 隔离环境验收
 
 以下涉及安装、关闭进程及卸载的步骤只能在可还原的 Windows 虚拟机中执行。先拍摄虚拟机检查点；使用生成的测试凭据，禁止导入真实秘密。脚本仅检查状态，不替用户点击 UAC 或安装确认。

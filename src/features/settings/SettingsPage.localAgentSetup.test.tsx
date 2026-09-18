@@ -100,6 +100,7 @@ const settings: AppSettings = {
   ignoredUpdateVersion: null,
   language: "zh-CN",
   theme: "system",
+  terminalColorScheme: "default",
   mcpEnabled: false,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,

@@ -11,7 +11,7 @@ import {
 import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
-import type { ShortcutSettings } from "../../shared/api/types";
+import type { ShortcutSettings, TerminalColorScheme } from "../../shared/api/types";
 import type { ResolvedTheme } from "../../shared/theme";
 import { useLightweightRestore } from "../lightweight/useLightweightRestore";
 
@@ -20,6 +20,7 @@ interface SessionsPageProps {
   allowRemoteClipboardWrite: boolean;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
+  terminalColorScheme: TerminalColorScheme;
   visible: boolean;
 }
 
@@ -28,6 +29,7 @@ export function SessionsPage({
   allowRemoteClipboardWrite,
   shortcuts,
   theme,
+  terminalColorScheme,
   visible,
 }: SessionsPageProps) {
   const { t } = useTranslation();
@@ -195,6 +197,7 @@ export function SessionsPage({
         }
         shortcuts={shortcuts}
         theme={theme}
+        terminalColorScheme={terminalColorScheme}
         runtimes={connections.runtimes}
         visible={visible}
       />

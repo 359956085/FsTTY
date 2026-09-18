@@ -5,6 +5,7 @@ import type {
   AppSettings,
   Language,
   ThemePreference,
+  TerminalColorScheme,
   UpdateSourcePreference,
 } from "../../shared/api/types";
 import type { AppUpdaterController } from "./useAppUpdater";
@@ -32,12 +33,14 @@ export function useGeneralSettings({
   const savingProxyRef = useRef(false);
   const [savingLanguage, setSavingLanguage] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
+  const [savingTerminalColorScheme, setSavingTerminalColorScheme] = useState(false);
   const [savingLogSettings, setSavingLogSettings] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const mountedRef = useRef(true);
   const openingLogDirectoryRef = useRef(false);
   const savingLanguageRef = useRef(false);
   const savingThemeRef = useRef(false);
+  const savingTerminalColorSchemeRef = useRef(false);
   const savingLogSettingsRef = useRef(false);
   const updateSettingsSaveRef = useRef<Promise<void>>(Promise.resolve());
   const pendingUpdateSettingsSavesRef = useRef(0);
@@ -80,7 +83,7 @@ export function useGeneralSettings({
 
   const changeTheme = useCallback(
     async (theme: ThemePreference) => {
-      if (savingThemeRef.current) {
+      if (savingThemeRef.current || savingTerminalColorSchemeRef.current) {
         return;
       }
       savingThemeRef.current = true;
@@ -127,6 +130,40 @@ export function useGeneralSettings({
       }
     }
   }, [translate]);
+
+  const changeTerminalColorScheme = useCallback(
+    async (colorScheme: TerminalColorScheme) => {
+      if (savingTerminalColorSchemeRef.current || savingThemeRef.current) {
+        return;
+      }
+      savingTerminalColorSchemeRef.current = true;
+      setSavingTerminalColorScheme(true);
+      setError(null);
+      // 与其他常规设置串行保存，避免较早的响应覆盖刚选择的配色。
+      const save = updateSettingsSaveRef.current.then(async () => {
+        try {
+          const nextSettings = await api.setTerminalColorScheme(colorScheme);
+          if (mountedRef.current) {
+            onChange(nextSettings);
+          }
+        } catch (nextError) {
+          if (mountedRef.current) {
+            setError(resolveApiError(nextError, translate("errors.unknown")));
+          }
+        }
+      });
+      updateSettingsSaveRef.current = save;
+      try {
+        await save;
+      } finally {
+        savingTerminalColorSchemeRef.current = false;
+        if (mountedRef.current) {
+          setSavingTerminalColorScheme(false);
+        }
+      }
+    },
+    [onChange, translate],
+  );
 
   const saveLogSettings = useCallback(
     async (recordMcpToolInputs: boolean) => {
@@ -249,6 +286,7 @@ export function useGeneralSettings({
   return {
     changeLanguage,
     changeTheme,
+    changeTerminalColorScheme,
     checkForUpdates,
     error,
     logDirectoryError,
@@ -263,6 +301,7 @@ export function useGeneralSettings({
     saveUpdateSettings,
     savingLanguage,
     savingTheme,
+    savingTerminalColorScheme,
     savingLogSettings,
     savingUpdateSettings,
     setProxy,

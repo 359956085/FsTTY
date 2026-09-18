@@ -24,6 +24,7 @@ const settings: AppSettings = {
   ignoredUpdateVersion: null,
   language: "zh-CN",
   theme: "system",
+  terminalColorScheme: "default",
   mcpEnabled: false,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,
@@ -51,6 +52,7 @@ describe("常规设置分组顺序", () => {
       onHideTooltip={vi.fn()}
       onLanguageChange={vi.fn()}
       onThemeChange={vi.fn()}
+      onTerminalColorSchemeChange={vi.fn()}
       onOpenLogDirectory={vi.fn()}
       onRecordMcpToolInputsChange={vi.fn()}
       onShowTooltip={vi.fn()}
@@ -58,6 +60,7 @@ describe("常规设置分组顺序", () => {
       openingLogDirectory={false}
       savingLanguage={false}
       savingTheme={false}
+      savingTerminalColorScheme={false}
       savingLogSettings={false}
       savingUpdateSettings={false}
       settings={settings}

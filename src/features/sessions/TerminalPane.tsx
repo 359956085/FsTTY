@@ -21,6 +21,7 @@ import type {
   SshConnection,
   ShortcutSettings,
   TerminalEvent,
+  TerminalColorScheme,
   TerminalResumeEvent,
 } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
@@ -113,6 +114,7 @@ interface TerminalPaneProps {
   session: Session;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
+  terminalColorScheme?: TerminalColorScheme;
   connectionState: ConnectionState;
   currentPath?: string;
   onConnected: (sessionId: string, connection: SshConnection) => void;
@@ -139,6 +141,7 @@ export const TerminalPane = memo(function TerminalPane({
   session,
   shortcuts,
   theme,
+  terminalColorScheme = "default",
   visible,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -193,12 +196,14 @@ export const TerminalPane = memo(function TerminalPane({
   const pasteTerminalClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const shortcutsRef = useRef(shortcuts);
   const themeRef = useRef(theme);
+  const terminalColorSchemeRef = useRef(terminalColorScheme);
   const lightweightBlockedRef = useRef(false);
   const lightweightBarrierRef = useRef<LightweightBarrierWait | null>(null);
   const restoringRef = useRef(false);
   const resumeStreamRef = useRef<ReturnType<typeof createTerminalResumeStream> | null>(null);
   shortcutsRef.current = shortcuts;
   themeRef.current = theme;
+  terminalColorSchemeRef.current = terminalColorScheme;
   sessionIdRef.current = session.id;
   currentPathRef.current = currentPath;
   const commandHistoryRef = useRef<CommandHistoryPopoverHandle | null>(null);
@@ -277,9 +282,10 @@ export const TerminalPane = memo(function TerminalPane({
   useEffect(() => {
     const terminal = terminalRef.current;
     if (terminal) {
-      terminal.options.theme = getTerminalTheme(theme);
+      terminal.options.theme = getTerminalTheme(theme, terminalColorScheme);
+      terminal.options.minimumContrastRatio = terminalColorScheme === "default" ? 1 : 4.5;
     }
-  }, [theme]);
+  }, [theme, terminalColorScheme]);
 
   function reportState(state: ConnectionState, error: string | null = null) {
     if (mountedRef.current) {
@@ -605,6 +611,7 @@ export const TerminalPane = memo(function TerminalPane({
         isVisible: () => visibleRef.current,
         onClipboardWriteError: () => reportClipboardErrorRef.current(),
         theme: themeRef.current,
+        terminalColorScheme: terminalColorSchemeRef.current,
       });
       if (!runtime) {
         return;
@@ -612,7 +619,8 @@ export const TerminalPane = memo(function TerminalPane({
       runtimeInstance = runtime;
       const { fitAddon, terminal } = runtime;
       // 动态模块加载期间主题可能已变化，安装完成时再次对齐最新值。
-      terminal.options.theme = getTerminalTheme(themeRef.current);
+      terminal.options.theme = getTerminalTheme(themeRef.current, terminalColorSchemeRef.current);
+      terminal.options.minimumContrastRatio = terminalColorSchemeRef.current === "default" ? 1 : 4.5;
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();
       const syntheticMouseReleases = new WeakSet<Event>();

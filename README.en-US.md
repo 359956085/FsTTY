@@ -139,13 +139,15 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 | --- | --- |
 | Session management | Groups, drag ordering, cross-group moves, search, favorites, and multiple tabs |
 | SSH authentication | Passwords and imported private keys; on Windows, an independent service stores credentials and performs authentication |
-| Remote terminal | xterm.js 6, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
+| Remote terminal | xterm.js 6, independent text color presets, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
 | Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
 | File management | SFTP browse, upload, download, drag-to-move, create, rename, copy path, and recursive delete |
 | Device status | CPU and memory trends, disk, network traffic, OS, and uptime |
 | Updates | Manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
 
 Selecting a history entry with Enter or the mouse inserts it into the terminal without executing it. The history window supports search, keyboard selection, and persisted drag resizing.
+
+Under Settings → General → Terminal text colors, choose Dracula, Catppuccin Mocha, Nord, Solarized, or Follow app theme. Changes apply immediately and persist across restarts. The default background and plain text continue to use the app theme. See [terminal color details and licenses](doc/terminal-colors.md).
 
 ## Download and Install
 
@@ -172,11 +174,22 @@ Requirements: Windows, Node.js 20+, Rust stable, and the [Tauri 2 system prerequ
 
 ```bash
 npm ci
-npm run tauri dev
+npm run verify:all
 ```
 
+The current Windows development branch checks the active installation's directory and version. When an installation record exists, RustRover's `cargo run` and `npm run tauri dev` are rejected because their executable is outside the active installation directory. Running as administrator does not change this check. Test the full desktop and SSH functionality through a local validation installer:
+
 ```bash
-npm run verify:all
+npm run tauri -- build --debug --bundles nsis --config src-tauri/windows/validation.conf.json
+```
+
+This command builds the frontend and credential service automatically and writes the installer to `src-tauri/target/debug/bundle/nsis/`. Open the installer from a normal desktop, complete its UAC confirmation, and launch `fstty.exe` from the installation directory. Installation updates the current desktop and credential service; use Windows Sandbox or a virtual machine to preserve your existing installation. Validation packages have no production updater signature and are not release artifacts.
+
+To preview frontend layouts, run `npm run dev` and visit `http://127.0.0.1:1430/`. The browser has no Tauri backend, so this does not test SSH connections or settings persistence. See the [local testing guide](doc/windows-installation.md#本地开发与-rustrover-调试) for installation checks and debugging with RustRover.
+
+Dependency audit:
+
+```bash
 cargo audit --file src-tauri/Cargo.lock
 ```
 

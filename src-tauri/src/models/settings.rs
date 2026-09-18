@@ -6,6 +6,8 @@ pub struct AppSettings {
     pub language: Language,
     #[serde(default)]
     pub theme: ThemePreference,
+    #[serde(default)]
+    pub terminal_color_scheme: TerminalColorScheme,
     pub auto_update: bool,
     #[serde(default)]
     pub update_source: UpdateSourcePreference,
@@ -38,6 +40,7 @@ impl std::fmt::Debug for AppSettings {
             .debug_struct("AppSettings")
             .field("language", &self.language)
             .field("theme", &self.theme)
+            .field("terminal_color_scheme", &self.terminal_color_scheme)
             .field("auto_update", &self.auto_update)
             .field("update_source", &self.update_source)
             .field("proxy_enabled", &self.proxy_enabled)
@@ -67,6 +70,17 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalColorScheme {
+    #[default]
+    Default,
+    Dracula,
+    Catppuccin,
+    Nord,
+    Solarized,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

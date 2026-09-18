@@ -40,6 +40,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
   const {
     changeLanguage: handleLanguageChange,
     changeTheme: handleThemeChange,
+    changeTerminalColorScheme: handleTerminalColorSchemeChange,
     checkForUpdates: handleCheckForUpdates,
     error,
     logDirectoryError,
@@ -54,6 +55,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
     saveUpdateSettings,
     savingLanguage,
     savingTheme,
+    savingTerminalColorScheme,
     savingLogSettings,
     savingUpdateSettings,
     setProxy,
@@ -214,6 +216,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             onHideTooltip={() => setMcpPermissionTooltip(null)}
             onLanguageChange={(language) => void handleLanguageChange(language)}
             onThemeChange={(theme) => void handleThemeChange(theme)}
+            onTerminalColorSchemeChange={(colorScheme) => void handleTerminalColorSchemeChange(colorScheme)}
             onOpenLogDirectory={() => void openLogDirectory()}
             onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
             onShowTooltip={showMcpPermissionTooltip}
@@ -227,6 +230,7 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             openingLogDirectory={openingLogDirectory}
             savingLanguage={savingLanguage}
             savingTheme={savingTheme}
+            savingTerminalColorScheme={savingTerminalColorScheme}
             savingLogSettings={savingLogSettings}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}

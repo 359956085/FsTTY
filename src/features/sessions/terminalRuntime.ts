@@ -2,6 +2,8 @@ import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon as XTermSerializeAddon } from "@xterm/addon-serialize";
 import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
 import type { ResolvedTheme } from "../../shared/theme";
+import type { TerminalColorScheme } from "../../shared/api/types";
+import { TERMINAL_ANSI_PALETTES } from "../../shared/terminalColors";
 import { StrictClipboardBase64, TauriClipboardProvider } from "./terminalClipboard";
 import { installTerminalMouseSelectionCopy } from "./terminalMouseSelection";
 
@@ -13,6 +15,7 @@ interface InstallTerminalRuntimeOptions {
   isVisible: () => boolean;
   onClipboardWriteError: () => void;
   theme: ResolvedTheme;
+  terminalColorScheme: TerminalColorScheme;
 }
 
 export interface InstalledTerminalRuntime {
@@ -63,8 +66,11 @@ const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
   },
 };
 
-export function getTerminalTheme(theme: ResolvedTheme): ITheme {
-  return TERMINAL_THEMES[theme];
+export function getTerminalTheme(
+  theme: ResolvedTheme,
+  colorScheme: TerminalColorScheme = "default",
+): ITheme {
+  return { ...TERMINAL_THEMES[theme], ...TERMINAL_ANSI_PALETTES[colorScheme] };
 }
 
 export async function installTerminalRuntime({
@@ -75,6 +81,7 @@ export async function installTerminalRuntime({
   isVisible,
   onClipboardWriteError,
   theme,
+  terminalColorScheme,
 }: InstallTerminalRuntimeOptions): Promise<InstalledTerminalRuntime | null> {
   const [{ Terminal }, { FitAddon }, { ClipboardAddon }, { SerializeAddon }] =
     await Promise.all([
@@ -96,7 +103,9 @@ export async function installTerminalRuntime({
     // xterm 6 使用独立滚动条，必须通过 overviewRuler 覆盖默认的 14px 宽度。
     overviewRuler: { width: TERMINAL_SCROLLBAR_SIZE },
     scrollback: 10_000,
-    theme: getTerminalTheme(theme),
+    theme: getTerminalTheme(theme, terminalColorScheme),
+    // 浅色背景下也保证预设彩色文字可读；默认配色保留原有行为。
+    minimumContrastRatio: terminalColorScheme === "default" ? 1 : 4.5,
   });
   const fitAddon = new FitAddon();
   const serializeAddon = new SerializeAddon();

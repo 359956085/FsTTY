@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   rotateMcpHttpToken: vi.fn(),
   setTheme: vi.fn(),
+  setTerminalColorScheme: vi.fn(),
   setProxySettings: vi.fn(),
   updateAppSettings: vi.fn(),
   updateMcpSettings: vi.fn(),
@@ -51,6 +52,7 @@ const settings: AppSettings = {
   ignoredUpdateVersion: null,
   language: "zh-CN",
   theme: "system",
+  terminalColorScheme: "default",
   mcpEnabled: true,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,
@@ -331,6 +333,37 @@ describe("设置状态控制器", () => {
     await act(async () => result.current.changeTheme("dark"));
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(result.current.error).toBe("theme failed");
+  });
+
+  it("终端配色串行保存，失败保留原设置且不与主题同时提交", async () => {
+    const request = deferred<AppSettings>();
+    apiMocks.setTerminalColorScheme.mockReturnValueOnce(request.promise);
+    const onChange = vi.fn();
+    const { result } = renderHook(() => useGeneralSettings({
+      onChange, settings, translate: (key) => key, updater: {} as AppUpdaterController,
+    }));
+
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.changeTerminalColorScheme("nord");
+      void result.current.changeTerminalColorScheme("dracula");
+      void result.current.changeTheme("light");
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(apiMocks.setTerminalColorScheme).toHaveBeenCalledExactlyOnceWith("nord");
+    expect(apiMocks.setTheme).not.toHaveBeenCalled();
+    expect(result.current.savingTerminalColorScheme).toBe(true);
+
+    const selected = { ...settings, terminalColorScheme: "nord" as const };
+    await act(async () => { request.resolve(selected); await first; });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(selected);
+    expect(result.current.savingTerminalColorScheme).toBe(false);
+
+    apiMocks.setTerminalColorScheme.mockRejectedValueOnce(new Error("palette failed"));
+    await act(async () => result.current.changeTerminalColorScheme("solarized"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe("palette failed");
+    expect(result.current.savingTerminalColorScheme).toBe(false);
   });
 
   it("StrictMode 重放后仍能手工检查更新", async () => {

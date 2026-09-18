@@ -1,7 +1,7 @@
 use crate::mcp_command_policy::normalize_policy;
 use crate::models::{
     AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
-    ThemePreference, UpdateSourcePreference,
+    TerminalColorScheme, ThemePreference, UpdateSourcePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -131,6 +131,15 @@ impl SettingsService {
         #[cfg(all(windows, not(test)))]
         super::broker_service::set_approval_theme(theme);
         Ok(saved)
+    }
+
+    pub fn set_terminal_color_scheme(
+        &mut self,
+        color_scheme: TerminalColorScheme,
+    ) -> Result<AppSettings, AppError> {
+        let mut next = self.settings.clone();
+        next.terminal_color_scheme = color_scheme;
+        self.replace(next)
     }
 
     pub fn update(
@@ -295,6 +304,7 @@ fn default_settings() -> AppSettings {
     AppSettings {
         language: Language::ZhCn,
         theme: ThemePreference::System,
+        terminal_color_scheme: TerminalColorScheme::Default,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
         proxy_address: String::new(),
@@ -951,6 +961,7 @@ mod tests {
         assert_eq!(restored.ignored_update_version, None);
         assert_eq!(restored.update_source, UpdateSourcePreference::Auto);
         assert_eq!(restored.theme, ThemePreference::System);
+        assert_eq!(restored.terminal_color_scheme, TerminalColorScheme::Default);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -967,6 +978,39 @@ mod tests {
             service.set_theme(theme).expect("保存主题失败");
             assert_eq!(SettingsService::load(&directory).get().theme, theme);
         }
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn 终端文字配色独立保存且主题切换保留选择() {
+        let directory = test_directory("terminal-colors");
+        let mut service = SettingsService::load(&directory);
+        service.set_theme(ThemePreference::Light).unwrap();
+        let original = service.get();
+
+        for color_scheme in [
+            TerminalColorScheme::Dracula,
+            TerminalColorScheme::Catppuccin,
+            TerminalColorScheme::Nord,
+            TerminalColorScheme::Solarized,
+            TerminalColorScheme::Default,
+        ] {
+            let mut expected = original.clone();
+            expected.terminal_color_scheme = color_scheme;
+            assert_eq!(
+                service.set_terminal_color_scheme(color_scheme).unwrap(),
+                expected
+            );
+            assert_eq!(SettingsService::load(&directory).get(), expected);
+        }
+
+        service
+            .set_terminal_color_scheme(TerminalColorScheme::Nord)
+            .unwrap();
+        service.set_theme(ThemePreference::Dark).unwrap();
+        let restored = SettingsService::load(&directory).get();
+        assert_eq!(restored.theme, ThemePreference::Dark);
+        assert_eq!(restored.terminal_color_scheme, TerminalColorScheme::Nord);
         let _ = fs::remove_dir_all(directory);
     }
 

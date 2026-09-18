@@ -30,9 +30,9 @@ const apiMocks = vi.hoisted(() => ({
 const runtimeMocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   focus: vi.fn(),
-  getTheme: vi.fn((theme: string) => ({ name: theme })),
+  getTheme: vi.fn((theme: string, colorScheme: string) => ({ name: theme, colorScheme })),
   install: vi.fn(),
-  options: { theme: undefined as unknown },
+  options: { theme: undefined as unknown, minimumContrastRatio: 1 },
   oscHandlers: new Map<number, (data: string) => boolean>(),
   registerOscHandler: vi.fn(
     (identifier: number, handler: (data: string) => boolean) => {
@@ -341,11 +341,21 @@ describe("终端面板连接", () => {
     };
     const { rerender } = render(<TerminalPane {...commonProps} theme="dark" />);
     await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark" }));
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark", colorScheme: "default" }));
 
     rerender(<TerminalPane {...commonProps} theme="light" />);
-    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light" }));
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light", colorScheme: "default" }));
+    rerender(<TerminalPane {...commonProps} theme="light" terminalColorScheme="dracula" />);
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "light", colorScheme: "dracula" }));
+    expect(runtimeMocks.options.minimumContrastRatio).toBe(4.5);
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalColorScheme="dracula" />);
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark", colorScheme: "dracula" }));
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalColorScheme="default" />);
+    await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark", colorScheme: "default" }));
+    expect(runtimeMocks.options.minimumContrastRatio).toBe(1);
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
+    expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+    expect(apiMocks.connectSession).not.toHaveBeenCalled();
   });
 
   it("点击历史按钮关闭弹窗后恢复终端焦点", async () => {

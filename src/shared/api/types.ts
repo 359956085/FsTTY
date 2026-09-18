@@ -1,11 +1,13 @@
 export type Language = "zh-CN" | "en-US";
 export type ThemePreference = "system" | "light" | "dark";
+export type TerminalColorScheme = "default" | "dracula" | "catppuccin" | "nord" | "solarized";
 export type UpdateSourcePreference = "auto" | "github" | "cnb";
 export type ClipboardContentKind = "empty" | "text" | "nonText";
 
 export interface AppSettings {
   language: Language;
   theme: ThemePreference;
+  terminalColorScheme: TerminalColorScheme;
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;
   proxyAddress: string;

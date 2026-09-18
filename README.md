@@ -153,13 +153,15 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 | --- | --- |
 | 会话管理 | 分组、拖动排序、跨组移动、搜索、收藏和多标签页 |
 | SSH 认证 | 密码及导入的私钥；Windows 由独立服务保存凭据并完成认证 |
-| 远程终端 | xterm.js 6、复制粘贴、清屏、重连、tmux 鼠标和 OSC 52 剪贴板 |
+| 远程终端 | xterm.js 6、独立文字配色、复制粘贴、清屏、重连、tmux 鼠标和 OSC 52 剪贴板 |
 | 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
 | 文件管理 | SFTP 浏览、上传、下载、拖放移动、新建目录、重命名、复制路径和递归删除 |
 | 设备状态 | CPU、内存趋势、磁盘、网络上下行、操作系统和运行时间 |
 | 自动更新 | CNB/GitHub 并发检查、版本忽略、Markdown 更新说明和更新代理 |
 
 历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
+
+在「设置 → 常规 → 终端文字配色」可独立选择 Dracula、Catppuccin Mocha、Nord、Solarized 或跟随应用主题。切换即时生效并保存；默认背景和普通文字仍使用应用主题。详见[终端文字配色说明](doc/terminal-colors.md)。
 
 ## 下载与安装
 
@@ -184,11 +186,22 @@ NSIS 支持简体中文和英文，并跟随 Windows 显示语言。发布包暂
 
 ```bash
 npm ci
-npm run tauri dev
+npm run verify:all
 ```
 
+当前 Windows 开发分支校验有效安装的目录与版本。已有安装记录时，RustRover 的 `cargo run` 和 `npm run tauri dev` 会因生成的程序不在当前安装目录而被拒绝；以管理员身份运行也不会改变这一结果。完整桌面与 SSH 功能通过本地验证安装包测试：
+
 ```bash
-npm run verify:all
+npm run tauri -- build --debug --bundles nsis --config src-tauri/windows/validation.conf.json
+```
+
+命令自动构建前端和凭据服务，安装包输出到 `src-tauri/target/debug/bundle/nsis/`。从普通权限桌面打开安装包并完成 UAC 确认，再启动安装目录中的 `fstty.exe`。安装会更新当前桌面与凭据服务；需要保留现有安装时，在 Windows Sandbox 或虚拟机中测试。验证包不带正式在线更新签名，不用于发布。
+
+仅预览前端布局可运行 `npm run dev`，访问 `http://127.0.0.1:1430/`；浏览器没有 Tauri 后端，不能据此测试 SSH 连接或配置保存。RustRover 调试方式及安装校验说明见[本地测试说明](doc/windows-installation.md#本地开发与-rustrover-调试)。
+
+依赖审计：
+
+```bash
 cargo audit --file src-tauri/Cargo.lock
 ```
 
