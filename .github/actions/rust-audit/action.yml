@@ -1,0 +1,16 @@
+name: Rust 依赖审计
+description: 安装经过校验的固定版本审计工具并执行审计
+runs:
+  using: composite
+  steps:
+    - name: 安装 Rust 依赖审计工具
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-audit@0.22.2
+        checksum: true
+        fallback: none
+    - name: 审计 Rust 依赖
+      shell: pwsh
+      run: |
+        cargo audit --file src-tauri/Cargo.lock
+        if ($LASTEXITCODE -ne 0) { throw "Rust 依赖审计失败" }

@@ -1,0 +1,51 @@
+name: Windows 构建环境
+description: 安装工具链并恢复按编译用途隔离的依赖缓存
+inputs:
+  cache-group:
+    description: 验证或正式构建缓存组
+    required: true
+  workspaces:
+    description: Cargo 工作区与编译目录
+    required: true
+  save-cache:
+    description: 是否保存缓存
+    default: 'false'
+  cold-cache:
+    description: 是否跳过缓存恢复
+    default: 'false'
+outputs:
+  cache-hit:
+    description: 是否精确命中缓存
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - id: clock
+      shell: pwsh
+      run: '"started=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT'
+    - uses: Swatinem/rust-cache@v2
+      id: cache
+      with:
+        shared-key: fstty-${{ inputs.cache-group }}-v1
+        workspaces: ${{ inputs.workspaces }}
+        save-if: ${{ inputs.save-cache == 'true' && inputs.cold-cache != 'true' }}
+        lookup-only: ${{ inputs.cold-cache == 'true' }}
+        cache-bin: false
+        # Broker 编译参数固定为静态运行库；改变参数时同时升级缓存代次。
+        env-vars: CARGO CC CFLAGS CXX CMAKE RUST FSTTY_BROKER_TARGET_DIR
+    - shell: pwsh
+      env:
+        CACHE_STARTED: ${{ steps.clock.outputs.started }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        CACHE_GROUP: ${{ inputs.cache-group }}
+        COLD_CACHE: ${{ inputs.cold-cache }}
+      run: |
+        $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:CACHE_STARTED
+        "- 缓存 $env:CACHE_GROUP：恢复 $elapsed 秒，精确命中=$env:CACHE_HIT，冷缓存=$env:COLD_CACHE" >> $env:GITHUB_STEP_SUMMARY

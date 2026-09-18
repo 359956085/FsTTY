@@ -7,24 +7,78 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: 检查正式构建输入变更
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      warm: ${{ steps.changes.outputs.warm }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        shell: pwsh
+        env:
+          BEFORE_COMMIT: ${{ github.event.before }}
+        run: node scripts/release-artifacts.mjs changes
   verify:
     name: 前后端检查
     runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/verify
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/windows-build-setup
         with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
+          cache-group: verify
+          workspaces: src-tauri -> target/ci/verify
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: npm ci
-      - name: 安装 Rust 依赖审计工具
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: 审计 Rust 依赖
-        run: cargo audit --file src-tauri/Cargo.lock
+      - uses: ./.github/actions/rust-audit
       - run: npm run verify:all
+      - name: 提供预热所需前端产物
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-frontend-${{ github.run_id }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  warm:
+    name: 预热 Windows 正式构建缓存
+    needs: [changes, verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.warm == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/desktop
+      FSTTY_BROKER_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/broker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/windows-build-setup
+        with:
+          cache-group: release
+          workspaces: |
+            src-tauri -> target/ci/desktop
+            src-tauri -> target/ci/broker
+          save-cache: 'true'
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-frontend-${{ github.run_id }}
+          path: dist/
+      - name: 编译前注入更新公钥
+        env:
+          FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
+        run: node scripts/ci-build.mjs configure
+      - name: 预热 Broker 静态运行库构建
+        run: node scripts/ci-build.mjs broker
+      - name: 预热桌面正式编译
+        run: node scripts/ci-build.mjs desktop

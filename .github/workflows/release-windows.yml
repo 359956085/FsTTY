@@ -2,86 +2,169 @@ name: Windows Release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 正式发布；关闭时仅验证和构建，必须选择版本标签
+        type: boolean
+        default: false
+      cold-cache:
+        description: 跳过 Rust 缓存恢复，用于测量冷构建
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: 发布准备
+    runs-on: windows-latest
+    outputs:
+      commit: ${{ steps.prepare.outputs.commit }}
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm run check:version
+      - id: prepare
+        name: 校验标签和更新说明
+        run: node scripts/release-artifacts.mjs prepare
+
+  verify:
+    name: 发布前完整检查
+    needs: prepare
+    runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/verify
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/windows-build-setup
+        with:
+          cache-group: verify
+          workspaces: src-tauri -> target/ci/verify
+          cold-cache: ${{ inputs.cold-cache || false }}
+      - run: npm ci
+      - uses: ./.github/actions/rust-audit
+      - name: 前端与版本检查
+        run: npm run verify
+      - name: Rust 格式、Clippy 与测试
+        run: npm run verify:rust
+
+  build:
+    name: Windows 构建与签名
+    needs: prepare
+    runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/desktop
+      FSTTY_BROKER_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/broker
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/windows-build-setup
+        with:
+          cache-group: release
+          workspaces: |
+            src-tauri -> target/ci/desktop
+            src-tauri -> target/ci/broker
+          cold-cache: ${{ inputs.cold-cache || false }}
+      - run: npm ci
+      - name: 编译前注入更新公钥
+        env:
+          FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
+        run: node scripts/ci-build.mjs configure
+      - name: 前端构建
+        run: node scripts/ci-build.mjs frontend
+      - name: Broker 静态运行库构建
+        run: node scripts/ci-build.mjs broker
+      - name: 桌面正式编译
+        run: node scripts/ci-build.mjs desktop
+      - name: NSIS 安装包生成
+        run: node scripts/ci-build.mjs bundle
+      - name: 签署更新安装包
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/ci-build.mjs sign
+      - name: 整理与校验产物
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: node scripts/release-artifacts.mjs collect
+      - name: 开始产物上传计时
+        id: artifact-clock
+        shell: pwsh
+        run: '"started=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT'
+      - name: 上传本次运行的发布产物
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ github.run_id }}
+          path: artifacts/windows-release/
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+      - name: 记录产物体积与上传耗时
+        shell: pwsh
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_STARTED: ${{ steps.artifact-clock.outputs.started }}
+        run: |
+          $size = (Get-ChildItem -LiteralPath artifacts/windows-release -File | Measure-Object -Property Length -Sum).Sum
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:ARTIFACT_STARTED
+          "- 发布产物：$([Math]::Round($size / 1MB, 2)) MiB；Artifact 上传 $elapsed 秒；$env:ARTIFACT_URL" >> $env:GITHUB_STEP_SUMMARY
+
+  publish:
+    name: GitHub 发布与 CNB 同步
+    needs: [prepare, verify, build]
+    if: github.event_name == 'push' || inputs.publish == true
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.prepare.outputs.commit }}
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - name: 提取更新说明
-        id: release_notes
-        shell: pwsh
-        run: node scripts/extract-release-notes.mjs "$env:GITHUB_REF_NAME"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-      - run: npm ci
-      - name: 安装 Rust 依赖审计工具
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: 审计 Rust 依赖
-        run: cargo audit --file src-tauri/Cargo.lock
-      - run: npm run verify:all
-      - name: 注入更新公钥
-        shell: pwsh
-        env:
-          FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:FSTTY_UPDATER_PUBLIC_KEY)) {
-            throw "缺少 Actions Variable：TAURI_SIGNING_PUBLIC_KEY"
-          }
-
-          $configPath = "src-tauri/tauri.conf.json"
-          $config = Get-Content -Raw $configPath | ConvertFrom-Json
-          # 打包器只读取配置文件；运行时 Builder 注入无法参与更新包签名。
-          $config.plugins.updater.pubkey = $env:FSTTY_UPDATER_PUBLIC_KEY.Trim()
-          $config | ConvertTo-Json -Depth 100 | Set-Content -Encoding utf8 $configPath
-      - uses: tauri-apps/tauri-action@v1
+          name: windows-release-${{ github.run_id }}
+          path: artifacts/windows-release/
+      - name: 草稿上传、核对附件并正式发布
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 私钥只能放在 Actions Secrets，禁止放入普通 Variables。
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tauriScript: npm run tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: FsTTY ${{ github.ref_name }}
-          releaseBody: ${{ steps.release_notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
-      - name: 下载 GitHub Release 附件
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "$env:GITHUB_REF_NAME" --dir .cnb-release --clobber
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: node scripts/publish-github-release.mjs
       - name: 同步标签到 CNB
         shell: pwsh
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) {
-            throw "缺少 Actions Secret：CNB_TOKEN"
-          }
+          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) { throw "缺少 Actions Secret：CNB_TOKEN" }
           $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("cnb:$env:CNB_TOKEN"))
           Write-Output "::add-mask::$auth"
-          git -c "http.extraHeader=Authorization: Basic $auth" push --force `
-            https://cnb.cool/359956085/FsTTY.git "$env:GITHUB_REF_NAME`:refs/tags/$env:GITHUB_REF_NAME"
-      - name: 同步 Release 到 CNB
+          git -c "http.extraHeader=Authorization: Basic $auth" push --force https://cnb.cool/359956085/FsTTY.git "$env:RELEASE_COMMIT`:refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "CNB 标签同步失败" }
+      - name: 使用本地产物同步 CNB Release
         shell: pwsh
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: node scripts/sync-cnb-release.mjs 359956085/FsTTY "$env:GITHUB_REF_NAME" "$env:GITHUB_SHA" .cnb-release
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: node scripts/sync-cnb-release.mjs 359956085/FsTTY "$env:RELEASE_TAG" "$env:RELEASE_COMMIT" artifacts/release-assets
