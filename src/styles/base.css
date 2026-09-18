@@ -481,6 +481,10 @@ textarea:focus-visible,
   background: transparent;
 }
 
+.session-search-row .text-input:focus-visible {
+  outline: none;
+}
+
 .text-input::placeholder {
   color: var(--text-subtle);
 }
