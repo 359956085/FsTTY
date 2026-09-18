@@ -185,7 +185,7 @@ textarea:focus-visible,
 
 .app-shell {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: 36px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 1180px;
@@ -239,7 +239,7 @@ textarea:focus-visible,
 .lightweight-control {
   display: grid;
   width: 46px;
-  height: 52px;
+  height: 100%;
   padding: 0;
   place-items: center;
   border: 0;
@@ -361,7 +361,7 @@ textarea:focus-visible,
 .session-sidebar {
   position: relative;
   display: grid;
-  grid-template-rows: 48px 48px minmax(0, 1fr);
+  grid-template-rows: 40px 48px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -448,10 +448,6 @@ textarea:focus-visible,
 .session-search-row .search-box {
   border-color: var(--workspace-divider);
   border-radius: 6px;
-}
-
-.session-search-row .search-box:focus-within {
-  border-color: var(--focus-ring);
 }
 
 .search-box {
@@ -861,7 +857,7 @@ textarea:focus-visible,
     "tabs tabs tabs"
     "terminal divider side";
   grid-template-columns: minmax(440px, 1fr) 4px var(--workspace-right-width);
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: 40px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;

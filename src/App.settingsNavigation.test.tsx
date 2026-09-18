@@ -2,7 +2,7 @@
 
 import { StrictMode, useEffect, useState } from "react";
 import type { UsePaneLayoutResult } from "./features/sessions/usePaneLayout";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -59,7 +59,17 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+function mockFocusVisible(visible: boolean) {
+  vi.spyOn(HTMLElement.prototype, "matches").mockImplementation(function (this: HTMLElement, selector) {
+    return selector === ":focus-visible" ? visible : Element.prototype.matches.call(this, selector);
+  });
+}
 
 describe("应用页面导航", () => {
   beforeEach(() => {
@@ -105,6 +115,58 @@ describe("应用页面导航", () => {
     fireEvent.click(screen.getByRole("button", { name: "nav.expandSessions" }));
     fireEvent.click(screen.getByRole("button", { name: "nav.settings" }));
     expect(screen.getByRole("button", { name: "nav.expandSettings" }).getAttribute("aria-expanded")).toBe("false");
+    expect(mocks.sessionMounts).toHaveBeenCalledOnce();
+    expect(mocks.sessionUnmounts).not.toHaveBeenCalled();
+  });
+
+  it("鼠标返回应用保留入口焦点但不显示提示，顶部空白点击可关闭悬停提示", () => {
+    vi.useFakeTimers();
+    mockFocusVisible(false);
+    const { container } = render(<App />);
+    const settingsButton = screen.getByRole("button", { name: "nav.settings" });
+    fireEvent.pointerDown(settingsButton, { pointerType: "mouse" });
+    fireEvent.click(settingsButton);
+    const back = screen.getByRole("button", { name: "nav.backToApp" });
+    fireEvent.pointerDown(back, { pointerType: "mouse" });
+    fireEvent.click(back);
+    expect(document.activeElement).toBe(settingsButton);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    fireEvent.pointerEnter(settingsButton, { pointerType: "mouse" });
+    act(() => { vi.advanceTimersByTime(250); });
+    expect(screen.getByRole("tooltip").textContent).toBe("nav.settings");
+    const dragRegion = container.querySelector(".titlebar-drag-region");
+    expect(dragRegion).not.toBeNull();
+    fireEvent.pointerDown(dragRegion!, { pointerType: "mouse" });
+    expect(document.activeElement).toBe(settingsButton);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    fireEvent.pointerEnter(settingsButton, { pointerType: "mouse" });
+    fireEvent.pointerLeave(settingsButton, { pointerType: "mouse" });
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(mocks.sessionMounts).toHaveBeenCalledOnce();
+    expect(mocks.sessionUnmounts).not.toHaveBeenCalled();
+  });
+
+  it("键盘打开设置并返回后仍能聚焦入口和使用提示", () => {
+    mockFocusVisible(true);
+    render(<App />);
+    const settingsButton = screen.getByRole("button", { name: "nav.settings" });
+    fireEvent.keyDown(window, { key: "Tab" });
+    act(() => settingsButton.focus());
+    expect(screen.getByRole("tooltip").textContent).toBe("nav.settings");
+    fireEvent.keyDown(settingsButton, { key: "Enter" });
+    fireEvent.click(settingsButton, { detail: 0 });
+    expect(screen.getByText("settings-content-ready")).not.toBeNull();
+    const back = screen.getByRole("button", { name: "nav.backToApp" });
+    act(() => back.focus());
+    fireEvent.keyDown(back, { key: "Enter" });
+    fireEvent.click(back, { detail: 0 });
+    expect(document.activeElement).toBe(settingsButton);
+    expect(screen.getByRole("tooltip").textContent).toBe("nav.settings");
+    fireEvent.keyDown(settingsButton, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
     expect(mocks.sessionMounts).toHaveBeenCalledOnce();
     expect(mocks.sessionUnmounts).not.toHaveBeenCalled();
   });

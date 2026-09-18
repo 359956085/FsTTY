@@ -148,6 +148,131 @@
   border-bottom: 0;
 }
 
+.settings-row.settings-credential-management-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 0;
+}
+
+.settings-credential-management-row .settings-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-credential-management-row .button {
+  min-height: 32px;
+}
+
+.settings-credential-security-backdrop {
+  z-index: 190;
+}
+
+.dialog.settings-credential-security-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  background: var(--dialog-bg);
+}
+
+.settings-credential-security-dialog .dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-credential-security-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-credential-security-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow: auto;
+}
+
+.settings-credential-security-hint,
+.settings-credential-security-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.settings-credential-status-row {
+  min-height: 44px;
+  flex-shrink: 0;
+  border-bottom: 0;
+}
+
+.settings-credential-security-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-credential-security-actions .button,
+.settings-credential-security-list .button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settings-credential-security-body .form-error {
+  overflow-wrap: anywhere;
+}
+
+.settings-credential-security-list {
+  min-height: 96px;
+  max-height: min(360px, 42vh);
+  flex: 1 1 auto;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  overscroll-behavior: contain;
+}
+
+.settings-credential-security-list .settings-row {
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.settings-credential-security-list .settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-credential-security-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.settings-credential-security-copy small {
+  color: var(--muted);
+}
+
+@media (max-width: 600px) {
+  .settings-credential-security-list .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .settings-credential-security-list .button {
+    justify-self: start;
+  }
+
+  .settings-credential-security-actions {
+    justify-content: flex-start;
+  }
+}
+
 .settings-history-status {
   margin: 0 0 12px;
   color: var(--success);

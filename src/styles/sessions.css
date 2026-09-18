@@ -86,10 +86,10 @@
 
 .session-tab-add {
   display: grid;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  margin: 6px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin: 4px;
   place-items: center;
   border-radius: 6px;
   background: transparent;
@@ -470,7 +470,7 @@
 .right-rail {
   grid-area: side;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 230px;
+  grid-template-rows: minmax(0, 1fr) 226px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -964,6 +964,7 @@
 }
 
 .status-panel .device-metrics {
+  margin-top: 0;
   margin-bottom: 8px;
 }
 

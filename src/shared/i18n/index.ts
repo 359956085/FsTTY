@@ -18,6 +18,10 @@ void i18n.use(initReactI18next).init({
           restartAgent: "MCP 运行副本已更新，请重启 Agent 使新版本生效。",
         },
         security: {
+          managementTitle: "凭据管理",
+          manage: "管理",
+          empty: "暂无 SSH 会话",
+          statusUnknown: "无法获取凭据服务状态",
           title: "SSH 凭据保护",
           secretInputHint: "保存凭据及修改认证目标需在 Windows 安全窗口确认。密码、私钥和口令仅由独立服务保管，日常连接无需重复确认。",
           changeCredential: "安全更换凭据",
@@ -505,6 +509,10 @@ void i18n.use(initReactI18next).init({
           restartAgent: "The MCP runtime has been updated. Restart your Agent to use the new version.",
         },
         security: {
+          managementTitle: "Credential management",
+          manage: "Manage",
+          empty: "No SSH sessions",
+          statusUnknown: "Unable to retrieve credential service status",
           title: "SSH credential protection",
           secretInputHint: "Saving credentials or changing authentication targets requires confirmation in the Windows security window. The service holds passwords, private keys and passphrases. Routine connections need no confirmation.",
           changeCredential: "Change credentials securely",

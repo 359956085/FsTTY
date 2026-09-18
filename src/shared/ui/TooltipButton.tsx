@@ -32,6 +32,7 @@ export function TooltipButton({
   const buttonRef = externalButtonRef ?? localButtonRef;
   const tooltipRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyboardFocusRef = useRef(false);
   const [open, setOpen] = useState(false);
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
@@ -46,13 +47,19 @@ export function TooltipButton({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") hide();
     };
+    const onPointerDown = () => {
+      keyboardFocusRef.current = false;
+      hide();
+    };
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("scroll", hide, true);
     window.addEventListener("resize", hide);
     window.addEventListener("blur", hide);
     return () => {
       clearTimer();
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);
       window.removeEventListener("blur", hide);
@@ -90,18 +97,24 @@ export function TooltipButton({
           onPointerEnter?.(event);
           if (event.pointerType === "touch") return;
           clearTimer();
-          timerRef.current = setTimeout(() => setOpen(true), 250);
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            setOpen(true);
+          }, 250);
         }}
         onPointerLeave={(event) => {
           onPointerLeave?.(event);
-          if (document.activeElement !== event.currentTarget) hide();
+          if (!keyboardFocusRef.current) hide();
         }}
         onFocus={(event) => {
           onFocus?.(event);
           clearTimer();
-          setOpen(true);
+          // 普通焦点和鼠标操作后的焦点恢复不应自动展示提示。
+          keyboardFocusRef.current = event.currentTarget.matches(":focus-visible");
+          setOpen(keyboardFocusRef.current);
         }}
         onBlur={(event) => {
+          keyboardFocusRef.current = false;
           hide();
           onBlur?.(event);
         }}

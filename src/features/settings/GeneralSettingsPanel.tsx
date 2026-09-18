@@ -58,7 +58,6 @@ export function GeneralSettingsPanel({
 
   return (
     <>
-      <CredentialSecuritySection />
       <InstallationSection />
       <section aria-labelledby="general-settings-title" className="settings-panel">
         <header className="settings-panel-header">
@@ -144,6 +143,8 @@ export function GeneralSettingsPanel({
       <ShortcutSettingsSection onChange={onSettingsChange} settings={settings.shortcuts} />
 
       <CommandHistorySettingsSection />
+
+      <CredentialSecuritySection />
 
       <section aria-labelledby="log-settings-title" className="settings-panel">
         <header className="settings-panel-header">
