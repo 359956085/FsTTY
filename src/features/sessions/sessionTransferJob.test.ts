@@ -13,6 +13,7 @@ const job: TransferJobSummary = {
   jobId: "job", runtimeId: "runtime", connectionId: "connection", direction: "upload",
   fileName: "first.txt", batchIndex: 1, batchTotal: 2, transferredBytes: 0, totalBytes: 100,
   state: "waitingForConflict", uploaded: 0, failed: 0, skipped: 0, message: null,
+  downloaded: 0, activeCount: 0, queuedCount: 0, conflictId: null,
 };
 
 function setup() {
@@ -32,6 +33,19 @@ function setup() {
 }
 
 describe("后台传输订阅", () => {
+  it("批量下载传递队列状态，完成其他文件时不会重复确认同一冲突", async () => {
+    const { subscription, runtime, onConflict } = setup();
+    const batch: TransferJobSummary = {
+      ...job, direction: "download", batchTotal: 7, downloaded: 0,
+      activeCount: 5, queuedCount: 2, conflictId: "first-conflict",
+    };
+    await subscription.apply(batch);
+    await subscription.apply({ ...batch, batchIndex: 3, downloaded: 3, queuedCount: 0 });
+    expect(onConflict).toHaveBeenCalledOnce();
+    expect(runtime().transfer).toMatchObject({ downloaded: 3, activeCount: 5, queuedCount: 0 });
+    await subscription.apply({ ...batch, batchIndex: 3, fileName: "second.txt", conflictId: "second-conflict" });
+    expect(onConflict).toHaveBeenCalledTimes(2);
+  });
   it("下一批冲突早于上一决定回包时仍继续弹出确认", async () => {
     const { subscription, onConflict, resolveConflict } = setup();
     let acknowledge!: () => void;

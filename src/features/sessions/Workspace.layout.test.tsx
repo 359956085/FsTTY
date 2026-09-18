@@ -34,7 +34,7 @@ function Preview({ withTerminal = false, initiallyCollapsed = false }) {
     shortcuts: DEFAULT_SHORTCUTS, theme: "dark", terminalColorScheme: "default", runtimes: { tab: runtime }, visible: true,
     onCancelTransfer: noop, onDismissTransfer: noop, onCloseTab: noop, onConnected: noop,
     onCredentialSaved: noop, onCreateRemoteDirectory: noop, onCreateSession: noop,
-    onDeleteRemoteEntry: noop, onDirectoryChange: noop, onDownload: noop,
+    onDeleteRemoteEntry: noop, onDeleteRemoteEntries: noop, onDirectoryChange: noop, onDownload: noop, onDownloadFiles: noop,
     onMoveRemoteEntry: noop, onOpenPath: noop, onRefreshFiles: noop, onRenameRemoteEntry: noop,
     onSelectTab: noop, onTerminalState: noop, onToggleRight: () => setCollapsed(value => !value),
     onUpload: noop, onUploadFiles: noop,

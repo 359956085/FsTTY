@@ -19,6 +19,12 @@ pub enum StartTransferJobRequest {
         remote_path: String,
         local_path: String,
     },
+    DownloadBatch {
+        runtime_id: String,
+        connection_id: String,
+        remote_paths: Vec<String>,
+        local_directory: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -59,6 +65,10 @@ pub struct TransferJobSummary {
     pub state: TransferJobState,
     pub message: Option<String>,
     pub uploaded: u32,
+    pub downloaded: u32,
+    pub active_count: u32,
+    pub queued_count: u32,
+    pub conflict_id: Option<String>,
     pub skipped: u32,
     pub failed: u32,
 }

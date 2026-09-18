@@ -16,6 +16,8 @@
 
 ## 本地开发与 RustRover 调试
 
+Windows 的 Debug 和 Release 桌面构建均使用 GUI 子系统，启动时不额外创建终端窗口。RustRover 的运行输出仍在 IDE 中查看，应用日志可在设置中打开日志目录；MCP stdio 继续使用客户端传入的标准输入和输出管道。
+
 Windows 桌面启动时读取有效安装记录，核对当前程序的路径和版本，Debug 构建同样执行此检查。已有安装记录时，从 RustRover、`cargo run` 或 `npm run tauri dev` 启动 `target/debug/fstty.exe` 会显示“这份 FsTTY 已不是当前安装”，并给出应启动的安装路径。这是应用的启动校验，不是 RustRover 的编译错误；管理员权限也不能使路径匹配。当前没有与现有安装隔离的开发启动模式。
 
 在项目根目录构建本地 Debug 验证安装包：

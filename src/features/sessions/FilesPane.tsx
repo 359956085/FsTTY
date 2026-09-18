@@ -60,6 +60,7 @@ import {
   useFileColumnResizing,
 } from "./useFileColumnResizing";
 import { installFileDragDropRuntime } from "./fileDragDropRuntime";
+import type { RemoteEntryDeleteFailure } from "./sessionRemoteFiles";
 import {
   createInlineRenameController,
   type InlineRenameState,
@@ -77,7 +78,9 @@ interface FilesPaneProps {
   onCollapse: () => void;
   onCreateDirectory: (name: string) => Promise<void>;
   onDeleteEntry: (path: string) => Promise<void>;
+  onDeleteEntries: (paths: string[]) => Promise<RemoteEntryDeleteFailure[]>;
   onDownload: (file: FileEntry) => void;
+  onDownloadFiles: (files: FileEntry[]) => void;
   onMoveEntry: (sourcePath: string, targetDirectory: string) => Promise<void>;
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
@@ -88,12 +91,12 @@ interface FilesPaneProps {
 
 type FileContextMenu =
   | { kind: "directory"; x: number; y: number }
-  | { kind: "entry"; x: number; y: number; file: FileEntry };
+  | { kind: "entry"; x: number; y: number; file: FileEntry; files: FileEntry[] };
 
 type FileOperationDialog =
   | { kind: "create"; value: string; error: string | null }
   | { kind: "rename"; file: FileEntry; value: string; error: string | null }
-  | { kind: "delete"; file: FileEntry; error: string | null };
+  | { kind: "delete"; files: FileEntry[]; error: string | null };
 
 interface RemoteEntryDrag {
   source: FileEntry;
@@ -119,7 +122,9 @@ export function FilesPane({
   onCollapse,
   onCreateDirectory,
   onDeleteEntry,
+  onDeleteEntries,
   onDownload,
+  onDownloadFiles,
   onMoveEntry,
   onOpenPath,
   onRefresh,
@@ -133,7 +138,8 @@ export function FilesPane({
   const panelRef = useRef<HTMLElement>(null);
   const { adjustFileColumn, beginFileColumnResize, fileColumns, tableRef } =
     useFileColumnResizing();
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(new Set());
+  const selectionAnchorRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<FileContextMenu | null>(null);
   const [fileOperation, setFileOperation] = useState<FileOperationDialog | null>(null);
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
@@ -280,13 +286,23 @@ export function FilesPane({
   }, [finishRemoteDrag]);
 
   useEffect(() => {
-    setSelectedPath((current) => {
-      if (current && files.some((file) => file.path === current)) {
-        return current;
+    selectionAnchorRef.current = null;
+    setSelectedPaths(new Set());
+    setContextMenu(null);
+  }, [currentPath]);
+
+  useEffect(() => {
+    if (loading) return;
+    setSelectedPaths((current) => {
+      const remaining = files.filter((file) => current.has(file.path));
+      const next = new Set(remaining.map((file) => file.path));
+      if (next.size === 0 && files[0]) next.add(files[0].path);
+      if (!files.some((file) => file.path === selectionAnchorRef.current)) {
+        selectionAnchorRef.current = remaining[0]?.path ?? files[0]?.path ?? null;
       }
-      return files[0]?.path ?? null;
+      return next;
     });
-  }, [files]);
+  }, [files, loading, currentPath]);
 
   useEffect(() => {
     if (!transferRunning || !transfer) {
@@ -303,10 +319,11 @@ export function FilesPane({
     return () => window.clearTimeout(timeout);
   }, [transfer, transferRunning]);
 
-  const selected = useMemo(
-    () => files.find((file) => file.path === selectedPath) ?? null,
-    [files, selectedPath],
+  const selectedFiles = useMemo(
+    () => files.filter((file) => selectedPaths.has(file.path)),
+    [files, selectedPaths],
   );
+  const selected = selectedFiles.length === 1 ? selectedFiles[0] : null;
   const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath), [currentPath]);
   const modifiedTimeFormatter = useMemo(
     () => createModifiedTimeFormatter(i18n.resolvedLanguage ?? i18n.language),
@@ -354,8 +371,41 @@ export function FilesPane({
     inlineRenameControllerRef.current?.resetClick();
     filePointerIntentRef.current = null;
     setContextMenu(null);
-    setSelectedPath(file.path);
+    selectFile(file);
     inlineRenameControllerRef.current?.begin(file);
+  }
+
+  function selectFile(
+    file: FileEntry,
+    modifiers?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
+  ) {
+    const additive = modifiers?.ctrlKey || modifiers?.metaKey;
+    const anchorIndex = files.findIndex((entry) => entry.path === selectionAnchorRef.current);
+    const targetIndex = files.findIndex((entry) => entry.path === file.path);
+    if (modifiers?.shiftKey && anchorIndex >= 0 && targetIndex >= 0) {
+      const range = files.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1);
+      setSelectedPaths((current) => new Set([
+        ...(additive ? current : []),
+        ...range.map((entry) => entry.path),
+      ]));
+    } else {
+      selectionAnchorRef.current = file.path;
+      setSelectedPaths((current) => {
+        if (!additive) return new Set([file.path]);
+        const next = new Set(current);
+        if (next.has(file.path)) next.delete(file.path);
+        else next.add(file.path);
+        return next;
+      });
+    }
+  }
+
+  function clearSelection() {
+    setSelectedPaths(new Set());
+    selectionAnchorRef.current = null;
+    inlineRenameControllerRef.current?.resetClick();
+    filePointerIntentRef.current = null;
+    setContextMenu(null);
   }
 
   function handleFileRowClick(
@@ -369,13 +419,19 @@ export function FilesPane({
       return;
     }
 
+    if (event.ctrlKey || event.metaKey || event.shiftKey || selectedFiles.length > 1) {
+      inlineRenameControllerRef.current?.resetClick();
+      selectFile(file, event);
+      return;
+    }
+
     const startedOnName =
       pointerIntent?.path === file.path &&
       pointerIntent.startedOnName &&
       isRemoteMoveCandidate(file);
     if (!startedOnName) {
       inlineRenameControllerRef.current?.resetClick();
-      setSelectedPath(file.path);
+      selectFile(file, event);
       return;
     }
 
@@ -383,12 +439,12 @@ export function FilesPane({
     const shouldRename =
       inlineRenameControllerRef.current?.registerNameClick(
         file,
-        selectedPath,
+        selected?.path ?? null,
         currentClick,
         event.detail,
         operationBlocked,
       ) ?? false;
-    setSelectedPath(file.path);
+    selectFile(file, event);
     if (shouldRename) {
       beginInlineRename(file);
     }
@@ -424,12 +480,14 @@ export function FilesPane({
     if (
       event.button !== 0 ||
       !event.isPrimary ||
+      event.ctrlKey || event.metaKey || event.shiftKey ||
+      (selectedFiles.length > 1 && selectedPaths.has(file.path)) ||
       operationBlocked ||
       !isRemoteMoveCandidate(file)
     ) {
       return;
     }
-    setSelectedPath(file.path);
+    selectFile(file);
     setDragUploadActive(false);
     suppressRemoteClickRef.current = false;
     remoteDragControllerRef.current?.begin({
@@ -541,18 +599,44 @@ export function FilesPane({
     setFileOperation({ ...fileOperation, error: null });
     await operationController.run(
       "dialog",
-      () => {
+      async () => {
         if (fileOperation.kind === "create") {
           return onCreateDirectory(normalizedName!);
         }
         if (fileOperation.kind === "rename") {
           return onRenameEntry(fileOperation.file.path, normalizedName!);
         }
-        return onDeleteEntry(fileOperation.file.path);
+        if (fileOperation.files.length > 1) {
+          const filesByPath = new Map(fileOperation.files.map((file) => [file.path, file]));
+          return (await onDeleteEntries(fileOperation.files.map((file) => file.path)))
+            .map(({ path, message }) => ({ file: filesByPath.get(path)!, error: message }));
+        }
+        const failures: { file: FileEntry; error: unknown }[] = [];
+        for (const file of fileOperation.files) {
+          try {
+            await onDeleteEntry(file.path);
+          } catch (error) {
+            failures.push({ file, error });
+          }
+        }
+        return failures;
       },
       {
         onPendingChange: setOperationPending,
-        onSuccess: () => setFileOperation(null),
+        onSuccess: (failures) => {
+          if (!failures?.length) {
+            setFileOperation(null);
+            return;
+          }
+          setFileOperation({
+            kind: "delete",
+            files: failures.map(({ file }) => file),
+            error: t("sessions.deleteRemoteEntriesFailed", {
+              count: failures.length,
+              message: resolveApiError(failures[0].error, t("errors.unknown")),
+            }),
+          });
+        },
         onError: (error) => {
           const message = resolveApiError(error, t("errors.unknown"));
           setFileOperation((current) =>
@@ -571,6 +655,11 @@ export function FilesPane({
     >
       <header className="panel-title">
         <h2>{t("sessions.files")}</h2>
+        {selectedFiles.length > 1 ? (
+          <span className="file-selection-count" role="status">
+            {t("sessions.selectedFiles", { count: selectedFiles.length })}
+          </span>
+        ) : null}
         <span className="panel-title-actions">
           <TooltipButton
             label={t("sessions.upload")}
@@ -663,6 +752,9 @@ export function FilesPane({
 
       <div
         className="file-table"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) clearSelection();
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({ kind: "directory", x: event.clientX, y: event.clientY });
@@ -708,13 +800,13 @@ export function FilesPane({
           return (
             <div
               aria-label={file.name}
-              aria-pressed={renaming ? undefined : selected?.path === file.path}
+              aria-pressed={renaming ? undefined : selectedPaths.has(file.path)}
               className={fileRowClassName(
                 file,
-                selected?.path,
+                selectedPaths.has(file.path) ? file.path : undefined,
                 remoteDrag,
                 moveStatus,
-                !operationBlocked,
+                !operationBlocked && selectedFiles.length <= 1,
               )}
               data-remote-drop-path={file.kind === "folder" ? file.path : undefined}
               key={file.path}
@@ -727,7 +819,7 @@ export function FilesPane({
                   event.stopPropagation();
                   return;
                 }
-                if (file.kind === "folder") {
+                if (file.kind === "folder" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
                   onOpenPath(file.path);
                 }
               }}
@@ -739,7 +831,7 @@ export function FilesPane({
                   event.preventDefault();
                   inlineRenameControllerRef.current?.resetClick();
                   filePointerIntentRef.current = null;
-                  setSelectedPath(file.path);
+                  selectFile(file, event);
                 }
               }}
               onLostPointerCapture={finishRemoteDrag}
@@ -756,12 +848,14 @@ export function FilesPane({
                 event.stopPropagation();
                 inlineRenameControllerRef.current?.resetClick();
                 filePointerIntentRef.current = null;
-                setSelectedPath(file.path);
+                const menuFiles = selectedPaths.has(file.path) ? selectedFiles : [file];
+                if (!selectedPaths.has(file.path)) selectFile(file);
                 setContextMenu({
                   kind: "entry",
                   x: event.clientX,
                   y: event.clientY,
                   file,
+                  files: menuFiles,
                 });
               }}
               role={renaming ? undefined : "button"}
@@ -852,7 +946,25 @@ export function FilesPane({
                     onSelect: onRefresh,
                   },
                 ]
-              : [
+              : contextMenu.files.length > 1
+                ? [
+                    {
+                      id: "download",
+                      label: t("sessions.download"),
+                      icon: <Download size={15} />,
+                      disabled: operationBlocked || contextMenu.files.some((file) => file.kind !== "file"),
+                      onSelect: () => onDownloadFiles(contextMenu.files),
+                    },
+                    {
+                      id: "delete",
+                      label: t("sessions.deleteRemoteEntry"),
+                      icon: <Trash2 size={15} />,
+                      danger: true,
+                      disabled: operationBlocked,
+                      onSelect: () => setFileOperation({ kind: "delete", files: contextMenu.files, error: null }),
+                    },
+                  ]
+                : [
                   ...(contextMenu.file.kind === "folder"
                     ? [
                         {
@@ -868,7 +980,7 @@ export function FilesPane({
                             id: "download",
                             label: t("sessions.download"),
                             icon: <Download size={15} />,
-                            disabled: transferRunning,
+                            disabled: operationBlocked,
                             onSelect: () => onDownload(contextMenu.file),
                           },
                         ]
@@ -895,7 +1007,7 @@ export function FilesPane({
                     onSelect: () =>
                       setFileOperation({
                         kind: "delete",
-                        file: contextMenu.file,
+                        files: [contextMenu.file],
                         error: null,
                       }),
                   },
@@ -941,13 +1053,17 @@ export function FilesPane({
                 <>
                   <p>
                     {t(
-                      fileOperation.file.kind === "folder"
+                      fileOperation.files.length > 1
+                        ? "sessions.confirmDeleteRemoteEntries"
+                        : fileOperation.files[0].kind === "folder"
                         ? "sessions.confirmDeleteRemoteDirectory"
                         : "sessions.confirmDeleteRemoteEntry",
-                      { name: fileOperation.file.name },
+                      { name: fileOperation.files[0].name, count: fileOperation.files.length },
                     )}
                   </p>
-                  <code>{fileOperation.file.path}</code>
+                  <div className="file-operation-entries">
+                    {fileOperation.files.map((file) => <code key={file.path}>{file.path}</code>)}
+                  </div>
                 </>
               ) : (
                 <label>
@@ -1009,8 +1125,13 @@ export function FilesPane({
           <span>
             {transfer.direction === "upload" ? <Upload size={15} /> : <Download size={15} />}
             <strong>
-              {transfer.fileName}
-              {transfer.batchTotal && transfer.batchTotal > 1
+              {transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1
+                ? t("sessions.downloadBatchProgress", {
+                    completed: (transfer.downloaded ?? 0) + (transfer.skipped ?? 0) + (transfer.failed ?? 0),
+                    total: transfer.batchTotal,
+                  })
+                : transfer.fileName}
+              {transfer.direction === "upload" && transfer.batchTotal && transfer.batchTotal > 1
                 ? ` (${transfer.batchIndex}/${transfer.batchTotal})`
                 : ""}
             </strong>
@@ -1025,6 +1146,13 @@ export function FilesPane({
                 ? t("sessions.transferCancelled")
                 : `${progressPercent}% · ${formatTransferSpeed(displayedSpeed)}`}
           </em>
+          {transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1 ? (
+            <small className="transfer-queue-status" role="status">
+              {transferRunning
+                ? t("sessions.downloadQueueStatus", { active: transfer.activeCount ?? 0, queued: transfer.queuedCount ?? 0 })
+                : t("sessions.downloadBatchSummary", { downloaded: transfer.downloaded ?? 0, skipped: transfer.skipped ?? 0, failed: transfer.failed ?? 0 })}
+            </small>
+          ) : null}
           {transferRunning ? (
             <button
               aria-label={t("sessions.cancelTransfer")}

@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   attachTransferJob: vi.fn(),
   cancelTransfer: vi.fn(),
   disconnectSession: vi.fn(),
+  deleteRemoteEntry: vi.fn(),
   getDeviceStatus: vi.fn(),
   getDeviceMetricsSnapshot: vi.fn(),
   listRemoteFiles: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("../../shared/api/client", () => ({
     attachTransferJob: mocks.attachTransferJob,
     cancelTransfer: mocks.cancelTransfer,
     disconnectSession: mocks.disconnectSession,
+    deleteRemoteEntry: mocks.deleteRemoteEntry,
     getDeviceStatus: mocks.getDeviceStatus,
     getDeviceMetricsSnapshot: mocks.getDeviceMetricsSnapshot,
     listRemoteFiles: mocks.listRemoteFiles,
@@ -119,14 +121,18 @@ function transferJob(
     fileName:
       request.kind === "uploadBatch"
         ? request.localPaths[0]?.split(/[\\/]/).pop() ?? "文件"
-        : request.remotePath.split("/").pop() ?? "文件",
+        : (request.kind === "downloadBatch" ? request.remotePaths[0] : request.remotePath).split("/").pop() ?? "文件",
     batchIndex: 1,
-    batchTotal: request.kind === "uploadBatch" ? request.localPaths.length : 1,
+    batchTotal: request.kind === "uploadBatch" ? request.localPaths.length : request.kind === "downloadBatch" ? request.remotePaths.length : 1,
     transferredBytes: 0,
     totalBytes: 100,
     state,
     message: null,
     uploaded: 0,
+    downloaded: 0,
+    activeCount: 0,
+    queuedCount: request.kind === "downloadBatch" ? request.remotePaths.length : 0,
+    conflictId: null,
     skipped: 0,
     failed: 0,
   };
@@ -165,6 +171,7 @@ beforeEach(() => {
   mocks.acknowledgeTransferJob.mockResolvedValue(undefined);
   mocks.cancelTransfer.mockResolvedValue(true);
   mocks.disconnectSession.mockResolvedValue(undefined);
+  mocks.deleteRemoteEntry.mockReset().mockResolvedValue(undefined);
   mocks.getDeviceStatus.mockResolvedValue(deviceStatus);
   mocks.getDeviceMetricsSnapshot.mockReset().mockImplementation(async (connectionId: string) =>
     deviceSnapshot(10_000, connectionId),
@@ -586,6 +593,88 @@ describe("会话运行时异步生命周期", () => {
       "job-1",
       "overwrite",
     );
+  });
+
+  it("批量下载只选择一次保存目录，并将全部路径交给后台队列", async () => {
+    mocks.open.mockResolvedValueOnce("C:\\downloads");
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    const files = Array.from({ length: 7 }, (_, index) => file(`/home/${index}.txt`));
+    await act(async () => result.current.downloadFiles("session-1", files));
+    expect(mocks.open).toHaveBeenCalledExactlyOnceWith({
+      directory: true, multiple: false, title: "选择批量下载的保存目录",
+    });
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.startTransferJob).toHaveBeenCalledExactlyOnceWith({
+      kind: "downloadBatch", runtimeId: "session-1", connectionId: "connection-1",
+      remotePaths: files.map((file) => file.path), localDirectory: "C:\\downloads",
+    });
+    expect(result.current.runtimes["session-1"].transfer?.batchTotal).toBe(7);
+    expect(result.current.runtimes["session-1"].transfer?.queuedCount).toBe(7);
+  });
+
+  it("取消保存目录选择不创建任务且下一次批量下载仍可启动", async () => {
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    const files = [file("/home/first.txt"), file("/home/second.txt")];
+    await act(async () => result.current.downloadFiles("session-1", files));
+    expect(mocks.startTransferJob).not.toHaveBeenCalled();
+    mocks.open.mockResolvedValueOnce("C:\\downloads");
+    await act(async () => result.current.downloadFiles("session-1", files));
+    expect(mocks.startTransferJob).toHaveBeenCalledOnce();
+  });
+
+  it("目录选择期间重连后不把旧文件下载交给新连接", async () => {
+    const directory = deferred<string | null>();
+    mocks.open.mockReturnValueOnce(directory.promise);
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    let download!: Promise<void>;
+    act(() => { download = result.current.downloadFiles("session-1", [file("/home/one.txt"), file("/home/two.txt")]); });
+    act(() => result.current.handleConnected("session-1", { ...connection, connectionId: "connection-2" }));
+    directory.resolve("C:\\downloads");
+    await act(async () => download);
+    expect(mocks.startTransferJob).not.toHaveBeenCalled();
+  });
+
+  it("批量下载拒绝覆盖时仅跳过该文件", async () => {
+    mocks.open.mockResolvedValueOnce("C:\\downloads");
+    mocks.startTransferJob.mockImplementationOnce(async (request) => transferJob(request, "waitingForConflict"));
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    await act(async () => result.current.downloadFiles("session-1", [file("/home/one.txt"), file("/home/two.txt")]));
+    expect(mocks.resolveTransferJobConflict).toHaveBeenCalledWith("job-1", "skip");
+  });
+
+  it("空选区和包含目录的选区不弹出下载对话框", async () => {
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    await act(async () => {
+      await result.current.downloadFiles("session-1", []);
+      await result.current.downloadFiles("session-1", [file("/home/one.txt"), { ...file("/home/folder"), kind: "folder" }]);
+    });
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.startTransferJob).not.toHaveBeenCalled();
+  });
+
+  it("批量删除继续处理失败项之后的文件，完成后仅刷新目录一次", async () => {
+    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    act(() => result.current.handleConnected("session-1", connection));
+    await waitFor(() => expect(result.current.runtimes["session-1"].filesLoading).toBe(false));
+    mocks.listRemoteFiles.mockClear();
+    mocks.deleteRemoteEntry.mockImplementation(async (_connectionId, path) => {
+      if (path === "/home/two.txt") throw new Error("permission denied");
+    });
+    let failures;
+    await act(async () => {
+      failures = await result.current.deleteRemoteEntries("session-1", ["/home/one.txt", "/home/two.txt", "/home/three.txt"]);
+    });
+    expect(mocks.deleteRemoteEntry.mock.calls).toEqual([
+      ["connection-1", "/home/one.txt"], ["connection-1", "/home/two.txt"], ["connection-1", "/home/three.txt"],
+    ]);
+    expect(failures).toEqual([{ path: "/home/two.txt", message: "permission denied" }]);
+    expect(mocks.listRemoteFiles).toHaveBeenCalledExactlyOnceWith("connection-1", "/home");
   });
 
   it("上传冲突被用户拒绝时提交跳过决定", async () => {

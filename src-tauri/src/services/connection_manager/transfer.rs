@@ -5,7 +5,7 @@ use super::remote_files::{map_sftp_read_error, RemoteReadKind};
 use super::{
     open_sftp, ConnectionManager, MAX_REMOTE_PATH_BYTES, SFTP_TIMEOUT, TRANSFER_BUFFER_BYTES,
 };
-use crate::models::{AppError, TransferEvent};
+use crate::models::{AppError, TransferEvent, TransferJobDirection};
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use std::{
     io::SeekFrom,
@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 pub(super) struct ActiveTransfer {
     pub(super) connection_id: String,
+    direction: TransferJobDirection,
     pub(super) cancelled: Arc<AtomicBool>,
 }
 
@@ -374,7 +375,12 @@ impl ConnectionManager {
         progress: TransferReporter,
     ) -> Result<(), AppError> {
         let cancelled = self
-            .begin_transfer(connection_id, transfer_id, progress.cancellation.clone())
+            .begin_transfer(
+                connection_id,
+                transfer_id,
+                progress.cancellation.clone(),
+                TransferJobDirection::Upload,
+            )
             .await?;
         let result = self
             .upload_file_inner(
@@ -526,7 +532,12 @@ impl ConnectionManager {
         progress: TransferReporter,
     ) -> Result<(), AppError> {
         let cancelled = self
-            .begin_transfer(connection_id, transfer_id, progress.cancellation.clone())
+            .begin_transfer(
+                connection_id,
+                transfer_id,
+                progress.cancellation.clone(),
+                TransferJobDirection::Download,
+            )
             .await?;
         let result = self
             .download_file_inner(
@@ -660,6 +671,7 @@ impl ConnectionManager {
         connection_id: &str,
         transfer_id: &str,
         cancelled: Arc<AtomicBool>,
+        direction: TransferJobDirection,
     ) -> Result<Arc<AtomicBool>, AppError> {
         Uuid::parse_str(transfer_id)
             .map_err(|_| AppError::Validation("传输 ID 无效".to_owned()))?;
@@ -668,9 +680,15 @@ impl ConnectionManager {
         if transfers.contains_key(transfer_id) {
             return Err(AppError::Conflict("传输 ID 已存在".to_owned()));
         }
-        if transfers
+        let connection_transfers = transfers
             .values()
-            .any(|transfer| transfer.connection_id == connection_id)
+            .filter(|transfer| transfer.connection_id == connection_id)
+            .collect::<Vec<_>>();
+        if connection_transfers
+            .iter()
+            .any(|transfer| transfer.direction == TransferJobDirection::Upload)
+            || (direction == TransferJobDirection::Upload && !connection_transfers.is_empty())
+            || connection_transfers.len() >= super::MAX_CONCURRENT_DOWNLOADS
         {
             return Err(AppError::Busy("当前会话已有文件传输".to_owned()));
         }
@@ -679,6 +697,7 @@ impl ConnectionManager {
             transfer_id.to_owned(),
             ActiveTransfer {
                 connection_id: connection_id.to_owned(),
+                direction,
                 cancelled: cancelled.clone(),
             },
         );

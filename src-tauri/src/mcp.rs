@@ -2160,6 +2160,7 @@ mod tests {
             cancellation: cancellation.clone(),
             bearer_token: bearer_token.clone(),
             transfer_runtime: transfer_runtime.clone(),
+            server_task: None,
         });
 
         assert_eq!(runtime.running_port().await, Some(37_653));

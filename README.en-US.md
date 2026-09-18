@@ -141,7 +141,7 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 | SSH authentication | Passwords and imported private keys; on Windows, an independent service stores credentials and performs authentication |
 | Remote terminal | xterm.js 6, independent text color presets, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
 | Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
-| File management | SFTP browse, upload, download, drag-to-move, create, rename, copy path, and recursive delete |
+| File management | SFTP browse, upload, Shift/Ctrl selection, batch download (up to 5 concurrent files with a waiting queue), batch delete, drag-to-move, create, rename, and copy path |
 | Device status | CPU and memory trends, disk, network traffic, OS, and uptime |
 | Updates | Manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
 

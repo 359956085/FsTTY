@@ -9,13 +9,15 @@ use axum::{
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MCP_TOKEN_ACCOUNT: &str = "__mcp_http_token";
+const HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Default)]
 pub struct McpHttpRuntime {
@@ -33,6 +35,25 @@ pub(super) struct RunningMcpHttp {
     pub(super) cancellation: CancellationToken,
     pub(super) bearer_token: Arc<RwLock<Zeroizing<String>>>,
     pub(super) transfer_runtime: McpTransferRuntime,
+    pub(super) server_task: Option<JoinHandle<()>>,
+}
+
+impl RunningMcpHttp {
+    async fn stop(self) {
+        self.cancellation.cancel();
+        self.transfer_runtime.clear().await;
+        if let Some(mut task) = self.server_task {
+            // 取消信号不代表监听已经关闭；在释放切换锁前等待旧服务退出。
+            if tokio::time::timeout(HTTP_SHUTDOWN_TIMEOUT, &mut task)
+                .await
+                .is_err()
+            {
+                log::warn!("MCP HTTP 关闭等待超时，终止监听任务");
+                task.abort();
+                let _ = task.await;
+            }
+        }
+    }
 }
 
 impl McpHttpRuntime {
@@ -40,8 +61,7 @@ impl McpHttpRuntime {
         let _transition = self.transition.lock().await;
         let running = self.state.lock().await.running.take();
         if let Some(running) = running {
-            running.transfer_runtime.clear().await;
-            running.cancellation.cancel();
+            running.stop().await;
         }
     }
 
@@ -106,6 +126,10 @@ impl McpHttpRuntime {
         let listener = bind_http_listener(port)
             .await
             .map_err(|_| AppError::Connection("MCP HTTP 端口被占用".to_owned()))?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| AppError::Internal("无法读取 MCP HTTP 监听地址".to_owned()))?
+            .port();
         let cancellation = CancellationToken::new();
         let transfer_runtime =
             McpTransferRuntime::new(state.clone(), port, cancellation.child_token());
@@ -132,21 +156,22 @@ impl McpHttpRuntime {
                     async move { authorize_http(request, next, auth_token).await }
                 })),
         );
+        let server_cancellation = cancellation.clone();
+        let server_task = tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(server_cancellation.cancelled_owned())
+                .await;
+        });
         let previous = self.state.lock().await.running.replace(RunningMcpHttp {
             port,
             cancellation: cancellation.clone(),
             bearer_token: auth_token,
             transfer_runtime,
+            server_task: Some(server_task),
         });
         if let Some(previous) = previous {
-            previous.transfer_runtime.clear().await;
-            previous.cancellation.cancel();
+            previous.stop().await;
         }
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, router)
-                .with_graceful_shutdown(cancellation.cancelled_owned())
-                .await;
-        });
         Ok(())
     }
 }
@@ -265,6 +290,145 @@ pub async fn rotate_http_token(state: &AppState) -> Result<Zeroizing<String>, Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!("fstty-mcp-http-lifecycle-{}", Uuid::new_v4())))
+        }
+
+        fn state(&self) -> AppState {
+            let mut state = AppState::new(self.0.clone());
+            state.credential_service = crate::services::CredentialService::memory_for_test();
+            state
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn 关闭运行时后可立即重启同一端口() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let runtime = state.mcp_http_runtime.clone();
+        runtime
+            .start(state.clone(), 0, "secret".to_owned())
+            .await
+            .unwrap();
+        let port = runtime.running_port().await.unwrap();
+        assert_ne!(port, 0);
+
+        for _ in 0..20 {
+            runtime.stop().await;
+            assert_eq!(runtime.running_port().await, None);
+            runtime
+                .start(state.clone(), port, "secret".to_owned())
+                .await
+                .unwrap();
+        }
+        runtime.stop().await;
+    }
+
+    #[tokio::test]
+    async fn 已处理客户端请求的运行时关闭后可立即重新绑定() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let runtime = state.mcp_http_runtime.clone();
+        runtime
+            .start(state.clone(), 0, "secret".to_owned())
+            .await
+            .unwrap();
+        let port = runtime.running_port().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut client = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap();
+            client
+                .write_all(b"GET /mcp HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+            let mut status = [0; 12];
+            client.read_exact(&mut status).await.unwrap();
+            assert_eq!(&status, b"HTTP/1.1 401");
+            drop(client);
+            runtime.stop().await;
+            runtime
+                .start(state, port, "secret".to_owned())
+                .await
+                .unwrap();
+            runtime.stop().await;
+        })
+        .await
+        .expect("HTTP 请求和同端口重启不能超时");
+    }
+
+    #[tokio::test]
+    async fn 端口冲突保留旧监听且切换成功后释放旧端口() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let runtime = state.mcp_http_runtime.clone();
+        runtime
+            .start(state.clone(), 0, "secret".to_owned())
+            .await
+            .unwrap();
+        let first_port = runtime.running_port().await.unwrap();
+        let occupied = bind_http_listener(0).await.unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+
+        let error = runtime
+            .start(state.clone(), occupied_port, "secret".to_owned())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Connection(message) if message == "MCP HTTP 端口被占用"));
+        assert_eq!(runtime.running_port().await, Some(first_port));
+        assert!(bind_http_listener(first_port).await.is_err());
+
+        runtime.start(state, 0, "secret".to_owned()).await.unwrap();
+        assert_ne!(runtime.running_port().await, Some(first_port));
+        let released = bind_http_listener(first_port).await.unwrap();
+        assert_eq!(released.local_addr().unwrap().port(), first_port);
+        runtime.stop().await;
+    }
+
+    #[tokio::test]
+    async fn 停止超时后终止监听任务并等待资源释放() {
+        let directory = TestDirectory::new();
+        let state = directory.state();
+        let runtime = state.mcp_http_runtime.clone();
+        let cancellation = CancellationToken::new();
+        let transfer_runtime = McpTransferRuntime::new(state, 37_653, cancellation.child_token());
+        let (started, started_receiver) = tokio::sync::oneshot::channel();
+        let (finished, finished_receiver) = tokio::sync::oneshot::channel::<()>();
+        let server_task = tokio::spawn(async move {
+            let _finished = finished;
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started_receiver.await.unwrap();
+        runtime.state.lock().await.running = Some(RunningMcpHttp {
+            port: 37_653,
+            cancellation: cancellation.clone(),
+            bearer_token: Arc::new(RwLock::new(Zeroizing::new("secret".to_owned()))),
+            transfer_runtime,
+            server_task: Some(server_task),
+        });
+
+        tokio::time::timeout(
+            HTTP_SHUTDOWN_TIMEOUT + Duration::from_secs(1),
+            runtime.stop(),
+        )
+        .await
+        .expect("关闭不能无限等待未退出的任务");
+        assert!(finished_receiver.await.is_err());
+        assert!(cancellation.is_cancelled());
+        assert_eq!(runtime.running_port().await, None);
+    }
 
     #[tokio::test]
     async fn 回环已有监听时拒绝全地址监听() {

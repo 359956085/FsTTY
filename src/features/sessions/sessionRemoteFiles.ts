@@ -1,5 +1,10 @@
 import type { FileEntry, SshConnection } from "../../shared/api/types";
 
+export interface RemoteEntryDeleteFailure {
+  path: string;
+  message: string;
+}
+
 interface RemoteFilesRuntime {
   connection: SshConnection | null;
   currentPath: string;

@@ -18,6 +18,7 @@ import type { SessionRuntime } from "./useSessionConnections";
 import type { OpenSessionTab } from "./useSessionsPageState";
 import type { ResolvedTheme } from "../../shared/theme";
 import { getPreservedRuntimeIds } from "../lightweight/lightweightMode";
+import type { RemoteEntryDeleteFailure } from "./sessionRemoteFiles";
 
 interface WorkspaceProps {
   allowRemoteClipboardWrite: boolean;
@@ -43,8 +44,10 @@ interface WorkspaceProps {
   onCreateRemoteDirectory: (tabId: string, name: string) => Promise<void>;
   onCreateSession: () => void;
   onDeleteRemoteEntry: (tabId: string, path: string) => Promise<void>;
+  onDeleteRemoteEntries: (tabId: string, paths: string[]) => Promise<RemoteEntryDeleteFailure[]>;
   onDirectoryChange: (tabId: string, path: string) => void;
   onDownload: (tabId: string, file: FileEntry) => void;
+  onDownloadFiles: (tabId: string, files: FileEntry[]) => void;
   onMoveRemoteEntry: (
     tabId: string,
     sourcePath: string,
@@ -80,8 +83,10 @@ export function Workspace({
   onCreateRemoteDirectory,
   onCreateSession,
   onDeleteRemoteEntry,
+  onDeleteRemoteEntries,
   onDirectoryChange,
   onDownload,
+  onDownloadFiles,
   onMoveRemoteEntry,
   onOpenPath,
   onRefreshFiles,
@@ -303,8 +308,14 @@ export function Workspace({
             onDeleteEntry={(path) =>
               activeTabId ? onDeleteRemoteEntry(activeTabId, path) : Promise.resolve()
             }
+            onDeleteEntries={(paths) =>
+              activeTabId ? onDeleteRemoteEntries(activeTabId, paths) : Promise.resolve([])
+            }
             onDownload={(file) =>
               activeTabId && onDownload(activeTabId, file)
+            }
+            onDownloadFiles={(files) =>
+              activeTabId && onDownloadFiles(activeTabId, files)
             }
             onMoveEntry={(sourcePath, targetDirectory) =>
               activeTabId

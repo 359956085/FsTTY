@@ -425,6 +425,13 @@ export type StartTransferJobRequest =
       remoteDirectory: string;
     }
   | {
+      kind: "downloadBatch";
+      runtimeId: string;
+      connectionId: string;
+      remotePaths: string[];
+      localDirectory: string;
+    }
+  | {
       kind: "download";
       runtimeId: string;
       connectionId: string;
@@ -445,6 +452,10 @@ export interface TransferJobSummary {
   state: TransferJobState;
   message?: string | null;
   uploaded: number;
+  downloaded: number;
+  activeCount: number;
+  queuedCount: number;
+  conflictId: string | null;
   skipped: number;
   failed: number;
 }

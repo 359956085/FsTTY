@@ -1,4 +1,6 @@
-use super::connection_manager::TransferReporter;
+mod download_batch;
+
+use super::connection_manager::{TransferReporter, MAX_CONCURRENT_DOWNLOADS};
 use super::connection_paths::normalize_remote_path;
 use super::ConnectionManager;
 use crate::models::{
@@ -12,7 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tokio::sync::{watch, Mutex, Notify};
+use tokio::sync::{watch, Mutex, Notify, Semaphore};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const MAX_JOBS: usize = 256;
@@ -25,6 +28,10 @@ struct TransferJob {
     decision: Mutex<Option<TransferConflictDecision>>,
     decision_notify: Notify,
     cancelled: Arc<AtomicBool>,
+    cancellation: CancellationToken,
+    batch_transfers: Mutex<HashMap<String, usize>>,
+    batch_progress: Mutex<HashMap<usize, (u64, u64)>>,
+    batch_conflict: Mutex<()>,
 }
 
 impl TransferJob {
@@ -36,6 +43,10 @@ impl TransferJob {
             decision: Mutex::new(None),
             decision_notify: Notify::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            cancellation: CancellationToken::new(),
+            batch_transfers: Mutex::new(HashMap::new()),
+            batch_progress: Mutex::new(HashMap::new()),
+            batch_conflict: Mutex::new(()),
         }
     }
 
@@ -120,9 +131,19 @@ impl TransferJob {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TransferJobService {
     jobs: Arc<Mutex<HashMap<String, Arc<TransferJob>>>>,
+    download_slots: Arc<Semaphore>,
+}
+
+impl Default for TransferJobService {
+    fn default() -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            download_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
+        }
+    }
 }
 
 impl TransferJobService {
@@ -147,6 +168,14 @@ impl TransferJobService {
             state: TransferJobState::Running,
             message: None,
             uploaded: 0,
+            downloaded: 0,
+            active_count: 0,
+            queued_count: if direction == TransferJobDirection::Download {
+                batch_total
+            } else {
+                0
+            },
+            conflict_id: None,
             skipped: 0,
             failed: 0,
         };
@@ -168,6 +197,7 @@ impl TransferJobService {
             jobs.insert(job_id, job.clone());
         }
 
+        let download_slots = self.download_slots.clone();
         tauri::async_runtime::spawn(async move {
             match request {
                 StartTransferJobRequest::UploadBatch {
@@ -197,6 +227,23 @@ impl TransferJobService {
                         connection_id,
                         remote_path,
                         local_path,
+                        download_slots,
+                    )
+                    .await;
+                }
+                StartTransferJobRequest::DownloadBatch {
+                    connection_id,
+                    remote_paths,
+                    local_directory,
+                    ..
+                } => {
+                    download_batch::run_download_batch(
+                        connection_manager,
+                        job,
+                        connection_id,
+                        remote_paths,
+                        local_directory,
+                        download_slots,
                     )
                     .await;
                 }
@@ -264,10 +311,24 @@ impl TransferJobService {
         for job in jobs {
             let summary = job.snapshot().await;
             let active_transfer_id = job.active_transfer_id.lock().await.clone();
-            if summary.job_id == id || active_transfer_id.as_deref() == Some(id) {
+            let batch_transfers = job
+                .batch_transfers
+                .lock()
+                .await
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            if summary.job_id == id
+                || active_transfer_id.as_deref() == Some(id)
+                || batch_transfers.iter().any(|transfer_id| transfer_id == id)
+            {
                 job.cancelled.store(true, Ordering::Release);
+                job.cancellation.cancel();
                 job.decision_notify.notify_one();
                 if let Some(transfer_id) = active_transfer_id {
+                    let _ = connection_manager.cancel_transfer(&transfer_id).await;
+                }
+                for transfer_id in batch_transfers {
                     let _ = connection_manager.cancel_transfer(&transfer_id).await;
                 }
                 return true;
@@ -392,6 +453,21 @@ async fn validate_request(
                 1,
             )
         }
+        StartTransferJobRequest::DownloadBatch {
+            runtime_id,
+            connection_id,
+            remote_paths,
+            local_directory,
+        } => {
+            let files = download_batch::download_targets(remote_paths, local_directory)?;
+            (
+                runtime_id,
+                connection_id,
+                TransferJobDirection::Download,
+                remote_file_name(&files[0].0),
+                files.len() as u32,
+            )
+        }
     };
     if Uuid::parse_str(runtime_id).is_err() || Uuid::parse_str(connection_id).is_err() {
         return Err(AppError::Validation("后台传输任务标识无效".to_owned()));
@@ -512,7 +588,17 @@ async fn run_download(
     connection_id: String,
     remote_path: String,
     local_path: String,
+    download_slots: Arc<Semaphore>,
 ) {
+    let Some(_permit) = download_batch::acquire_download_slot(&job, download_slots).await else {
+        finish_cancelled(&job).await;
+        return;
+    };
+    job.update(|summary| {
+        summary.active_count = 1;
+        summary.queued_count = 0;
+    })
+    .await;
     let mut overwrite = false;
     loop {
         if job.cancelled.load(Ordering::Acquire) {
@@ -540,8 +626,12 @@ async fn run_download(
         }
         match result {
             Ok(()) => {
-                job.update(|summary| summary.state = TransferJobState::Completed)
-                    .await;
+                job.update(|summary| {
+                    summary.state = TransferJobState::Completed;
+                    summary.downloaded = 1;
+                    summary.active_count = 0;
+                })
+                .await;
                 return;
             }
             Err(AppError::Conflict(_)) if !overwrite => {
@@ -562,6 +652,8 @@ async fn run_download(
             Err(error) => {
                 job.update(|summary| {
                     summary.state = TransferJobState::Failed;
+                    summary.active_count = 0;
+                    summary.failed = 1;
                     summary.message = Some(error.to_string());
                     summary.failed = 1;
                 })
@@ -622,8 +714,13 @@ async fn wait_for_conflict_decision(
 }
 
 async fn finish_cancelled(job: &TransferJob) {
-    job.update(|summary| summary.state = TransferJobState::Cancelled)
-        .await;
+    job.update(|summary| {
+        summary.state = TransferJobState::Cancelled;
+        summary.active_count = 0;
+        summary.queued_count = 0;
+        summary.conflict_id = None;
+    })
+    .await;
 }
 
 fn local_file_name(path: &str) -> String {
@@ -660,6 +757,10 @@ mod tests {
             state,
             message: None,
             uploaded: 0,
+            downloaded: 0,
+            active_count: 0,
+            queued_count: 0,
+            conflict_id: None,
             skipped: 0,
             failed: 0,
         }
@@ -880,6 +981,7 @@ mod tests {
                         "missing".to_owned(),
                         "/unused".to_owned(),
                         "unused".to_owned(),
+                        Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
                     )
                     .await
                 }

@@ -24,6 +24,7 @@ import {
 import {
   createSessionRemoteFilesController,
   type SessionRemoteFilesController,
+  type RemoteEntryDeleteFailure,
 } from "./sessionRemoteFiles";
 import { createSessionRuntimeController } from "./sessionRuntimeController";
 import { createTransferJobSubscription } from "./sessionTransferJob";
@@ -35,6 +36,11 @@ export interface TransferProgress {
   fileName: string;
   batchIndex?: number;
   batchTotal?: number;
+  downloaded?: number;
+  skipped?: number;
+  failed?: number;
+  activeCount?: number;
+  queuedCount?: number;
   transferredBytes: number;
   totalBytes: number;
   speedBytesPerSecond: number;
@@ -381,19 +387,21 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
               ? i18n.t("sessions.remoteOverwriteConfirm", {
                   name: conflictJob.fileName,
                 })
-              : i18n.t("sessions.localOverwriteConfirm"),
+              : conflictJob.batchTotal > 1
+                ? i18n.t("sessions.localBatchOverwriteConfirm", { name: conflictJob.fileName })
+                : i18n.t("sessions.localOverwriteConfirm"),
             {
               title: i18n.t("sessions.overwriteTitle"),
               kind: "warning",
               okLabel: i18n.t("sessions.overwrite"),
               cancelLabel:
-                conflictJob.direction === "upload"
+                conflictJob.direction === "upload" || conflictJob.batchTotal > 1
                   ? i18n.t("sessions.skip")
                   : i18n.t("sessions.cancel"),
             },
           );
           if (overwrite) return "overwrite";
-          return conflictJob.direction === "upload" ? "skip" : "cancel";
+          return conflictJob.direction === "upload" || conflictJob.batchTotal > 1 ? "skip" : "cancel";
         },
         onTerminal: (terminalJob) => {
           if (terminalJob.direction !== "upload") return;
@@ -531,8 +539,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [errorFallback, updateRuntime, uploadFiles],
   );
 
-  const downloadFile = useCallback(
-    async (sessionId: string, file: FileEntry) => {
+  const downloadFiles = useCallback(
+    async (sessionId: string, files: FileEntry[]) => {
       const initialConnectionId = runtimesRef.current[sessionId]?.connection?.connectionId;
       const startToken = crypto.randomUUID();
       const isStartCurrent = () =>
@@ -543,15 +551,21 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
         if (
           !runtime?.connection?.sftpAvailable ||
           runtime.transfer?.state === "running" ||
-          file.kind !== "file"
+          files.length === 0 || files.some((file) => file.kind !== "file")
         ) {
           return;
         }
         if (!runtimeControllerRef.current.startUploadBatch(sessionId, startToken)) return;
-        const selected = await save({
-          defaultPath: file.name,
-          title: i18n.t("sessions.saveDownloadFile"),
-        });
+        const selected = files.length === 1
+          ? await save({
+              defaultPath: files[0].name,
+              title: i18n.t("sessions.saveDownloadFile"),
+            })
+          : await open({
+              directory: true,
+              multiple: false,
+              title: i18n.t("sessions.selectDownloadDirectory"),
+            });
         if (!selected) {
           return;
         }
@@ -570,12 +584,18 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
             .acknowledgeTransferJob(selectedRuntime.transfer.id)
             .catch(() => undefined);
         }
-        const job = await api.startTransferJob({
+        const job = await api.startTransferJob(files.length === 1 ? {
           kind: "download",
           runtimeId: sessionId,
           connectionId,
-          remotePath: file.path,
+          remotePath: files[0].path,
           localPath: selected,
+        } : {
+          kind: "downloadBatch",
+          runtimeId: sessionId,
+          connectionId,
+          remotePaths: files.map((file) => file.path),
+          localDirectory: selected,
         });
         if (!runtimeControllerRef.current.isActive()) return;
         if (!isStartCurrent()) {
@@ -599,6 +619,29 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       }
     },
     [attachTransferJob, errorFallback, updateRuntime],
+  );
+
+  const deleteRemoteEntries = useCallback(
+    async (sessionId: string, paths: string[]): Promise<RemoteEntryDeleteFailure[]> => {
+      const failures: RemoteEntryDeleteFailure[] = [];
+      if (paths.length === 0) return failures;
+      await runRemoteMutation(sessionId, async (connectionId) => {
+        for (const path of new Set(paths)) {
+          try {
+            await api.deleteRemoteEntry(connectionId, path);
+          } catch (error) {
+            failures.push({ path, message: resolveApiError(error, errorFallbackRef.current) });
+          }
+        }
+      });
+      return failures;
+    },
+    [runRemoteMutation],
+  );
+
+  const downloadFile = useCallback(
+    (sessionId: string, file: FileEntry) => downloadFiles(sessionId, [file]),
+    [downloadFiles],
   );
 
   const cancelTransfer = useCallback(
@@ -651,9 +694,11 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     cancelTransfer,
     createRemoteDirectory,
     deleteRemoteEntry,
+    deleteRemoteEntries,
     dismissTransfer,
     disconnect,
     downloadFile,
+    downloadFiles,
     handleConnected,
     handleTerminalDirectory,
     handleTerminalState,

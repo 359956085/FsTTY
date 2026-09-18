@@ -166,9 +166,13 @@ export function SessionsPage({
         onCreateRemoteDirectory={connections.createRemoteDirectory}
         onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
         onDeleteRemoteEntry={connections.deleteRemoteEntry}
+        onDeleteRemoteEntries={connections.deleteRemoteEntries}
         onDirectoryChange={connections.handleTerminalDirectory}
         onDownload={(sessionId, file) =>
           void connections.downloadFile(sessionId, file)
+        }
+        onDownloadFiles={(sessionId, files) =>
+          void connections.downloadFiles(sessionId, files)
         }
         onMoveRemoteEntry={connections.moveRemoteEntry}
         onOpenPath={connections.openPath}

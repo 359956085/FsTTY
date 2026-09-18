@@ -681,6 +681,8 @@
   min-height: 0;
   overflow: auto;
   padding: 0 9px 7px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .file-row {
@@ -840,6 +842,8 @@
   color: var(--text);
   font: inherit;
   box-shadow: 0 0 0 2px rgba(45, 139, 246, 0.18);
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .file-inline-rename-error {
@@ -882,6 +886,8 @@
 }
 
 .transfer-bar > button {
+  grid-column: 4;
+  grid-row: 1;
   display: grid;
   width: 24px;
   height: 24px;
@@ -892,6 +898,26 @@
 
 .file-operation-dialog {
   width: min(440px, calc(100vw - 32px));
+}
+
+.file-selection-count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.transfer-queue-status {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-operation-entries {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
 }
 
 .file-operation-body {

@@ -37,10 +37,15 @@ use tauri::ipc::Channel;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::time;
 use uuid::Uuid;
+
 use zeroize::Zeroizing;
+
+pub(crate) const MAX_CONCURRENT_DOWNLOADS: usize = 5;
 
 #[cfg_attr(all(windows, not(test)), allow(dead_code))]
 mod authentication;
+#[cfg(all(test, windows))]
+mod batch_tests;
 mod device_metrics;
 mod remote_files;
 mod terminal_io;

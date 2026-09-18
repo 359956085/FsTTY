@@ -45,7 +45,7 @@ export function createTransferJobSubscription(
   let latestConflict: TransferJobSummary | null = null;
   let latestBatchIndex = 0;
 
-  const conflictKey = (job: TransferJobSummary) => `${job.batchIndex}:${job.fileName}`;
+  const conflictKey = (job: TransferJobSummary) => job.conflictId ?? `${job.batchIndex}:${job.fileName}`;
   const settleConflict = async () => {
     const job = latestConflict;
     if (!job || conflictPending || terminalHandled || !options.isCurrent()) return;
@@ -86,7 +86,9 @@ export function createTransferJobSubscription(
       return;
     }
     latestBatchIndex = job.batchIndex;
-    const batchKey = `${job.batchIndex}:${job.fileName}`;
+    const batchKey = job.direction === "download" && job.batchTotal > 1
+      ? job.jobId
+      : `${job.batchIndex}:${job.fileName}`;
     if (batchKey !== currentBatchKey) {
       currentBatchKey = batchKey;
       speedTracker = createTransferSpeedTracker();
@@ -106,6 +108,11 @@ export function createTransferJobSubscription(
         fileName: job.fileName,
         batchIndex: job.batchTotal > 1 ? job.batchIndex : undefined,
         batchTotal: job.batchTotal > 1 ? job.batchTotal : undefined,
+        downloaded: job.downloaded,
+        skipped: job.skipped,
+        failed: job.failed,
+        activeCount: job.activeCount,
+        queuedCount: job.queuedCount,
         transferredBytes: job.transferredBytes,
         totalBytes: job.totalBytes,
         ...speed,
