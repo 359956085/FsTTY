@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.5.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.6.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -147,7 +147,7 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 
 Selecting a history entry with Enter or the mouse inserts it into the terminal without executing it. The history window supports search, keyboard selection, and persisted drag resizing.
 
-Under Settings → General → Terminal text colors, choose Dracula, Catppuccin Mocha, Nord, Solarized, or Follow app theme. Changes apply immediately and persist across restarts. The default background and plain text continue to use the app theme. See [terminal color details and licenses](doc/terminal-colors.md).
+Under Settings → General → Terminal text colors, choose Follow app theme or Ayu Mirage, Catppuccin Mocha, Dracula, Everforest Dark, Gruvbox Dark, Kanagawa Wave, Nord, One Half Dark, Rosé Pine, or Solarized. Changes apply immediately and persist across restarts. The default background and plain text continue to use the app theme. See [terminal color details and licenses](doc/terminal-colors.md).
 
 ## Download and Install
 

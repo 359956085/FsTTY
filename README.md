@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.5.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.6.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -161,7 +161,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 
 历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
 
-在「设置 → 常规 → 终端文字配色」可独立选择 Dracula、Catppuccin Mocha、Nord、Solarized 或跟随应用主题。切换即时生效并保存；默认背景和普通文字仍使用应用主题。详见[终端文字配色说明](doc/terminal-colors.md)。
+在「设置 → 常规 → 终端文字配色」可选择跟随应用主题，或使用 Ayu Mirage、Catppuccin Mocha、Dracula、Everforest Dark、Gruvbox Dark、Kanagawa Wave、Nord、One Half Dark、Rosé Pine、Solarized。切换即时生效并保存；默认背景和普通文字仍使用应用主题。详见[终端文字配色说明](doc/terminal-colors.md)。
 
 ## 下载与安装
 

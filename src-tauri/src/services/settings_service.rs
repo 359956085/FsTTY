@@ -989,9 +989,15 @@ mod tests {
         let original = service.get();
 
         for color_scheme in [
-            TerminalColorScheme::Dracula,
+            TerminalColorScheme::AyuMirage,
             TerminalColorScheme::Catppuccin,
+            TerminalColorScheme::Dracula,
+            TerminalColorScheme::Everforest,
+            TerminalColorScheme::Gruvbox,
+            TerminalColorScheme::Kanagawa,
             TerminalColorScheme::Nord,
+            TerminalColorScheme::OneHalf,
+            TerminalColorScheme::RosePine,
             TerminalColorScheme::Solarized,
             TerminalColorScheme::Default,
         ] {
@@ -1005,12 +1011,15 @@ mod tests {
         }
 
         service
-            .set_terminal_color_scheme(TerminalColorScheme::Nord)
+            .set_terminal_color_scheme(TerminalColorScheme::RosePine)
             .unwrap();
         service.set_theme(ThemePreference::Dark).unwrap();
         let restored = SettingsService::load(&directory).get();
         assert_eq!(restored.theme, ThemePreference::Dark);
-        assert_eq!(restored.terminal_color_scheme, TerminalColorScheme::Nord);
+        assert_eq!(
+            restored.terminal_color_scheme,
+            TerminalColorScheme::RosePine
+        );
         let _ = fs::remove_dir_all(directory);
     }
 

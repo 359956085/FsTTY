@@ -120,9 +120,15 @@ export function GeneralSettingsPanel({
             onChange={onTerminalColorSchemeChange}
             options={[
               { value: "default", label: t("settings.terminalColorSchemeDefault") },
-              { value: "dracula", label: "Dracula" },
+              { value: "ayuMirage", label: "Ayu Mirage" },
               { value: "catppuccin", label: "Catppuccin Mocha" },
+              { value: "dracula", label: "Dracula" },
+              { value: "everforest", label: "Everforest Dark" },
+              { value: "gruvbox", label: "Gruvbox Dark" },
+              { value: "kanagawa", label: "Kanagawa Wave" },
               { value: "nord", label: "Nord" },
+              { value: "oneHalf", label: "One Half Dark" },
+              { value: "rosePine", label: "Rosé Pine" },
               { value: "solarized", label: "Solarized" },
             ]}
             value={settings.terminalColorScheme}

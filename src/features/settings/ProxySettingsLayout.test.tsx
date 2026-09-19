@@ -51,9 +51,9 @@ describe("全局代理及应用更新布局", () => {
     const onThemeChange = vi.fn();
     const { unmount } = general({ onTerminalColorSchemeChange, onThemeChange });
     fireEvent.click(screen.getByRole("combobox", { name: t("settings.terminalColorScheme") }));
-    expect(screen.getAllByRole("option")).toHaveLength(5);
-    fireEvent.click(screen.getByRole("option", { name: "Dracula" }));
-    expect(onTerminalColorSchemeChange).toHaveBeenCalledExactlyOnceWith("dracula");
+    expect(screen.getAllByRole("option")).toHaveLength(11);
+    fireEvent.click(screen.getByRole("option", { name: "Rosé Pine" }));
+    expect(onTerminalColorSchemeChange).toHaveBeenCalledExactlyOnceWith("rosePine");
     expect(onThemeChange).not.toHaveBeenCalled();
     unmount();
     general({ savingTerminalColorScheme: true });

@@ -6,6 +6,48 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-19
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### 代理与凭据服务
+
+- 全局代理新增独立启用开关；关闭后保留代理地址但不用于应用外连，重新启用时无需重复填写。
+- Windows 本地 SSH 凭据服务的状态、管理、迁移、更新及 SSH 数据管道固定通过本机命名管道直连，不使用应用代理、系统代理或环境代理；服务连接远程 SSH 目标时仍遵循已启用的全局代理。
+
+#### 终端文字配色
+
+- 新增独立的终端 ANSI 文字配色，可选择跟随应用主题或 10 套预设：Ayu Mirage、Catppuccin Mocha、Dracula、Everforest Dark、Gruvbox Dark、Kanagawa Wave、Nord、One Half Dark、Rosé Pine、Solarized。
+- 配色选择独立保存并即时更新已打开终端，不重新连接 SSH 或清除屏幕；预设只调整 ANSI 16 色，普通文字、背景、光标和选区继续跟随应用主题。
+
+#### 文件管理
+
+- 文件列表新增 Ctrl / Command 追加选择、Shift 连续范围选择，并支持对选中条目批量下载或删除。
+- 批量下载只需选择一次本地目录，所有会话最多同时下载 5 个文件，其余自动排队；覆盖冲突逐项处理，单项失败不阻断其他文件。取消整个批次会停止活动任务且不再启动排队项，轻量模式及界面恢复后继续保留任务状态。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### Proxy and Credential Service
+
+- Added an independent enable switch for the global proxy. Disabling it keeps the saved address without using it for outbound application connections, so it can be re-enabled without entering the address again.
+- Local Windows SSH credential-service status, administration, migration, update, and SSH data-pipe requests now always connect through the local named pipe without using application, system, or environment proxies. Connections from the service to remote SSH targets still honor the enabled global proxy.
+
+#### Terminal Text Colors
+
+- Added independent terminal ANSI text colors with Follow app theme and 10 presets: Ayu Mirage, Catppuccin Mocha, Dracula, Everforest Dark, Gruvbox Dark, Kanagawa Wave, Nord, One Half Dark, Rosé Pine, and Solarized.
+- The selection persists independently and updates open terminals immediately without reconnecting SSH or clearing the screen. Presets change only the 16 ANSI colors; plain text, background, cursor, and selection continue to follow the app theme.
+
+#### File Management
+
+- Added Ctrl / Command additive selection and Shift range selection to the file list, with batch download and delete actions for selected entries.
+- Batch downloads require choosing the local directory once, run up to five files concurrently across sessions, and queue the rest automatically. Overwrite conflicts are handled per file, and individual failures do not block the remaining files. Canceling the batch stops active transfers and prevents queued files from starting, while lightweight mode and interface restoration preserve task state.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.5.0] - 2026-09-18
 
 <!-- release-notes:zh-CN:start -->

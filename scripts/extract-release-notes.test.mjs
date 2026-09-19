@@ -12,30 +12,30 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
-  it("从真实日志提取 v1.5.0 的三项双语说明和保护边界", () => {
+  it("从真实日志提取 v1.6.0 的完整双语说明", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-    expect(changelog).toContain("## [1.5.0] - 2026-09-18");
-    const notes = extractVersionReleaseNotes(changelog, "v1.5.0");
-    expect(notes.match(/^- /gm)).toHaveLength(6);
+    expect(changelog).toContain("## [1.6.0] - 2026-09-19");
+    const notes = extractVersionReleaseNotes(changelog, "v1.6.0");
+    expect(notes.match(/^- /gm)).toHaveLength(12);
     for (const expected of [
-      "Windows 新增独立 SSH 凭据服务",
-      "未提权恶意程序直接读取已托管",
-      "优化 UI、布局与交互体验。",
-      "将应用更新中的代理地址移至「常规 → 基础设置」，改为全局代理",
-      "不代表阻止所有注入攻击。",
-      "Added an independent SSH credential service on Windows",
-      "preventing unelevated malware",
-      "Improved the UI, layout, and interaction experience.",
-      "Moved the application update proxy address to General → Basic Settings",
-      "does not prevent all injection attacks.",
+      "全局代理新增独立启用开关",
+      "凭据服务的状态、管理、迁移、更新及 SSH 数据管道固定通过本机命名管道直连",
+      "可选择跟随应用主题或 10 套预设",
+      "文件列表新增 Ctrl / Command 追加选择、Shift 连续范围选择",
+      "所有会话最多同时下载 5 个文件",
+      "Added an independent enable switch for the global proxy",
+      "always connect through the local named pipe",
+      "Follow app theme and 10 presets",
+      "Added Ctrl / Command additive selection and Shift range selection",
+      "run up to five files concurrently across sessions",
       "<!-- release-notes:zh-CN:start -->",
       "<!-- release-notes:en-US:start -->",
     ]) {
       expect(notes).toContain(expected);
     }
     expect(notes).not.toContain("Unreleased");
-    expect(notes).not.toContain("## [1.4.0]");
-    expect(notes).not.toContain("新增 Windows 当前用户开机自启");
+    expect(notes).not.toContain("## [1.5.0]");
+    expect(notes).not.toContain("Windows 新增独立 SSH 凭据服务，提高其他应用访问凭据所需权限");
   });
 
   it("按标签精确提取双语版本内容", () => {

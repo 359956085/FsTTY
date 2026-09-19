@@ -1,6 +1,17 @@
 export type Language = "zh-CN" | "en-US";
 export type ThemePreference = "system" | "light" | "dark";
-export type TerminalColorScheme = "default" | "dracula" | "catppuccin" | "nord" | "solarized";
+export type TerminalColorScheme =
+  | "default"
+  | "ayuMirage"
+  | "catppuccin"
+  | "dracula"
+  | "everforest"
+  | "gruvbox"
+  | "kanagawa"
+  | "nord"
+  | "oneHalf"
+  | "rosePine"
+  | "solarized";
 export type UpdateSourcePreference = "auto" | "github" | "cnb";
 export type ClipboardContentKind = "empty" | "text" | "nonText";
 

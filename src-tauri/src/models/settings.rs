@@ -77,9 +77,15 @@ pub enum ThemePreference {
 pub enum TerminalColorScheme {
     #[default]
     Default,
-    Dracula,
+    AyuMirage,
     Catppuccin,
+    Dracula,
+    Everforest,
+    Gruvbox,
+    Kanagawa,
     Nord,
+    OneHalf,
+    RosePine,
     Solarized,
 }
 
@@ -250,6 +256,31 @@ pub enum Language {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 终端文字配色使用前端约定名称() {
+        for (color_scheme, wire_name) in [
+            (TerminalColorScheme::Default, "default"),
+            (TerminalColorScheme::AyuMirage, "ayuMirage"),
+            (TerminalColorScheme::Catppuccin, "catppuccin"),
+            (TerminalColorScheme::Dracula, "dracula"),
+            (TerminalColorScheme::Everforest, "everforest"),
+            (TerminalColorScheme::Gruvbox, "gruvbox"),
+            (TerminalColorScheme::Kanagawa, "kanagawa"),
+            (TerminalColorScheme::Nord, "nord"),
+            (TerminalColorScheme::OneHalf, "oneHalf"),
+            (TerminalColorScheme::RosePine, "rosePine"),
+            (TerminalColorScheme::Solarized, "solarized"),
+        ] {
+            let serialized = serde_json::to_value(color_scheme).expect("配色应能序列化");
+            assert_eq!(serialized, serde_json::Value::String(wire_name.into()));
+            assert_eq!(
+                serde_json::from_value::<TerminalColorScheme>(serialized)
+                    .expect("配色应能反序列化"),
+                color_scheme
+            );
+        }
+    }
 
     #[test]
     fn 旧单名单按原模式迁入对应名单() {
