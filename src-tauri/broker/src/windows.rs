@@ -209,6 +209,7 @@ pub(crate) fn service_pid() -> crate::Result<u32> {
     Ok(status.dwProcessId)
 }
 
+/// 通过本机命名管道通信，不读取应用代理、系统代理或 HTTP_PROXY 等环境变量。
 pub async fn connect() -> crate::Result<NamedPipeClient> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let service_pid = loop {

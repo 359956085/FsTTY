@@ -14,6 +14,7 @@
 
 - 客户端只提交会话 UUID；地址、端口、用户名、凭据和可信主机密钥由服务保存。修改用户目录中的会话文件不能改变实际认证目标。
 - 管道为本地 `FsTTYBroker-v1`，拒绝远程客户端。客户端提交秘密前将管道服务进程 PID 与 SCM 比对；服务从模拟令牌读取 SID 和提权状态，不接受客户端自报身份。
+- 请求本地凭据服务始终通过本机命名管道直连，不使用应用代理、系统代理或 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 等环境代理。状态、管理、迁移、更新及 SSH 数据管道均使用此入口。控制消息中的代理快照用于服务连接远程 SSH 目标。
 - 客户端访问掩码明确排除 `FILE_CREATE_PIPE_INSTANCE`；普通用户不能创建同名服务实例。管道使用中完整性标签以允许普通桌面连接。[命名管道安全说明](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)
 - 控制消息最多 2 MiB，私钥最多 1 MiB；最多 64 个客户端，每条 SSH 连接最多 32 个会话通道。通道队列有界，双向流独立等待窗口。
 - 服务完成远端主机校验及认证，再通过本地 SSH 通道代理承载现有终端、SFTP 和命令接口。只允许会话通道；不开放 TCP 转发、本机 Shell、凭据读取、任意签名或本地路径接口。
@@ -40,6 +41,13 @@ Windows 使用机器范围 NSIS，桌面目录与固定服务目录分离。安�
 发布流程继续从 Actions Variable 注入公钥；私钥只用于发布签名。`windows/validation.conf.json` 仅用于生成不带更新签名的本地验证安装包，不能用于正式发布。
 
 ## 验证
+
+普通用户可运行只读代理绕过检查。它使用现有服务的状态接口，为测试子进程设置本机代理陷阱并移除环境代理例外；检查服务响应成功且代理没有收到连接。测试不修改应用或系统的代理设置。
+
+```powershell
+cargo build --manifest-path src-tauri/Cargo.toml -p fstty-broker --example windows_acceptance --locked
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-local-credential-service.ps1
+```
 
 ```powershell
 npm run verify:all

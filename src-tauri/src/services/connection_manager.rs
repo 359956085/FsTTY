@@ -310,8 +310,8 @@ impl ConnectionManager {
         &self,
         session: &StoredSession,
     ) -> Result<client::Handle<SshClient>, TransportError> {
-        let proxy = self.proxy_snapshot().map_err(TransportError::Network)?;
-        let pipe = super::broker_service::connect_stream(&session.id, &proxy)
+        let remote_proxy = self.proxy_snapshot().map_err(TransportError::Network)?;
+        let pipe = super::broker_service::connect_local_stream(&session.id, &remote_proxy)
             .await
             .map_err(TransportError::Broker)?;
         let (mut handler, _) = self.ssh_client(session);

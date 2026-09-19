@@ -315,16 +315,17 @@ pub async fn migrate_batch(
     }
     Ok(())
 }
-pub async fn connect_stream(
+/// 本地管道始终直连；remote_proxy 只作为控制消息交给服务用于远程 SSH。
+pub async fn connect_local_stream(
     id: &str,
-    proxy: &fstty_network::ProxySnapshot,
+    remote_proxy: &fstty_network::ProxySnapshot,
 ) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, AppError> {
     let mut pipe = windows::connect().await.map_err(error)?;
     fstty_broker::protocol::write(
         &mut pipe,
         &Request::Connect {
             id: id.into(),
-            proxy: proxy.clone(),
+            proxy: remote_proxy.clone(),
         },
     )
     .await
