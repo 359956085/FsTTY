@@ -23,7 +23,8 @@ describe("发布更新说明提取", () => {
       "Windows Sandbox 或虚拟机",
       "publish=true",
       "unsigned NSIS validation build",
-      "RFC 3161 timestamp",
+      "without Authenticode",
+      "Tauri updater private key",
     ]) {
       expect(notes).toContain(expected);
     }

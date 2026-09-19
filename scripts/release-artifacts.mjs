@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { powershellAuthenticodeArgs, readAuthenticodeSettings } from "./authenticode.mjs";
 import { extractVersionReleaseNotes } from "./extract-release-notes.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -59,8 +58,12 @@ export function createUpdateManifest({ repo, tag, version, notes, createdAt, ins
 
 export async function validateArtifacts(directory, { repo, tag, commit }) {
   const context = JSON.parse(await readFile(join(directory, "release-context.json"), "utf8"));
-  if (context.tag !== tag || context.commit !== commit || context.repo !== repo) {
-    throw new Error("产物的标签、提交或仓库与本次发布不一致");
+  if (context.tag !== tag
+      || context.commit !== commit
+      || context.repo !== repo
+      || context.authenticode !== false
+      || context.updaterSignature !== true) {
+    throw new Error("产物的标签、提交、仓库或签名策略与本次发布不一致");
   }
   validateReleaseRef(`refs/tags/${tag}`, context.version);
   if (!/^[a-f\d]{40}$/.test(commit) || !Number.isFinite(Date.parse(context.createdAt))) {
@@ -161,17 +164,16 @@ function verifyUnsignedExecutables(version, installer) {
   for (const file of files) {
     const information = readPeInformation(file);
     if (![version, `${version}.0`].includes(information.ProductVersion)) {
-      throw new Error(`无签名验证程序版本不一致：${file}`);
+      throw new Error(`Windows 构建程序版本不一致：${file}`);
     }
     if (information.SignatureStatus !== "NotSigned") {
-      throw new Error(`无签名验证程序包含 Authenticode 签名：${file}`);
+      throw new Error(`Windows 构建程序意外包含 Authenticode 签名：${file}`);
     }
   }
 }
 
 async function collectValidation() {
-  if (process.env.FSTTY_RELEASE_MODE !== "validation"
-      || process.env.FSTTY_REQUIRE_AUTHENTICODE === "1") {
+  if (process.env.FSTTY_RELEASE_MODE !== "validation") {
     throw new Error("无签名验证产物只能由 validation 模式生成");
   }
   const version = JSON.parse(await readFile(join(root, "package.json"), "utf8")).version;
@@ -227,9 +229,8 @@ Commit: ${commit}
 }
 
 async function collect() {
-  if (process.env.FSTTY_RELEASE_MODE !== "release"
-      || process.env.FSTTY_REQUIRE_AUTHENTICODE !== "1") {
-    throw new Error("正式发布产物只能由 release 签名模式生成");
+  if (process.env.FSTTY_RELEASE_MODE !== "release") {
+    throw new Error("正式发布产物只能由 release 模式生成");
   }
   const version = JSON.parse(await readFile(join(root, "package.json"), "utf8")).version;
   const tag = process.env.RELEASE_TAG;
@@ -243,22 +244,23 @@ async function collect() {
   const source = resolve(root, process.env.CARGO_TARGET_DIR || "src-tauri/target", "release/bundle/nsis");
   const entries = await readdir(source);
   if (!entries.includes(installer) || !entries.includes(`${installer}.sig`)) throw new Error("缺少安装包或更新签名");
-  // 读取 PE 版本资源，不执行安装包。
-  const fileVersion = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-    "(Get-Item -LiteralPath $env:FSTTY_VERIFY_FILE).VersionInfo.ProductVersion"],
-  { encoding: "utf8", env: { ...process.env, FSTTY_VERIFY_FILE: join(source, installer) } }).trim();
-  if (fileVersion !== version && fileVersion !== `${version}.0`) throw new Error("安装包内嵌版本与标签不同");
-  const signing = readAuthenticodeSettings(process.env, true);
-  execFileSync(
-    "powershell.exe",
-    powershellAuthenticodeArgs(root, join(source, installer), signing, true),
-    { cwd: root, stdio: "inherit" },
-  );
+  verifyUnsignedExecutables(version, join(source, installer));
   const directory = join(root, "artifacts/windows-release");
+  await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
   await copyFile(join(source, installer), join(directory, installer));
   await copyFile(join(source, `${installer}.sig`), join(directory, `${installer}.sig`));
-  const context = { repo, tag, commit, version, notes, createdAt: new Date().toISOString(), files: {} };
+  const context = {
+    repo,
+    tag,
+    commit,
+    version,
+    notes,
+    authenticode: false,
+    updaterSignature: true,
+    createdAt: new Date().toISOString(),
+    files: {},
+  };
   const signature = await readFile(join(directory, `${installer}.sig`), "utf8");
   const manifest = createUpdateManifest({ ...context, installer, signature });
   await writeFile(join(directory, "latest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

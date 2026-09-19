@@ -72,8 +72,6 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/desktop
       FSTTY_BROKER_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/broker
       FSTTY_RELEASE_MODE: ${{ needs.prepare.outputs.mode }}
-      FSTTY_REQUIRE_AUTHENTICODE: ${{ needs.prepare.outputs.mode == 'release' && '1' || '0' }}
-      FSTTY_AUTHENTICODE_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,29 +84,6 @@ jobs:
             src-tauri -> target/ci/broker
           cold-cache: ${{ inputs.cold-cache || false }}
       - run: npm ci
-      - name: 导入 Windows Authenticode 证书
-        if: needs.prepare.outputs.mode == 'release'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE)) { throw "缺少 Actions Secret：WINDOWS_CERTIFICATE" }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) { throw "缺少 Actions Secret：WINDOWS_CERTIFICATE_PASSWORD" }
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'fstty-authenticode.pfx'
-          try {
-            $encoded = $env:WINDOWS_CERTIFICATE -replace '\s', ''
-            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($encoded))
-            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-            $certificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
-            $signers = @($certificates | Where-Object {
-              $_.HasPrivateKey -and ($_.EnhancedKeyUsageList.ObjectId.Value -contains '1.3.6.1.5.5.7.3.3')
-            })
-            if ($signers.Count -ne 1) { throw "PFX 必须包含且只包含一张带私钥的代码签名证书" }
-            "FSTTY_AUTHENTICODE_THUMBPRINT=$($signers[0].Thumbprint.ToUpperInvariant())" >> $env:GITHUB_ENV
-          } finally {
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
-          }
       - name: 编译前核对更新公钥
         env:
           FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
@@ -117,17 +92,11 @@ jobs:
         run: node scripts/ci-build.mjs frontend
       - name: Broker 静态运行库构建
         run: node scripts/ci-build.mjs broker
-      - name: Broker Authenticode 签名
-        if: needs.prepare.outputs.mode == 'release'
-        run: node scripts/ci-build.mjs authenticode-broker
       - name: 桌面正式编译
         run: node scripts/ci-build.mjs desktop
-      - name: NSIS 安装包生成
+      - name: NSIS 未签名安装包生成
         run: node scripts/ci-build.mjs bundle
-      - name: 校验全部 Authenticode 签名
-        if: needs.prepare.outputs.mode == 'release'
-        run: node scripts/ci-build.mjs verify-authenticode
-      - name: 签署更新安装包
+      - name: 签署 Tauri 更新安装包
         if: needs.prepare.outputs.mode == 'release'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

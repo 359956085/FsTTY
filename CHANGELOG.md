@@ -13,9 +13,9 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 #### Windows 发布验证
 
-- 从默认分支手动运行 Windows 发布工作流且 `publish=false` 时，执行完整的前端、Rust、Broker、桌面和 NSIS 无签名验证构建，不再要求 Authenticode 证书或 Tauri 更新私钥。
+- 从默认分支手动运行 Windows 发布工作流且 `publish=false` 时，执行完整的前端、Rust、Broker、桌面和 NSIS 无签名验证构建，无需 Windows 代码签名证书或 Tauri 更新私钥。
 - 无签名安装包会以 `UNSIGNED` 文件名和独立验证清单上传，仅用于 Windows Sandbox 或虚拟机验收，不生成更新签名、`latest.json`、GitHub Release 或 CNB Release。
-- 标签推送或 `publish=true` 继续强制校验 Authenticode 证书、RFC 3161 时间戳、Tauri 更新私钥以及全部签名产物；缺少任一项仍会在上传前停止。
+- 标签推送或 `publish=true` 继续发布未带 Authenticode 的 Windows 安装包，但强制要求 Tauri 更新私钥、更新签名和 `latest.json`；正式发布不再读取 PFX 或时间戳配置。
 
 <!-- release-notes:zh-CN:end -->
 
@@ -24,9 +24,9 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 #### Windows Release Validation
 
-- Manually running the Windows release workflow from the default branch with `publish=false` now performs the complete frontend, Rust, broker, desktop, and unsigned NSIS validation build without requiring an Authenticode certificate or Tauri updater private key.
+- Manually running the Windows release workflow from the default branch with `publish=false` now performs the complete frontend, Rust, broker, desktop, and unsigned NSIS validation build without requiring a Windows code-signing certificate or Tauri updater private key.
 - The unsigned installer is uploaded with an `UNSIGNED` filename and a separate validation manifest for Windows Sandbox or virtual-machine testing only. It does not generate an updater signature, `latest.json`, GitHub Release, or CNB Release.
-- Tag pushes and `publish=true` continue to require an Authenticode certificate, RFC 3161 timestamp, Tauri updater private key, and every signed artifact. Any missing requirement still stops the workflow before upload.
+- Tag pushes and `publish=true` continue to publish Windows installers without Authenticode, while requiring the Tauri updater private key, updater signature, and `latest.json`. Production releases no longer read PFX or timestamp settings.
 
 <!-- release-notes:en-US:end -->
 

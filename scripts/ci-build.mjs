@@ -1,11 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-  powershellAuthenticodeArgs,
-  readAuthenticodeSettings,
-  tauriAuthenticodeConfig,
-} from "./authenticode.mjs";
 import { resolveUpdaterPublicKey } from "./ci-build-config.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -33,14 +28,10 @@ try {
       resolveUpdaterPublicKey(
         configuredKey,
         process.env.FSTTY_UPDATER_PUBLIC_KEY,
-        process.env.FSTTY_REQUIRE_AUTHENTICODE === "1",
+        process.env.FSTTY_RELEASE_MODE === "release",
       );
       mkdirSync(resolve(root, "src-tauri/target"), { recursive: true });
-      const signing = readAuthenticodeSettings();
       const ciConfig = { build: { beforeBuildCommand: "" }, bundle: { createUpdaterArtifacts: false } };
-      if (signing) {
-        ciConfig.bundle.windows = { signCommand: tauriAuthenticodeConfig(root, signing) };
-      }
       writeFileSync(configPath, JSON.stringify(ciConfig));
       break;
     }
@@ -51,12 +42,6 @@ try {
     case "broker":
       run(process.execPath, [resolve(root, "scripts/build-broker.mjs")]);
       break;
-    case "authenticode-broker": {
-      const signing = readAuthenticodeSettings(process.env, true);
-      const broker = resolve(root, "src-tauri/target/broker-package/fstty-broker.exe");
-      run("powershell.exe", powershellAuthenticodeArgs(root, broker, signing));
-      break;
-    }
     case "desktop":
       tauri("build", "--ci", "--no-bundle", "--config", configPath, "--", "--locked");
       break;
@@ -69,21 +54,8 @@ try {
       tauri("signer", "sign", resolve(target, `release/bundle/nsis/FsTTY_${version}_x64-setup.exe`));
       break;
     }
-    case "verify-authenticode": {
-      const signing = readAuthenticodeSettings(process.env, true);
-      const version = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version;
-      const files = [
-        resolve(root, "src-tauri/target/broker-package/fstty-broker.exe"),
-        resolve(target, "release/fstty.exe"),
-        resolve(target, `release/bundle/nsis/FsTTY_${version}_x64-setup.exe`),
-      ];
-      for (const file of files) {
-        run("powershell.exe", powershellAuthenticodeArgs(root, file, signing, true));
-      }
-      break;
-    }
     default:
-      throw new Error("用法：node scripts/ci-build.mjs configure|frontend|broker|authenticode-broker|desktop|bundle|verify-authenticode|sign");
+      throw new Error("用法：node scripts/ci-build.mjs configure|frontend|broker|desktop|bundle|sign");
   }
 } finally {
   const line = `构建步骤 ${mode}：${((Date.now() - started) / 1000).toFixed(1)} 秒`;

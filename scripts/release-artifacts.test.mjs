@@ -26,7 +26,17 @@ async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "fstty-release-test-"));
   directories.push(directory);
   const installer = "FsTTY_1.5.0_x64-setup.exe";
-  const context = { repo, tag, commit, version: "1.5.0", notes: "中文说明\nEnglish notes", createdAt: "2026-09-18T00:00:00.000Z", files: {} };
+  const context = {
+    repo,
+    tag,
+    commit,
+    version: "1.5.0",
+    notes: "中文说明\nEnglish notes",
+    authenticode: false,
+    updaterSignature: true,
+    createdAt: "2026-09-18T00:00:00.000Z",
+    files: {},
+  };
   const manifest = createUpdateManifest({ ...context, installer, signature: "test-signature" });
   const files = { [installer]: Buffer.from("生成的测试安装包"), [`${installer}.sig`]: Buffer.from("test-signature\n"), "latest.json": Buffer.from(JSON.stringify(manifest)) };
   async function save() {
@@ -163,6 +173,11 @@ describe("发布产物与恢复", () => {
   it("检查签名、完整清单、文件哈希及当前提交", async () => {
     const data = await fixture();
     expect((await validateArtifacts(data.directory, { repo, tag, commit })).assets).toHaveLength(3);
+    data.context.authenticode = true;
+    await writeFile(join(data.directory, "release-context.json"), JSON.stringify(data.context));
+    await expect(validateArtifacts(data.directory, { repo, tag, commit })).rejects.toThrow("不一致");
+    data.context.authenticode = false;
+    await data.save();
     await expect(validateArtifacts(data.directory, { repo, tag, commit: "b".repeat(40) })).rejects.toThrow("不一致");
     await writeFile(join(data.directory, "FsTTY_1.5.0_x64-setup.exe"), "被替换");
     await expect(validateArtifacts(data.directory, { repo, tag, commit })).rejects.toThrow("校验失败");
@@ -232,27 +247,27 @@ describe("发布产物与恢复", () => {
     expect(api.calls.some(call => call.method === "PATCH")).toBe(false);
   });
 
-  it("验证与构建并行，发布同时依赖两者；预热不访问发布密钥", async () => {
+  it("验证与构建并行，正式发布只要求更新签名且预热不访问发布密钥", async () => {
     const workflow = await readFile(new URL("../.github/workflows/release-windows.yml", import.meta.url), "utf8");
     expect(workflow).toContain("needs: [prepare, verify, build]");
     expect(workflow.match(/needs: prepare/g)).toHaveLength(2);
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).not.toContain("tauri-apps/tauri-action");
-    expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE");
-    expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE_PASSWORD");
-    expect(workflow).toContain("vars.WINDOWS_TIMESTAMP_URL");
+    expect(workflow).not.toContain("WINDOWS_CERTIFICATE");
+    expect(workflow).not.toContain("WINDOWS_TIMESTAMP_URL");
+    expect(workflow).not.toContain("authenticode-broker");
+    expect(workflow).not.toContain("verify-authenticode");
+    expect(workflow).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY");
+    expect(workflow).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
     expect(workflow).toContain("mode: ${{ steps.prepare.outputs.mode }}");
-    expect(workflow).toContain("FSTTY_REQUIRE_AUTHENTICODE: ${{ needs.prepare.outputs.mode == 'release' && '1' || '0' }}");
+    expect(workflow).toContain("FSTTY_RELEASE_MODE: ${{ needs.prepare.outputs.mode }}");
     expect(workflow).toContain("if: needs.prepare.outputs.mode == 'release'");
     expect(workflow).toContain("if: needs.prepare.outputs.mode == 'validation'");
     expect(workflow).toContain("release-artifacts.mjs collect-validation");
     expect(workflow).toContain("windows-validation-${{ github.run_id }}");
     expect(workflow).toMatch(/needs: \[prepare, verify, build\]\r?\n\s+if: needs\.prepare\.outputs\.mode == 'release'/);
     for (const name of [
-      "导入 Windows Authenticode 证书",
-      "Broker Authenticode 签名",
-      "校验全部 Authenticode 签名",
-      "签署更新安装包",
+      "签署 Tauri 更新安装包",
       "整理与校验正式发布产物",
       "上传本次运行的正式发布产物",
     ]) {
@@ -269,14 +284,10 @@ describe("发布产物与恢复", () => {
       expect(workflow.slice(start, end < 0 ? undefined : end))
         .toContain("if: needs.prepare.outputs.mode == 'validation'");
     }
-    const brokerSignature = workflow.indexOf("ci-build.mjs authenticode-broker");
     const bundle = workflow.indexOf("ci-build.mjs bundle");
-    const authenticodeVerification = workflow.indexOf("ci-build.mjs verify-authenticode");
     const updaterSignature = workflow.indexOf("ci-build.mjs sign");
-    expect(brokerSignature).toBeGreaterThan(0);
-    expect(brokerSignature).toBeLessThan(bundle);
-    expect(bundle).toBeLessThan(authenticodeVerification);
-    expect(authenticodeVerification).toBeLessThan(updaterSignature);
+    expect(bundle).toBeGreaterThan(0);
+    expect(bundle).toBeLessThan(updaterSignature);
     const quality = await readFile(new URL("../.github/workflows/quality.yml", import.meta.url), "utf8");
     const warm = quality.slice(quality.indexOf("\n  warm:"));
     expect(warm).not.toContain("secrets.");
