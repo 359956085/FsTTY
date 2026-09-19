@@ -180,10 +180,62 @@ pub fn recover() -> crate::Result<()> {
 }
 
 pub fn deploy(directory: &Path, caller: u32, update: bool) -> crate::Result<()> {
+    let operation_id = super::operation_id(None);
+    deploy_with_operation(directory, caller, update, &operation_id)
+}
+
+pub fn deploy_with_operation(
+    directory: &Path,
+    caller_pid: u32,
+    update: bool,
+    requested_operation_id: &str,
+) -> crate::Result<()> {
+    let operation_id = super::operation_id(Some(requested_operation_id));
+    let started = std::time::Instant::now();
+    let mut caller_mode = None;
+    let mut session_id = None;
+    let mut rollback = "not_required";
+    let result = match super::caller_context(caller_pid) {
+        Ok(caller) => {
+            caller_mode = Some(caller.mode);
+            session_id = Some(caller.session_id);
+            deploy_inner(directory, caller, update, &mut rollback)
+        }
+        Err(error) => Err(error),
+    };
+    let (phase, result_name, code, detail) = match &result {
+        Ok(()) => ("complete", "success", "ok", None),
+        Err(error) => {
+            let failure = super::classify_failure("--deploy-desktop", error);
+            (failure.phase, "failure", failure.code, Some(error.as_str()))
+        }
+    };
+    super::record(super::InstallerEvent {
+        operation_id: &operation_id,
+        install_mode: if update { "update" } else { "install" },
+        phase,
+        caller_mode,
+        session_id,
+        target: Some(directory),
+        result: result_name,
+        code,
+        exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+        rollback: Some(rollback),
+        detail,
+        elapsed: started.elapsed(),
+    });
+    result
+}
+
+fn deploy_inner(
+    directory: &Path,
+    caller: super::CallerContext,
+    update: bool,
+    rollback: &mut &'static str,
+) -> crate::Result<()> {
     let (state, _lock) = authority()?;
     recover_locked(&state)?;
     let old = super::read()?;
-    let caller_token = super::caller_token(caller)?;
     if update
         && old
             .as_ref()
@@ -191,7 +243,7 @@ pub fn deploy(directory: &Path, caller: u32, update: bool) -> crate::Result<()> 
     {
         return Err("在线更新必须使用已登记的有效安装目录".into());
     }
-    let mut previous = super::candidates(caller)?;
+    let mut previous = super::candidates_for_context(&caller)?;
     if let Some(record) = &old {
         previous.extend(record.previous_directories.clone());
     }
@@ -290,18 +342,26 @@ pub fn deploy(directory: &Path, caller: u32, update: bool) -> crate::Result<()> 
     drop(desktop);
     if let Err(error) = result {
         if state.join("transaction.json").exists() {
-            recover_locked(&state).map_err(|restore| {
-                format!("{error}；自动恢复失败：{restore}。恢复材料已保留，请重新运行安装包。")
-            })?;
+            if let Err(restore) = recover_locked(&state) {
+                *rollback = "failed";
+                return Err(format!(
+                    "{error}；自动恢复失败：{restore}。恢复材料已保留，请重新运行安装包。"
+                ));
+            }
+            *rollback = "succeeded";
         } else if was_running {
-            windows::resume_upgrade()?;
+            if let Err(restore) = windows::resume_upgrade() {
+                *rollback = "failed";
+                return Err(format!("{error}；恢复原服务失败：{restore}"));
+            }
+            *rollback = "succeeded";
         }
         return Err(error);
     }
     // 清理失败不回滚已经通过验证并提交的安装。
     cleanup(&state)?;
     if update {
-        super::launch_with_token(&super::read()?.ok_or("缺少安装记录")?, &caller_token)?;
+        super::launch_with_token(&super::read()?.ok_or("缺少安装记录")?, &caller.token)?;
     }
     Ok(())
 }

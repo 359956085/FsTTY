@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { powershellAuthenticodeArgs, readAuthenticodeSettings } from "./authenticode.mjs";
 import { extractVersionReleaseNotes } from "./extract-release-notes.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -86,6 +87,12 @@ async function collect() {
     "(Get-Item -LiteralPath $env:FSTTY_VERIFY_FILE).VersionInfo.ProductVersion"],
   { encoding: "utf8", env: { ...process.env, FSTTY_VERIFY_FILE: join(source, installer) } }).trim();
   if (fileVersion !== version && fileVersion !== `${version}.0`) throw new Error("安装包内嵌版本与标签不同");
+  const signing = readAuthenticodeSettings(process.env, true);
+  execFileSync(
+    "powershell.exe",
+    powershellAuthenticodeArgs(root, join(source, installer), signing, true),
+    { cwd: root, stdio: "inherit" },
+  );
   const directory = join(root, "artifacts/windows-release");
   await mkdir(directory, { recursive: true });
   await copyFile(join(source, installer), join(directory, installer));

@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 let fixtureRoot;
+const updaterPublicKey = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5MzlGRTlCN0M4NUI2NjIKUldSaXRvVjhtLzQ1NmZGZFdxalJZeWRqUXJxS2pETm8zellkYmlxbnU0Sy9GbEpZbkhVZm1LVkoK";
 
 function writeFixture(relativePath, content) {
   const filePath = join(fixtureRoot, relativePath);
@@ -68,10 +69,29 @@ beforeEach(() => {
     ["fstty-broker", "1.5.0"],
     ["fstty-network", "1.5.0"],
   ].map(([name, version]) => `[[package]]\nname = "${name}"\nversion = "${version}"\n`).join("\n"));
-  writeFixture("src-tauri/tauri.conf.json", JSON.stringify({ version: "1.5.0" }));
+  writeFixture("src-tauri/tauri.conf.json", JSON.stringify({
+    version: "1.5.0",
+    plugins: { updater: { pubkey: updaterPublicKey } },
+  }));
   for (const readme of ["README.md", "README.en-US.md"]) {
     writeFixture(readme, "![Version](https://img.shields.io/badge/version-1.5.0-2563EB)\n");
   }
+  writeFixture("CHANGELOG.md", `# Changelog
+
+## [Unreleased]
+
+## [1.5.0] - 2026-09-19
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+- 修复
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+- Fixes
+<!-- release-notes:en-US:end -->
+`);
 });
 
 afterEach(() => {
@@ -102,6 +122,7 @@ describe("版本一致性检查", () => {
     ["Tauri 配置", "tauri", () => changeVersion("src-tauri/tauri.conf.json")],
     ["中文徽章", "readme", () => changeVersion("README.md")],
     ["英文徽章", "readmeEnglish", () => changeVersion("README.en-US.md")],
+    ["更新日志", "changelog", () => changeVersion("CHANGELOG.md")],
   ])("%s 版本错配时失败并指出来源", (_label, key, change) => {
     change();
     const result = runCheck();
@@ -127,5 +148,29 @@ describe("版本一致性检查", () => {
     const result = runCheck();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("未找到 src-tauri/Cargo.lock 中的版本号");
+  });
+
+  it.each([
+    ["空值", ""],
+    ["非 Base64", "不是公钥"],
+    ["错误内容", Buffer.from("普通文本").toString("base64")],
+  ])("更新公钥为%s时失败", (_label, pubkey) => {
+    changeJson("src-tauri/tauri.conf.json", (data) => {
+      data.plugins.updater.pubkey = pubkey;
+    });
+    const result = runCheck();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Tauri 更新公钥");
+  });
+
+  it("最新版本缺少双语更新说明时失败", () => {
+    const content = readFileSync(join(fixtureRoot, "CHANGELOG.md"), "utf8");
+    writeFixture(
+      "CHANGELOG.md",
+      content.replace("<!-- release-notes:en-US:start -->", "<!-- missing -->"),
+    );
+    const result = runCheck();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("缺少 en-US 更新说明");
   });
 });

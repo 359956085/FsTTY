@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.6.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.6.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -168,9 +168,10 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 优先前往 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases)，也可使用 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
 - 当前开发分支生成 `*-setup.exe`（NSIS），桌面支持自选目录；凭据服务、管理工具及卸载入口固定在 Program Files。详见[安装与覆盖升级](doc/windows-installation.md)。
+- `v1.6.1` 支持从已提权终端、内置 Administrator 和关闭 UAC 的交互会话安装或更新；有可验证的关联普通令牌时恢复普通权限，否则明确进入管理员兼容模式。安装日志位于 `C:\ProgramData\FsTTY\logs`，只读诊断脚本见安装文档。
 - 旧版本发布页中的 MSI 不包含新的服务安装流程。
 
-NSIS 支持简体中文和英文，并跟随 Windows 显示语言。发布包暂未配置 Windows Authenticode 签名；若 SmartScreen 显示提示，请确认安装包来自本仓库 Releases 页面。
+NSIS 支持简体中文和英文，并跟随 Windows 显示语言。`v1.6.0` 在 Authenticode 发布门禁启用前生成，Microsoft Defender 可能将该文件哈希误报为 `Trojan:Win32/Wacatac.B!ml`；遇到病毒检测时不要选择“允许在设备上”，应等待微软复核或后续已签名版本。后续正式发布必须为 Broker、桌面程序和安装包添加受信任的 Windows Authenticode 签名及时间戳，缺少任一签名都会中止发布。
 
 ## 当前限制
 

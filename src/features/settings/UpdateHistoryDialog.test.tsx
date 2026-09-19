@@ -24,7 +24,8 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.6.0");
+    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.6.1");
+    expect(screen.getByText("v1.6.0")).toBeTruthy();
     expect(screen.getByText("v1.5.0")).toBeTruthy();
     expect(screen.getByText("v1.4.0")).toBeTruthy();
     expect(
@@ -70,6 +71,58 @@ describe("更新日志弹窗", () => {
     {
       language: "zh-CN",
       notes: [
+        "支持从已提权终端启动安装：存在关联普通令牌时，安装完成后以原用户普通权限启动桌面；内置 Administrator 或关闭 UAC 且没有普通令牌时，自动进入管理员兼容模式。",
+        "交互安装会在兼容模式继续前说明桌面将保持管理员权限，静默安装会自动继续并写入日志。会话 0、SYSTEM、服务账号、跨会话调用和异常关联令牌仍会被拒绝。",
+        "在线更新确认不再显示完整 SID，并会明确说明更新后的桌面权限。",
+        "分别提示下载超时、网络、代理、签名、UAC 取消、调用进程退出、身份不一致、部署失败和回滚失败；未知底层错误写入日志，界面显示可操作的通用说明。",
+        "应用更新日志新增随机操作 ID、来源、目标版本、阶段、耗时、下载字节数、令牌模式和结果分类，并脱敏代理凭据与完整 SID。",
+        "独立安装器新增受 ACL 保护的 ProgramData 日志，普通用户只读并保留 15 天；仓库附带只读令牌与 UAC 诊断脚本。",
+        "更新包下载超时调整为 10 分钟，并完善更新公钥一致性验证。",
+        "Windows 正式发布新增 Broker、桌面程序和安装包的 Authenticode 签名、时间戳与信任链门禁；任一校验失败都会在上传发布产物前停止。",
+      ],
+    },
+    {
+      language: "en-US",
+      notes: [
+        "Installers can now start from an elevated terminal. When a linked standard token exists, the desktop starts with the original user's standard rights; built-in Administrator and UAC-disabled sessions without a standard token automatically use administrator compatibility mode.",
+        "Interactive installs explain that the desktop will retain administrator rights before compatibility mode continues. Silent installs continue automatically and record the mode. Session 0, SYSTEM, service accounts, cross-session callers, and invalid linked tokens remain blocked.",
+        "Online update confirmation no longer exposes a full SID and now states the desktop permission level after updating.",
+        "Added distinct messages for download timeout, network, proxy, signature, UAC cancellation, caller exit, identity mismatch, deployment failure, and rollback failure. Unknown low-level details go to logs while the interface shows actionable general guidance.",
+        "Update logs now include a random operation ID, source, target version, phase, elapsed time, downloaded bytes, token mode, and result category, with proxy credentials and full SIDs redacted.",
+        "Standalone installers now write ACL-protected ProgramData logs that are read-only for standard users and retained for 15 days. The repository also includes a read-only token and UAC diagnostic script.",
+        "Increased the update-package download timeout to 10 minutes and expanded updater public-key consistency checks.",
+        "Production Windows releases now require trusted, timestamped Authenticode signatures on the broker, desktop executable, and installer. Any signature, timestamp, or trust-chain failure stops the release before upload.",
+      ],
+    },
+  ])("$language 展示 v1.6.1 完整说明并保留历史", ({ language, notes }) => {
+    locale.value = language;
+    render(<UpdateHistoryDialog onClose={vi.fn()} open />);
+
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .slice(0, 3)
+        .map((heading) => heading.textContent),
+    ).toEqual(["v1.6.1", "v1.6.0", "v1.5.0"]);
+    const latest = screen
+      .getByRole("heading", { level: 3, name: "v1.6.1" })
+      .closest("article");
+    if (!latest) {
+      throw new Error("缺少 v1.6.1 更新记录");
+    }
+    const content = within(latest);
+    expect(
+      content.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual(notes);
+    expect(content.getByText("2026-09-19")).toBeTruthy();
+    expect(screen.queryByText("Unreleased")).toBeNull();
+    expect(screen.queryByText("release-notes:zh-CN:start")).toBeNull();
+  });
+
+  it.each([
+    {
+      language: "zh-CN",
+      notes: [
         "全局代理新增独立启用开关；关闭后保留代理地址但不用于应用外连，重新启用时无需重复填写。",
         "Windows 本地 SSH 凭据服务的状态、管理、迁移、更新及 SSH 数据管道固定通过本机命名管道直连，不使用应用代理、系统代理或环境代理；服务连接远程 SSH 目标时仍遵循已启用的全局代理。",
         "新增独立的终端 ANSI 文字配色，可选择跟随应用主题或 10 套预设：Ayu Mirage、Catppuccin Mocha、Dracula、Everforest Dark、Gruvbox Dark、Kanagawa Wave、Nord、One Half Dark、Rosé Pine、Solarized。",
@@ -93,8 +146,12 @@ describe("更新日志弹窗", () => {
     locale.value = language;
     render(<UpdateHistoryDialog onClose={vi.fn()} open />);
 
-    expect(screen.getAllByRole("heading", { level: 3 }).slice(0, 3).map((heading) => heading.textContent))
-      .toEqual(["v1.6.0", "v1.5.0", "v1.4.0"]);
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .slice(0, 3)
+        .map((heading) => heading.textContent),
+    ).toEqual(["v1.6.1", "v1.6.0", "v1.5.0"]);
     const latest = screen.getByRole("heading", { level: 3, name: "v1.6.0" }).closest("article");
     if (!latest) {
       throw new Error("缺少 v1.6.0 更新记录");
@@ -129,8 +186,12 @@ describe("更新日志弹窗", () => {
     locale.value = language;
     render(<UpdateHistoryDialog onClose={vi.fn()} open />);
 
-    expect(screen.getAllByRole("heading", { level: 3 }).slice(0, 3).map((heading) => heading.textContent))
-      .toEqual(["v1.6.0", "v1.5.0", "v1.4.0"]);
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .slice(0, 3)
+        .map((heading) => heading.textContent),
+    ).toEqual(["v1.6.1", "v1.6.0", "v1.5.0"]);
     const latest = screen.getByRole("heading", { level: 3, name: "v1.5.0" }).closest("article");
     if (!latest) {
       throw new Error("缺少 v1.5.0 更新记录");

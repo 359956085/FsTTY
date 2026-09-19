@@ -4,10 +4,10 @@ use crate::models::{
 use semver::Version;
 use std::future::Future;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use time::format_description::well_known::Rfc3339;
@@ -15,10 +15,220 @@ use tokio::sync::Mutex;
 use url::Url;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const CNB_UPDATE_ENDPOINT: &str =
     "https://cnb.cool/359956085/FsTTY/-/releases/download/updater/latest.json";
 const GITHUB_UPDATE_ENDPOINT: &str =
     "https://github.com/359956085/FsTTY/releases/latest/download/latest.json";
+
+struct UpdateAudit {
+    operation_id: String,
+    started: Instant,
+    token_mode: &'static str,
+    downloaded_bytes: AtomicU64,
+    total_bytes: AtomicU64,
+}
+
+impl UpdateAudit {
+    fn new() -> Self {
+        Self {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            started: Instant::now(),
+            token_mode: current_token_mode(),
+            downloaded_bytes: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
+        }
+    }
+
+    fn add_chunk(&self, bytes: u64, total: Option<u64>) {
+        self.downloaded_bytes.fetch_add(bytes, Ordering::Relaxed);
+        if let Some(total) = total {
+            self.total_bytes.store(total, Ordering::Relaxed);
+        }
+    }
+}
+
+fn log_update_event(
+    audit: &UpdateAudit,
+    phase: &str,
+    source: &str,
+    target_version: &str,
+    result: &str,
+    code: &str,
+    detail: Option<&str>,
+) {
+    let detail = detail.map(sanitize_update_detail).unwrap_or_default();
+    log::info!(
+        "应用更新：operation_id={} source={} target_version={} phase={} elapsed_ms={} downloaded_bytes={} total_bytes={} token_mode={} result={} code={} detail={}",
+        audit.operation_id,
+        source,
+        target_version,
+        phase,
+        audit.started.elapsed().as_millis(),
+        audit.downloaded_bytes.load(Ordering::Relaxed),
+        audit.total_bytes.load(Ordering::Relaxed),
+        audit.token_mode,
+        result,
+        code,
+        detail,
+    );
+}
+
+#[cfg(windows)]
+fn current_token_mode() -> &'static str {
+    fstty_broker::installation::caller_context(std::process::id())
+        .map(|context| context.mode.as_str())
+        .unwrap_or("unknown")
+}
+
+#[cfg(not(windows))]
+fn current_token_mode() -> &'static str {
+    "standard"
+}
+
+fn sanitize_update_detail(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().min(1024));
+    let mut rest = value;
+    while let Some(index) = rest.find("S-1-") {
+        output.push_str(&rest[..index]);
+        output.push_str("<sid>");
+        let sid = &rest[index..];
+        let length = sid
+            .char_indices()
+            .take_while(|(_, character)| {
+                character.is_ascii_digit() || *character == '-' || *character == 'S'
+            })
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(4);
+        rest = &sid[length..];
+    }
+    output.push_str(rest);
+    let mut search_from = 0;
+    while let Some(relative) = output[search_from..].find("://") {
+        let scheme_end = search_from + relative + 3;
+        let authority_end = output[scheme_end..]
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '/' | '?' | '#')
+            })
+            .map(|offset| scheme_end + offset)
+            .unwrap_or(output.len());
+        let Some(at) = output[scheme_end..authority_end].rfind('@') else {
+            search_from = authority_end.min(output.len());
+            if search_from == output.len() {
+                break;
+            }
+            continue;
+        };
+        output.replace_range(scheme_end..scheme_end + at, "<redacted>");
+        search_from = scheme_end + "<redacted>@".len();
+    }
+    output
+        .replace(['\r', '\n', '\t'], " ")
+        .chars()
+        .take(1024)
+        .collect()
+}
+
+fn source_name(source: AppUpdateSource) -> &'static str {
+    match source {
+        AppUpdateSource::Cnb => "cnb",
+        AppUpdateSource::GitHub => "github",
+    }
+}
+
+fn preference_name(preference: UpdateSourcePreference) -> &'static str {
+    match preference {
+        UpdateSourcePreference::Auto => "auto",
+        UpdateSourcePreference::GitHub => "github",
+        UpdateSourcePreference::Cnb => "cnb",
+    }
+}
+
+fn message_code(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timeout") || message.contains("超时") {
+        "timeout"
+    } else if lower.contains("proxy") || message.contains("代理") || lower.contains("407") {
+        "proxy"
+    } else if message.contains("签名") || lower.contains("signature") || lower.contains("minisign")
+    {
+        "signature"
+    } else if message.contains("管理员授权") || message.contains("UAC") {
+        "uac_cancelled"
+    } else if message.contains("更新已取消") {
+        "update_cancelled"
+    } else if message.contains("调用进程已退出") {
+        "caller_exited"
+    } else if message.contains("调用者") || message.contains("身份") || message.contains("令牌")
+    {
+        "caller_identity"
+    } else if message.contains("回滚") || message.contains("恢复") {
+        "rollback"
+    } else if message.contains("部署") || message.contains("安装") {
+        "deploy"
+    } else if message.contains("网络") || lower.contains("network") || lower.contains("connect") {
+        "network"
+    } else {
+        "unexpected"
+    }
+}
+
+fn updater_error_code(error: &tauri_plugin_updater::Error) -> &'static str {
+    match error {
+        tauri_plugin_updater::Error::Minisign(_)
+        | tauri_plugin_updater::Error::Base64(_)
+        | tauri_plugin_updater::Error::SignatureUtf8(_) => "signature",
+        tauri_plugin_updater::Error::Reqwest(error) if error.is_timeout() => "timeout",
+        tauri_plugin_updater::Error::Reqwest(error) if is_proxy_error(&error.to_string()) => {
+            "proxy"
+        }
+        tauri_plugin_updater::Error::Network(error) if is_proxy_error(&error.to_string()) => {
+            "proxy"
+        }
+        tauri_plugin_updater::Error::Reqwest(_) | tauri_plugin_updater::Error::Network(_) => {
+            "network"
+        }
+        _ => "unexpected",
+    }
+}
+
+fn is_proxy_error(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("proxy")
+        || lower.contains("407")
+        || lower.contains("tunnel")
+        || lower.contains("authentication required")
+}
+
+fn updater_error_message(code: &str, checking: bool) -> &'static str {
+    match (code, checking) {
+        ("timeout", true) => "检查应用更新超时，请重试或切换下载源",
+        ("timeout", false) => "下载应用更新超时，请重试或切换下载源",
+        ("proxy", true) => "无法通过代理检查更新，请检查代理地址和认证",
+        ("proxy", false) => "无法通过代理下载更新，请检查代理地址和认证",
+        ("network", true) => "检查应用更新失败，请检查网络和证书",
+        ("network", false) => "下载应用更新失败，请检查网络和证书",
+        ("signature", _) => "更新包签名验证失败，请从官方发布页手动安装最新版",
+        (_, true) => "检查应用更新失败，请重试或切换下载源",
+        _ => "下载或校验应用更新失败，请重试或切换下载源",
+    }
+}
+
+fn broker_update_error(error: &str) -> AppError {
+    let message = match message_code(error) {
+        "uac_cancelled" => "已取消管理员授权，应用更新未安装",
+        "update_cancelled" => "应用更新已取消",
+        "caller_exited" => "更新调用进程已退出，请重新检查更新",
+        "caller_identity" => "更新调用者身份已变化，请重新检查更新",
+        "signature" => "更新包签名验证失败，请从官方发布页重新下载",
+        "rollback" => "更新部署和自动恢复均未完成，请查看后台安装日志",
+        "deploy" => "更新部署失败，旧版本已保留或恢复，请查看后台安装日志",
+        "timeout" => "应用更新操作超时，请重试",
+        _ => "应用更新未完成，请查看后台日志后重试",
+    };
+    AppError::Internal(message.into())
+}
 
 #[derive(Clone)]
 struct PendingAppUpdate {
@@ -39,6 +249,57 @@ impl AppUpdateService {
         proxy: &str,
         preference: UpdateSourcePreference,
     ) -> Result<Option<AppUpdateInfo>, AppError> {
+        let audit = UpdateAudit::new();
+        let requested_source = preference_name(preference);
+        log_update_event(
+            &audit,
+            "check_start",
+            requested_source,
+            "unknown",
+            "started",
+            "pending",
+            None,
+        );
+        let result = self.check_inner(app, proxy, preference, &audit).await;
+        match &result {
+            Ok(Some(info)) => log_update_event(
+                &audit,
+                "check_complete",
+                source_name(info.source),
+                &info.version,
+                "success",
+                "update_available",
+                None,
+            ),
+            Ok(None) => log_update_event(
+                &audit,
+                "check_complete",
+                requested_source,
+                env!("CARGO_PKG_VERSION"),
+                "success",
+                "up_to_date",
+                None,
+            ),
+            Err(error) => log_update_event(
+                &audit,
+                "check_complete",
+                requested_source,
+                "unknown",
+                "failure",
+                message_code(&error.to_string()),
+                Some(&error.to_string()),
+            ),
+        }
+        result
+    }
+
+    async fn check_inner(
+        &self,
+        app: &AppHandle,
+        proxy: &str,
+        preference: UpdateSourcePreference,
+        audit: &UpdateAudit,
+    ) -> Result<Option<AppUpdateInfo>, AppError> {
         let proxy = parse_proxy(proxy)?;
         self.close().await;
 
@@ -51,20 +312,33 @@ impl AppUpdateService {
                         AppUpdateSource::Cnb,
                         CNB_UPDATE_ENDPOINT,
                         proxy.clone(),
+                        audit,
                     ),
-                    check_source(app, AppUpdateSource::GitHub, GITHUB_UPDATE_ENDPOINT, proxy),
+                    check_source(
+                        app,
+                        AppUpdateSource::GitHub,
+                        GITHUB_UPDATE_ENDPOINT,
+                        proxy,
+                        audit,
+                    ),
                 )
                 .await?
             }
             UpdateSourcePreference::GitHub => (
                 AppUpdateSource::GitHub,
-                check_source(app, AppUpdateSource::GitHub, GITHUB_UPDATE_ENDPOINT, proxy)
-                    .await
-                    .map_err(AppError::Connection)?,
+                check_source(
+                    app,
+                    AppUpdateSource::GitHub,
+                    GITHUB_UPDATE_ENDPOINT,
+                    proxy,
+                    audit,
+                )
+                .await
+                .map_err(AppError::Connection)?,
             ),
             UpdateSourcePreference::Cnb => (
                 AppUpdateSource::Cnb,
-                check_source(app, AppUpdateSource::Cnb, CNB_UPDATE_ENDPOINT, proxy)
+                check_source(app, AppUpdateSource::Cnb, CNB_UPDATE_ENDPOINT, proxy, audit)
                     .await
                     .map_err(AppError::Connection)?,
             ),
@@ -83,6 +357,56 @@ impl AppUpdateService {
         &self,
         on_progress: Channel<AppUpdateProgress>,
         proxy: &str,
+    ) -> Result<(), AppError> {
+        let audit = UpdateAudit::new();
+        let metadata = self
+            .pending
+            .lock()
+            .await
+            .as_ref()
+            .map(|pending| (source_name(pending.source), pending.update.version.clone()));
+        let (source, target_version) = metadata
+            .as_ref()
+            .map(|(source, version)| (*source, version.as_str()))
+            .unwrap_or(("unknown", "unknown"));
+        log_update_event(
+            &audit,
+            "install_start",
+            source,
+            target_version,
+            "started",
+            "pending",
+            None,
+        );
+        let result = self.install_inner(on_progress, proxy, &audit).await;
+        match &result {
+            Ok(()) => log_update_event(
+                &audit,
+                "install_handoff",
+                source,
+                target_version,
+                "success",
+                "installer_started",
+                None,
+            ),
+            Err(error) => log_update_event(
+                &audit,
+                "install_complete",
+                source,
+                target_version,
+                "failure",
+                message_code(&error.to_string()),
+                Some(&error.to_string()),
+            ),
+        }
+        result
+    }
+
+    async fn install_inner(
+        &self,
+        on_progress: Channel<AppUpdateProgress>,
+        proxy: &str,
+        audit: &UpdateAudit,
     ) -> Result<(), AppError> {
         let proxy = parse_proxy(proxy)?;
         #[cfg(windows)]
@@ -109,12 +433,24 @@ impl AppUpdateService {
 
         // 下载使用开始时的配置快照，不沿用检查更新时的旧代理，也不改变进行中的下载。
         apply_download_proxy(&mut pending.update, proxy);
+        let source = pending.source;
+        let target_version = pending.update.version.clone();
+        log_update_event(
+            audit,
+            "download",
+            source_name(source),
+            &target_version,
+            "started",
+            "pending",
+            None,
+        );
         let mut started = false;
         #[cfg(not(windows))]
         let result = pending
             .update
             .download_and_install(
                 |chunk_bytes, total_bytes| {
+                    audit.add_chunk(chunk_bytes as u64, total_bytes);
                     if !started {
                         started = true;
                         let _ = on_progress.send(AppUpdateProgress::Started { total_bytes });
@@ -128,17 +464,14 @@ impl AppUpdateService {
                 },
             )
             .await
-            .map_err(|_| {
-                AppError::Internal(
-                    "下载或安装应用更新失败，请检查网络、代理、证书及更新签名".into(),
-                )
-            });
+            .map_err(|error| download_error(audit, source, &target_version, &error));
         #[cfg(windows)]
         let result = async {
             let bytes = pending
                 .update
                 .download(
                     |chunk_bytes, total_bytes| {
+                        audit.add_chunk(chunk_bytes as u64, total_bytes);
                         if !started {
                             started = true;
                             let _ = on_progress.send(AppUpdateProgress::Started { total_bytes });
@@ -150,16 +483,85 @@ impl AppUpdateService {
                     || {},
                 )
                 .await
-                .map_err(|_| {
-                    AppError::Internal("下载应用更新失败，请检查网络、代理、证书及更新签名".into())
-                })?;
-            let ticket = fstty_broker::update::stage(&bytes, pending.update.signature.clone())
-                .await
-                .map_err(AppError::Internal)?;
-            tokio::task::spawn_blocking(move || fstty_broker::windows::elevate_update(&ticket))
-                .await
-                .map_err(|_| AppError::Internal("安全更新窗口启动失败".into()))?
-                .map_err(AppError::Internal)?;
+                .map_err(|error| download_error(audit, source, &target_version, &error))?;
+            audit
+                .downloaded_bytes
+                .store(bytes.len() as u64, Ordering::Relaxed);
+            log_update_event(
+                audit,
+                "download",
+                source_name(source),
+                &target_version,
+                "success",
+                "downloaded",
+                None,
+            );
+            let ticket =
+                match fstty_broker::update::stage(&bytes, pending.update.signature.clone()).await {
+                    Ok(ticket) => ticket,
+                    Err(error) => {
+                        log_update_event(
+                            audit,
+                            "stage",
+                            source_name(source),
+                            &target_version,
+                            "failure",
+                            message_code(&error),
+                            Some(&error),
+                        );
+                        return Err(broker_update_error(&error));
+                    }
+                };
+            log_update_event(
+                audit,
+                "stage",
+                source_name(source),
+                &target_version,
+                "success",
+                "staged",
+                None,
+            );
+            let elevation = match tokio::task::spawn_blocking(move || {
+                fstty_broker::windows::elevate_update(&ticket)
+            })
+            .await
+            {
+                Ok(elevation) => elevation,
+                Err(_) => {
+                    let error = "安全更新窗口启动失败";
+                    log_update_event(
+                        audit,
+                        "elevate",
+                        source_name(source),
+                        &target_version,
+                        "failure",
+                        "elevation_start_failed",
+                        Some(error),
+                    );
+                    return Err(AppError::Internal(error.into()));
+                }
+            };
+            if let Err(error) = elevation {
+                log_update_event(
+                    audit,
+                    "elevate",
+                    source_name(source),
+                    &target_version,
+                    "failure",
+                    message_code(&error),
+                    Some(&error),
+                );
+                return Err(broker_update_error(&error));
+            }
+            log_update_event(
+                audit,
+                "elevate",
+                source_name(source),
+                &target_version,
+                "success",
+                "approved",
+                None,
+            );
             let _ = on_progress.send(AppUpdateProgress::Finished);
             Ok::<(), AppError>(())
         }
@@ -189,6 +591,7 @@ async fn check_source<R: tauri::Runtime>(
     source: AppUpdateSource,
     endpoint: &str,
     proxy: Option<Url>,
+    audit: &UpdateAudit,
 ) -> Result<Option<Update>, String> {
     let endpoint = endpoint
         .parse()
@@ -203,17 +606,79 @@ async fn check_source<R: tauri::Runtime>(
     } else {
         builder = builder.no_proxy();
     }
-    let update = builder
+    let mut update = match builder
         .build()
         .map_err(|error| format!("{source:?} 更新器创建失败：{error}"))?
         .check()
         .await
-        .map_err(|_| format!("{source:?} 更新检查失败，请检查网络、代理认证及证书"))?;
-    if let Some(update) = &update {
+    {
+        Ok(update) => update,
+        Err(error) => {
+            let code = updater_error_code(&error);
+            let detail = if code == "signature" {
+                "signature verification failed".to_owned()
+            } else {
+                error.to_string()
+            };
+            log_update_event(
+                audit,
+                "source_check",
+                source_name(source),
+                "unknown",
+                "failure",
+                code,
+                Some(&detail),
+            );
+            return Err(format!("{source:?} {}", updater_error_message(code, true)));
+        }
+    };
+    if let Some(update) = &mut update {
+        // 检查请求应快速失败，安装包下载则必须允许慢速网络完成。
+        update.timeout = Some(DOWNLOAD_TIMEOUT);
         Version::parse(update.version.trim_start_matches('v'))
             .map_err(|error| format!("{source:?} 更新版本 {} 无效：{error}", update.version))?;
     }
+    log_update_event(
+        audit,
+        "source_check",
+        source_name(source),
+        update
+            .as_ref()
+            .map(|update| update.version.as_str())
+            .unwrap_or(env!("CARGO_PKG_VERSION")),
+        "success",
+        if update.is_some() {
+            "update_available"
+        } else {
+            "up_to_date"
+        },
+        None,
+    );
     Ok(update)
+}
+
+fn download_error(
+    audit: &UpdateAudit,
+    source: AppUpdateSource,
+    target_version: &str,
+    error: &tauri_plugin_updater::Error,
+) -> AppError {
+    let code = updater_error_code(error);
+    let detail = if code == "signature" {
+        "signature verification failed".to_owned()
+    } else {
+        error.to_string()
+    };
+    log_update_event(
+        audit,
+        "download",
+        source_name(source),
+        target_version,
+        "failure",
+        code,
+        Some(&detail),
+    );
+    AppError::Internal(updater_error_message(code, false).into())
 }
 
 async fn first_successful_source<T, CnbFuture, GitHubFuture>(
@@ -329,5 +794,26 @@ mod tests {
             .expect("SOCKS5 代理应有效")
             .is_some());
         assert!(parse_proxy("ftp://127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn 更新错误分类区分代理授权与管理员取消() {
+        assert!(is_proxy_error("407 Proxy Authentication Required"));
+        assert_eq!(message_code("已取消管理员授权"), "uac_cancelled");
+        assert_eq!(message_code("应用更新已取消"), "update_cancelled");
+        assert_eq!(message_code("更新调用进程已退出"), "caller_exited");
+        assert_eq!(message_code("更新包签名验证失败"), "signature");
+        assert_eq!(message_code("自动恢复失败"), "rollback");
+    }
+
+    #[test]
+    fn 更新日志脱敏代理凭据和完整_sid() {
+        let detail = sanitize_update_detail(
+            "https://user:secret@proxy.example/a owner=S-1-5-21-123-456-789-1001",
+        );
+        assert!(!detail.contains("user:secret"));
+        assert!(!detail.contains("S-1-5-21"));
+        assert!(detail.contains("<redacted>@proxy.example"));
+        assert!(detail.contains("<sid>"));
     }
 }

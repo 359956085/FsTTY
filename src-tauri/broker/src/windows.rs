@@ -103,7 +103,56 @@ pub(crate) fn token_identity(token: HANDLE) -> crate::Result<Identity> {
     let elevated = unsafe { (*info.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated != 0 };
     Ok(Identity { sid, elevated })
 }
-#[derive(Clone)]
+
+pub(crate) fn token_has_group(token: HANDLE, expected_sid: &str) -> crate::Result<bool> {
+    let info = token_info(token, TokenGroups)?;
+    let groups = unsafe { &*info.as_ptr().cast::<TOKEN_GROUPS>() };
+    let entries = unsafe {
+        std::slice::from_raw_parts(
+            groups.Groups.as_ptr(),
+            groups.GroupCount.try_into().map_err(|_| "令牌组数量无效")?,
+        )
+    };
+    for entry in entries {
+        let mut text = null_mut();
+        if unsafe { ConvertSidToStringSidW(entry.Sid, &mut text) } == 0 {
+            return Err(os_error("无法读取令牌组 SID"));
+        }
+        let memory = Local(text.cast());
+        let mut length = 0;
+        unsafe {
+            while *text.add(length) != 0 {
+                length += 1;
+            }
+        }
+        let sid = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, length) });
+        drop(memory);
+        if sid == expected_sid {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+pub(crate) fn token_elevation_type(token: HANDLE) -> crate::Result<TOKEN_ELEVATION_TYPE> {
+    let info = token_info(token, TokenElevationType)?;
+    Ok(unsafe { *info.as_ptr().cast::<TOKEN_ELEVATION_TYPE>() })
+}
+
+pub(crate) fn token_session_id(token: HANDLE) -> crate::Result<u32> {
+    let info = token_info(token, TokenSessionId)?;
+    Ok(unsafe { *info.as_ptr().cast::<u32>() })
+}
+
+pub(crate) fn token_linked_token(token: HANDLE) -> crate::Result<Handle> {
+    let info = token_info(token, TokenLinkedToken)?;
+    let linked = unsafe { (*info.as_ptr().cast::<TOKEN_LINKED_TOKEN>()).LinkedToken };
+    if linked.is_null() {
+        return Err("管理员关联的普通权限令牌不可用".into());
+    }
+    Ok(Handle(linked))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub sid: String,
     pub elevated: bool,
@@ -421,7 +470,11 @@ fn launch_admin(arguments: &str) -> crate::Result<()> {
     info.lpParameters = args.as_ptr();
     info.nShow = 1;
     if unsafe { ShellExecuteExW(&mut info) } == 0 {
-        return Err("安全管理操作已取消或无法启动".into());
+        return if unsafe { GetLastError() } == ERROR_CANCELLED {
+            Err("已取消管理员授权".into())
+        } else {
+            Err("无法启动管理员授权窗口".into())
+        };
     }
     let process = Handle(info.hProcess);
     if unsafe { WaitForSingleObject(process.0, 300_000) } != WAIT_OBJECT_0 {
@@ -430,6 +483,18 @@ fn launch_admin(arguments: &str) -> crate::Result<()> {
     let mut code = 1;
     unsafe {
         GetExitCodeProcess(process.0, &mut code);
+    }
+    if code == 2 {
+        return Err("应用更新已取消".into());
+    }
+    if code == 3 {
+        return Err("更新调用进程已退出，请重新检查更新".into());
+    }
+    if code == 4 {
+        return Err("更新调用者身份或会话不一致，请重新检查更新".into());
+    }
+    if code == 5 {
+        return Err("更新包签名验证失败，请重新下载".into());
     }
     if code != 0 {
         return Err("安全管理操作未完成".into());

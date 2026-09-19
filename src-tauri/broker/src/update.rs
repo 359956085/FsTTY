@@ -214,6 +214,40 @@ pub async fn stage(bytes: &[u8], signature: String) -> crate::Result<String> {
 }
 
 pub fn install(ticket: &str) -> crate::Result<()> {
+    let operation_id = crate::installation::operation_id(Some(ticket));
+    let started = std::time::Instant::now();
+    let mut caller_mode = None;
+    let mut session_id = None;
+    let result = install_inner(ticket, &mut caller_mode, &mut session_id);
+    let (phase, result_name, code, detail) = match &result {
+        Ok(()) => ("installer_start", "success", "ok", None),
+        Err(error) => {
+            let failure = crate::installation::classify_failure("--update", error);
+            (failure.phase, "failure", failure.code, Some(error.as_str()))
+        }
+    };
+    crate::installation::record(crate::installation::InstallerEvent {
+        operation_id: &operation_id,
+        install_mode: "update",
+        phase,
+        caller_mode,
+        session_id,
+        target: None,
+        result: result_name,
+        code,
+        exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+        rollback: None,
+        detail,
+        elapsed: started.elapsed(),
+    });
+    result
+}
+
+fn install_inner(
+    ticket: &str,
+    caller_mode: &mut Option<crate::installation::CallerMode>,
+    session_id: &mut Option<u32>,
+) -> crate::Result<()> {
     if !windows::current_identity()?.elevated {
         return Err("更新需要管理员权限".into());
     }
@@ -234,8 +268,10 @@ pub fn install(ticket: &str) -> crate::Result<()> {
     if manifest.ticket != ticket || manifest.expires < now()? {
         return Err("更新请求已失效".into());
     }
-    let caller = crate::installation::caller_token(manifest.caller_pid)?;
-    if windows::token_identity(caller.0)?.sid != manifest.owner {
+    let caller = crate::installation::caller_context(manifest.caller_pid)?;
+    *caller_mode = Some(caller.mode);
+    *session_id = Some(caller.session_id);
+    if caller.identity.sid != manifest.owner {
         return Err("更新调用者身份已变化，请重新检查更新".into());
     }
     let path = dir.join("installer.exe");
@@ -258,11 +294,7 @@ pub fn install(ticket: &str) -> crate::Result<()> {
     let accepted = unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
-            windows::wide(&format!(
-                "为用户 {} 安装已验证签名的 FsTTY 更新？\n现有 SSH 连接将中断。",
-                manifest.owner
-            ))
-            .as_ptr(),
+            windows::wide(update_confirmation(caller.mode)).as_ptr(),
             windows::wide("FsTTY 安全更新").as_ptr(),
             MB_YESNO | MB_ICONQUESTION,
         )
@@ -286,6 +318,18 @@ pub fn install(ticket: &str) -> crate::Result<()> {
     Ok(())
 }
 
+fn update_confirmation(mode: crate::installation::CallerMode) -> &'static str {
+    match mode {
+        crate::installation::CallerMode::AlwaysElevated => {
+            "安装已验证签名的 FsTTY 更新？\n现有 SSH 连接将中断。当前会话没有普通权限令牌，更新完成后 FsTTY 仍会以管理员权限运行。"
+        }
+        crate::installation::CallerMode::Standard
+        | crate::installation::CallerMode::LinkedStandard => {
+            "安装已验证签名的 FsTTY 更新？\n现有 SSH 连接将中断，更新完成后 FsTTY 将以当前用户的普通权限运行。"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +345,15 @@ mod tests {
         assert!(verify_with_key(b"Test", &signature, &public).is_err());
         assert!(verify_with_key(b"test", "invalid", &public).is_err());
         assert!(verify_with_key(b"test", &signature, "").is_err());
+    }
+
+    #[test]
+    fn 更新确认不显示_sid_且说明最终权限() {
+        let standard = update_confirmation(crate::installation::CallerMode::LinkedStandard);
+        assert!(standard.contains("普通权限"));
+        assert!(!standard.contains("S-1-"));
+        let elevated = update_confirmation(crate::installation::CallerMode::AlwaysElevated);
+        assert!(elevated.contains("管理员权限"));
+        assert!(!elevated.contains("S-1-"));
     }
 }

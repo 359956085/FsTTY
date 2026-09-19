@@ -6,6 +6,52 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-19
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+#### Windows 管理员兼容
+
+- 支持从已提权终端启动安装：存在关联普通令牌时，安装完成后以原用户普通权限启动桌面；内置 Administrator 或关闭 UAC 且没有普通令牌时，自动进入管理员兼容模式。
+- 交互安装会在兼容模式继续前说明桌面将保持管理员权限，静默安装会自动继续并写入日志。会话 0、SYSTEM、服务账号、跨会话调用和异常关联令牌仍会被拒绝。
+- 在线更新确认不再显示完整 SID，并会明确说明更新后的桌面权限。
+
+#### 错误提示与后台诊断
+
+- 分别提示下载超时、网络、代理、签名、UAC 取消、调用进程退出、身份不一致、部署失败和回滚失败；未知底层错误写入日志，界面显示可操作的通用说明。
+- 应用更新日志新增随机操作 ID、来源、目标版本、阶段、耗时、下载字节数、令牌模式和结果分类，并脱敏代理凭据与完整 SID。
+- 独立安装器新增受 ACL 保护的 ProgramData 日志，普通用户只读并保留 15 天；仓库附带只读令牌与 UAC 诊断脚本。
+
+#### 更新与发布安全
+
+- 更新包下载超时调整为 10 分钟，并完善更新公钥一致性验证。
+- Windows 正式发布新增 Broker、桌面程序和安装包的 Authenticode 签名、时间戳与信任链门禁；任一校验失败都会在上传发布产物前停止。
+
+<!-- release-notes:zh-CN:end -->
+
+<!-- release-notes:en-US:start -->
+### English
+
+#### Windows Administrator Compatibility
+
+- Installers can now start from an elevated terminal. When a linked standard token exists, the desktop starts with the original user's standard rights; built-in Administrator and UAC-disabled sessions without a standard token automatically use administrator compatibility mode.
+- Interactive installs explain that the desktop will retain administrator rights before compatibility mode continues. Silent installs continue automatically and record the mode. Session 0, SYSTEM, service accounts, cross-session callers, and invalid linked tokens remain blocked.
+- Online update confirmation no longer exposes a full SID and now states the desktop permission level after updating.
+
+#### Errors and Background Diagnostics
+
+- Added distinct messages for download timeout, network, proxy, signature, UAC cancellation, caller exit, identity mismatch, deployment failure, and rollback failure. Unknown low-level details go to logs while the interface shows actionable general guidance.
+- Update logs now include a random operation ID, source, target version, phase, elapsed time, downloaded bytes, token mode, and result category, with proxy credentials and full SIDs redacted.
+- Standalone installers now write ACL-protected ProgramData logs that are read-only for standard users and retained for 15 days. The repository also includes a read-only token and UAC diagnostic script.
+
+#### Update and Release Security
+
+- Increased the update-package download timeout to 10 minutes and expanded updater public-key consistency checks.
+- Production Windows releases now require trusted, timestamped Authenticode signatures on the broker, desktop executable, and installer. Any signature, timestamp, or trust-chain failure stops the release before upload.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.6.0] - 2026-09-19
 
 <!-- release-notes:zh-CN:start -->

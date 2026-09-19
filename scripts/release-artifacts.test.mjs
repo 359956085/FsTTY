@@ -141,6 +141,17 @@ describe("发布产物与恢复", () => {
     expect(workflow.match(/needs: prepare/g)).toHaveLength(2);
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).not.toContain("tauri-apps/tauri-action");
+    expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE");
+    expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE_PASSWORD");
+    expect(workflow).toContain("vars.WINDOWS_TIMESTAMP_URL");
+    const brokerSignature = workflow.indexOf("ci-build.mjs authenticode-broker");
+    const bundle = workflow.indexOf("ci-build.mjs bundle");
+    const authenticodeVerification = workflow.indexOf("ci-build.mjs verify-authenticode");
+    const updaterSignature = workflow.indexOf("ci-build.mjs sign");
+    expect(brokerSignature).toBeGreaterThan(0);
+    expect(brokerSignature).toBeLessThan(bundle);
+    expect(bundle).toBeLessThan(authenticodeVerification);
+    expect(authenticodeVerification).toBeLessThan(updaterSignature);
     const quality = await readFile(new URL("../.github/workflows/quality.yml", import.meta.url), "utf8");
     const warm = quality.slice(quality.indexOf("\n  warm:"));
     expect(warm).not.toContain("secrets.");

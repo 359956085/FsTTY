@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "FsTTY",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "identifier": "com.fengshi.fstty",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -49,7 +49,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5MzlGRTlCN0M4NUI2NjIKUldSaXRvVjhtLzQ1NmZGZFdxalJZeWRqUXJxS2pETm8zellkYmlxbnU0Sy9GbEpZbkhVZm1LVkoK",
       "endpoints": [
         "https://cnb.cool/359956085/FsTTY/-/releases/download/updater/latest.json",
         "https://github.com/359956085/FsTTY/releases/latest/download/latest.json"

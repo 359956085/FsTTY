@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "fstty"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "auto-launch",
  "axum",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "fstty-broker"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "base64 0.22.1",
  "fs2",
@@ -1852,6 +1852,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "time",
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
@@ -1860,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "fstty-network"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",

@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.6.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.6.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -154,11 +154,12 @@ Under Settings → General → Terminal text colors, choose Follow app theme or 
 Prefer [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) in mainland China, or use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
 
 - The development branch produces `*-setup.exe` (NSIS) with a custom desktop directory; the required credential service, management tool, and uninstaller remain in Program Files. See the [installation guide](doc/windows-installation.md).
+- `v1.6.1` supports installation and updates from elevated terminals, built-in Administrator, and interactive UAC-disabled sessions. A validated linked token restores standard rights; otherwise the installer clearly enters administrator compatibility mode. Installer logs are under `C:\ProgramData\FsTTY\logs`, and the installation guide documents the read-only diagnostic script.
 - MSI packages from earlier releases do not include the new service installation workflow.
 
 The Windows development build uses an independent SSH credential service. Installation, migration, and authentication changes require UAC; daily connections do not. Original key files, clipboard contents, and remaining legacy copies are still accessible to programs running under the same account. Secrets cannot be exported. MCP Token storage is unchanged. See the [implementation and acceptance guide](doc/windows-credential-broker.md).
 
-The NSIS installer supports Simplified Chinese and English and follows the Windows display language. Release packages are not currently signed with Windows Authenticode. If SmartScreen displays a warning, verify that the installer came from this repository's Releases page.
+The NSIS installer supports Simplified Chinese and English and follows the Windows display language. `v1.6.0` predates the Authenticode release gate, and Microsoft Defender may report that file hash as `Trojan:Win32/Wacatac.B!ml`. Do not choose **Allow on device** for an antivirus detection; wait for Microsoft's review or a later signed release. Future production releases must carry a trusted, timestamped Windows Authenticode signature on the broker, desktop executable, and installer, or the release stops.
 
 ## Current Limitations
 

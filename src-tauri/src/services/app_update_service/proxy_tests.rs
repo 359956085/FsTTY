@@ -77,11 +77,13 @@ async fn 更新检查与下载使用新http代理且不关闭旧更新对象() {
             endpoint(Some("http://download.invalid/package".into()), true).await;
         let (next_port, next_count, next) =
             endpoint(Some("http://download.invalid/package".into()), true).await;
+        let audit = UpdateAudit::new();
         let mut update = check_source(
             app.handle(),
             AppUpdateSource::GitHub,
             "http://manifest.invalid/check",
             parse_proxy(&format!("http://127.0.0.1:{first_port}")).unwrap(),
+            &audit,
         )
         .await
         .unwrap()
@@ -115,11 +117,13 @@ async fn 更新检查与下载支持socks5并可从旧代理切换为明确直�
         let app = application();
         let (port, count, origin) = endpoint(None, false).await;
         let (route, proxy_count, tunnel) = proxy_fixture::tunnel(port, true).await;
+        let audit = UpdateAudit::new();
         let mut update = check_source(
             app.handle(),
             AppUpdateSource::Cnb,
             &format!("http://127.0.0.1:{port}/check"),
             parse_proxy(&route.0).unwrap(),
+            &audit,
         )
         .await
         .unwrap()
@@ -152,6 +156,7 @@ async fn 更新代理连接失败不绕过代理且错误不泄露认证信息()
     let unused = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let closed_port = unused.local_addr().unwrap().port();
     drop(unused);
+    let audit = UpdateAudit::new();
     let error = check_source(
         app.handle(),
         AppUpdateSource::GitHub,
@@ -160,6 +165,7 @@ async fn 更新代理连接失败不绕过代理且错误不泄露认证信息()
             "http://secret-user:secret-pass@127.0.0.1:{closed_port}"
         ))
         .unwrap(),
+        &audit,
     )
     .await
     .err()

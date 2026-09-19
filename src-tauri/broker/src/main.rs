@@ -22,6 +22,14 @@ fn main() {
             .parse::<u32>()
             .map_err(|_| "调用者无效".into())
             .and_then(fstty_broker::installation::launch_desktop),
+        [command, caller, operation] if command == "--launch-desktop" => {
+            uuid::Uuid::parse_str(operation)
+                .map_err(|_| "安装操作 ID 无效".into())
+                .and_then(|_| caller.parse::<u32>().map_err(|_| "调用者无效".into()))
+                .and_then(|pid| {
+                    fstty_broker::installation::launch_desktop_with_operation(pid, operation)
+                })
+        }
         [command, directory, caller, mode]
             if command == "--deploy-desktop" && matches!(mode.as_str(), "install" | "update") =>
         {
@@ -33,6 +41,21 @@ fn main() {
                         std::path::Path::new(directory),
                         pid,
                         mode == "update",
+                    )
+                })
+        }
+        [command, directory, caller, mode, operation]
+            if command == "--deploy-desktop" && matches!(mode.as_str(), "install" | "update") =>
+        {
+            uuid::Uuid::parse_str(operation)
+                .map_err(|_| "安装操作 ID 无效".into())
+                .and_then(|_| caller.parse::<u32>().map_err(|_| "调用者无效".into()))
+                .and_then(|pid| {
+                    fstty_broker::installation::deploy_with_operation(
+                        std::path::Path::new(directory),
+                        pid,
+                        mode == "update",
+                        operation,
                     )
                 })
         }
@@ -55,16 +78,45 @@ fn main() {
                     | "--launch-desktop"
             )
         }) {
-            fstty_broker::installation::report_error(&error);
+            fstty_broker::installation::report_error(
+                args.first().map(String::as_str).unwrap_or("--installer"),
+                &error,
+            );
         }
         eprintln!("{error}");
-        if args
-            .first()
-            .is_some_and(|a| a == "--manage" || a == "--update" || a == "--repair")
+        if error != "更新已取消"
+            && args
+                .first()
+                .is_some_and(|a| a == "--manage" || a == "--update" || a == "--repair")
         {
-            fstty_broker::admin::show_error(&error);
+            let message = if args.first().is_some_and(|command| command == "--update") {
+                fstty_broker::installation::classify_failure("--update", &error).message
+            } else {
+                error.clone()
+            };
+            fstty_broker::admin::show_error(&message);
         }
-        std::process::exit(1);
+        let exit_code = if args.first().is_some_and(|command| command == "--update") {
+            if error == "更新已取消" {
+                2
+            } else if error.contains("原调用进程已退出") {
+                3
+            } else if error.contains("调用者")
+                || error.contains("关联令牌")
+                || error.contains("用户身份")
+                || error.contains("登录会话")
+                || error.contains("会话 0")
+            {
+                4
+            } else if error.contains("签名") || error.contains("验签") {
+                5
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+        std::process::exit(exit_code);
     }
 }
 #[cfg(not(windows))]

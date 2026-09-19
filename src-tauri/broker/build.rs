@@ -7,6 +7,7 @@ fn main() {
     let key = config["plugins"]["updater"]["pubkey"]
         .as_str()
         .unwrap_or("");
+    assert!(!key.is_empty(), "发布公钥不能为空");
     assert!(!key.contains(['\r', '\n']), "发布公钥必须为单行 Base64");
     println!("cargo:rustc-env=FSTTY_RELEASE_PUBLIC_KEY={key}");
 }
