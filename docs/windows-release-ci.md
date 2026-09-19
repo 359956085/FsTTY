@@ -1,17 +1,18 @@
 # Windows 发布与缓存
 
-发布依次执行准备、并行验证与构建、发布。验证包含版本、类型、Lint、前端测试、Rust 格式、Clippy、Rust 测试和依赖审计。任何检查或构建失败均不能正式发布。
+工作流分为无签名验证和正式发布两种模式。两种模式都执行版本、类型、Lint、前端测试、Rust 格式、Clippy、Rust 测试、依赖审计及完整 Windows 构建；任何检查或构建失败都会令整次运行失败，正式发布不会继续。
 
 ## 发布及验证运行
 
-- 推送与仓库版本一致的 `vX.Y.Z` 标签触发正式发布。同一标签的运行串行排队，不自动取消正在进行的发布。
-- 手动运行必须选择版本标签。默认 `publish=false`，只检查、打包和签名，产物保留十四天，不创建 GitHub Release 或同步 CNB。普通分支运行会在准备阶段失败。
+- 推送与仓库版本一致的 `vX.Y.Z` 标签触发正式签名和发布。同一标签的运行串行排队，不自动取消正在进行的发布。
+- 从默认分支手动运行且保持 `publish=false` 时进入无签名验证模式，不读取 PFX 或 Tauri 更新私钥。它上传名称带 `UNSIGNED` 的安装包、双语警告和验证清单，保留十四天，不创建更新签名、`latest.json`、GitHub Release 或 CNB Release。
+- 手动设置 `publish=true` 时必须从与仓库版本一致的标签运行，并进入与标签推送相同的完整签名发布模式。无签名验证从标签或非默认分支启动时会在准备阶段失败。
 - 对同一标签手动运行一次 `cold-cache=true`，再运行一次 `cold-cache=false`。后者需等待该提交在 main 的预热任务成功。对比 Actions 总耗时、缓存命中、恢复体积及步骤摘要；冷缓存模式只查缓存信息，不恢复或保存 Rust 缓存。
 - 正式发布前创建草稿，上传安装包、签名和 `latest.json`，检查数量、大小、SHA-256 及标签提交，再转为正式发布。
 
-Tauri 更新签名沿用 `TAURI_SIGNING_PUBLIC_KEY` 仓库 Variable，以及 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。Windows 发布还要求 `WINDOWS_TIMESTAMP_URL` 仓库 Variable，以及 `WINDOWS_CERTIFICATE`、`WINDOWS_CERTIFICATE_PASSWORD` Secrets；其中 `WINDOWS_CERTIFICATE` 是只含一张带私钥代码签名证书的 PFX 原始字节 Base64，可用 `[Convert]::ToBase64String([IO.File]::ReadAllBytes('certificate.pfx'))` 生成。证书提供商必须给出 RFC 3161 HTTP(S) 时间戳地址。
+正式发布的 Tauri 更新签名沿用 `TAURI_SIGNING_PUBLIC_KEY` 仓库 Variable，以及 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。Windows Authenticode 还要求 `WINDOWS_TIMESTAMP_URL` 仓库 Variable，以及 `WINDOWS_CERTIFICATE`、`WINDOWS_CERTIFICATE_PASSWORD` Secrets；其中 `WINDOWS_CERTIFICATE` 是只含一张带私钥代码签名证书的 PFX 原始字节 Base64，可用 `[Convert]::ToBase64String([IO.File]::ReadAllBytes('certificate.pfx'))` 生成。证书提供商必须给出 RFC 3161 HTTP(S) 时间戳地址。
 
-更新公钥在 Broker 和桌面编译前注入；PFX 只写入临时运行目录，导入当前用户证书库后立即删除文件。`CNB_TOKEN` 只传给同步步骤，main 预热不读取任何发布 Secret。缺少证书、证书不是代码签名用途、PFX 含多个私钥签名证书或时间戳地址无效时，标签构建在上传产物前失败。
+无签名验证直接使用仓库配置中的更新公钥；若同时配置 `TAURI_SIGNING_PUBLIC_KEY`，它仍必须与仓库一致。正式发布要求该 Variable 存在并在 Broker 和桌面编译前核对。PFX 只写入临时运行目录，导入当前用户证书库后立即删除文件。`CNB_TOKEN` 只传给同步步骤，main 预热和无签名验证不读取任何发布 Secret。缺少证书、证书不是代码签名用途、PFX 含多个私钥签名证书或时间戳地址无效时，正式发布在上传产物前失败。
 
 ## 缓存与编译
 
@@ -21,7 +22,9 @@ Broker 使用独立目录和 `crt-static`；桌面使用独立正式编译目录
 
 main 上的前端、Rust、依赖、资源、脚本和工作流变更触发预热，纯文档变更跳过。预热复用完整验证产生的前端产物，只进行 Broker 和桌面正式编译，不打包、不签名、不发布。
 
-发布前端仅构建一次。CI 临时配置关闭 Tauri 前置构建及自动生成更新签名：Broker 编译后先独立添加 Authenticode 签名；Tauri 在 NSIS 打包阶段通过参数化 `signCommand` 签署补丁后的桌面程序和最终安装包。随后对三份 PE 文件逐一校验签名证书、时间戳和 Windows 信任链，全部通过后才为最终安装包生成 Tauri 更新签名。普通本地构建和 `npm run verify:all` 保持原行为。临时配置与产物均在已忽略目录内。
+发布前端仅构建一次。正式发布的 CI 临时配置关闭 Tauri 前置构建及自动生成更新签名：Broker 编译后先独立添加 Authenticode 签名；Tauri 在 NSIS 打包阶段通过参数化 `signCommand` 签署补丁后的桌面程序和最终安装包。随后对三份 PE 文件逐一校验签名证书、时间戳和 Windows 信任链，全部通过后才为最终安装包生成 Tauri 更新签名。
+
+无签名验证使用同一套优化编译和 NSIS 打包路径，但不配置 `signCommand`。收集产物前会确认 Broker、桌面程序和安装包的产品版本一致且 Authenticode 状态均为 `NotSigned`。验证目录仅允许 `*-UNSIGNED.exe`、`VALIDATION-ONLY.txt` 和 `validation-context.json`，因此不能被正式发布脚本接受。普通本地构建和 `npm run verify:all` 保持原行为；临时配置与产物均在已忽略目录内。
 
 Authenticode 与 Tauri 更新签名用途不同：前者向 Windows 证明发布者身份并积累下载信誉，后者让已安装的 FsTTY 校验更新包未被替换。签名顺序不能颠倒，因为 Authenticode 会改变安装包字节；更新签名必须覆盖最终已签名的安装包。
 
@@ -36,13 +39,12 @@ Authenticode 与 Tauri 更新签名用途不同：前者向 Windows 证明发布
 
 ## 本次本地验证
 
-2026-09-18 在 Windows 完成 `npm run verify:all`、27 项发布相关测试、`cargo-audit 0.22.2` 审计及 Actionlint 检查。生成测试密钥后完成正式优化编译、NSIS 打包、独立签名及产物清单校验，未执行安装或发布。
+2026-09-19 在 Windows 完成 `npm run verify:all`：83 个前端与脚本测试文件共 585 项测试通过，应用 Rust 测试 334 项通过、2 项按环境要求忽略，Broker 单元测试 35 项、SSH 边界测试 5 项及网络测试 10 项全部通过，格式、Clippy 和生产前端构建同时通过。
 
 | 阶段 | 本地耗时 |
 | --- | ---: |
-| Broker 独立目录首次编译 | 64.9 秒 |
-| 桌面编译（已有部分依赖） | 182.1 秒 |
-| NSIS 打包 | 18.0 秒 |
-| Tauri 更新测试签名 | 0.2 秒 |
+| Broker 无签名优化编译 | 42.2 秒 |
+| 桌面无签名优化编译 | 152.9 秒 |
+| NSIS 无签名打包 | 12.4 秒 |
 
-安装包大小 11.99 MiB；解包后的 Broker、包装目录副本和独立编译产物 SHA-256 完全一致。这里使用本地已有依赖，不能作为 GitHub CI 冷、热缓存提速结果。真实 CI 两次运行的总耗时、缓存命中和恢复体积尚待测量。
+本地 `collect-validation` 确认 Broker、桌面程序和安装包的 `ProductVersion` 均为 `1.6.2`，签名状态均为 `NotSigned`。最终验证安装包大小为 12,486,461 字节，SHA-256 为 `31aaa523f48c39a7dea1d2e2d3645169a5322fdbaf9b79f673f4a6401d94263e`；目录不含 `.sig` 或 `latest.json`。本次只执行编译与产物隔离校验，未安装、上传或发布。这里使用本地已有依赖，不能作为 GitHub CI 冷、热缓存提速结果；远端 Artifact 仍需在改动进入 main 后手动运行 `publish=false` 验证。

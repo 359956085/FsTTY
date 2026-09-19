@@ -12,6 +12,25 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
+  it("从真实日志提取 v1.6.2 的无签名验证与正式发布门禁说明", () => {
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    expect(changelog).toContain("## [1.6.2] - 2026-09-19");
+    const notes = extractVersionReleaseNotes(changelog, "v1.6.2");
+    expect(notes.match(/^- /gm)).toHaveLength(6);
+    for (const expected of [
+      "publish=false",
+      "UNSIGNED",
+      "Windows Sandbox 或虚拟机",
+      "publish=true",
+      "unsigned NSIS validation build",
+      "RFC 3161 timestamp",
+    ]) {
+      expect(notes).toContain(expected);
+    }
+    expect(notes).not.toContain("## [1.6.1]");
+    expect(notes).not.toContain("Unreleased");
+  });
+
   it("从真实日志提取 v1.6.1 的管理员兼容与更新诊断说明", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain("## [1.6.1] - 2026-09-19");

@@ -2,7 +2,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { affectsBuild, createUpdateManifest, sha256, validateArtifacts, validateReleaseRef } from "./release-artifacts.mjs";
+import {
+  affectsBuild,
+  createUpdateManifest,
+  resolveReleaseRun,
+  sha256,
+  validateArtifacts,
+  validateReleaseRef,
+  validateValidationArtifacts,
+} from "./release-artifacts.mjs";
 import { publishGithubRelease } from "./publish-github-release.mjs";
 
 const repo = "example/FsTTY";
@@ -30,6 +38,41 @@ async function fixture() {
   }
   await save();
   return { directory, context, files, manifest, save };
+}
+
+async function validationFixture() {
+  const directory = await mkdtemp(join(tmpdir(), "fstty-validation-test-"));
+  directories.push(directory);
+  const version = "1.6.2";
+  const ref = "refs/heads/main";
+  const installer = `FsTTY_${version}_x64-setup-UNSIGNED.exe`;
+  const files = {
+    [installer]: Buffer.from("未签名测试安装包"),
+    "VALIDATION-ONLY.txt": Buffer.from(`FsTTY 未签名 / UNSIGNED\nCommit: ${commit}\n`),
+  };
+  const context = {
+    schema: 1,
+    purpose: "unsigned-validation",
+    publishable: false,
+    authenticode: false,
+    updaterSignature: false,
+    repo,
+    ref,
+    commit,
+    version,
+    createdAt: "2026-09-19T00:00:00.000Z",
+    files: {},
+  };
+  async function save() {
+    context.files = {};
+    for (const [name, bytes] of Object.entries(files)) {
+      await writeFile(join(directory, name), bytes);
+      context.files[name] = { size: bytes.length, sha256: sha256(bytes) };
+    }
+    await writeFile(join(directory, "validation-context.json"), JSON.stringify(context));
+  }
+  await save();
+  return { directory, context, files, installer, ref, save, version };
 }
 
 function github({ failUpload = 0, live = false, moved = false, corrupt = false } = {}) {
@@ -74,6 +117,42 @@ describe("发布产物与恢复", () => {
     }
   });
 
+  it("手动非发布运行使用默认分支无签名验证，其他运行保持正式发布", () => {
+    expect(resolveReleaseRun({
+      eventName: "workflow_dispatch",
+      publishRequested: "false",
+      ref: "refs/heads/main",
+      defaultBranch: "main",
+      version: "1.6.2",
+    })).toEqual({ mode: "validation", tag: "v1.6.2" });
+    for (const configuration of [
+      { eventName: "push", publishRequested: "", ref: "refs/tags/v1.6.2" },
+      { eventName: "workflow_dispatch", publishRequested: "true", ref: "refs/tags/v1.6.2" },
+    ]) {
+      expect(resolveReleaseRun({ ...configuration, defaultBranch: "main", version: "1.6.2" }))
+        .toEqual({ mode: "release", tag: "v1.6.2" });
+    }
+  });
+
+  it("无签名验证拒绝标签和非默认分支，正式发布拒绝普通分支", () => {
+    for (const ref of ["refs/tags/v1.6.2", "refs/heads/feature"]) {
+      expect(() => resolveReleaseRun({
+        eventName: "workflow_dispatch",
+        publishRequested: false,
+        ref,
+        defaultBranch: "main",
+        version: "1.6.2",
+      })).toThrow("默认分支 main");
+    }
+    expect(() => resolveReleaseRun({
+      eventName: "workflow_dispatch",
+      publishRequested: true,
+      ref: "refs/heads/main",
+      defaultBranch: "main",
+      version: "1.6.2",
+    })).toThrow("版本一致");
+  });
+
   it("仅构建输入变更触发预热", () => {
     expect(affectsBuild(["README.md", "docs/windows-release-ci.md", "CHANGELOG.md"])).toBe(false);
     for (const file of ["src/App.tsx", "src-tauri/Cargo.lock", "public/icon.png", "scripts/build-broker.mjs", ".github/workflows/quality.yml", "package-lock.json", "vite.config.ts", "tsconfig.json"]) {
@@ -90,6 +169,24 @@ describe("发布产物与恢复", () => {
     await data.save();
     await rm(join(data.directory, "FsTTY_1.5.0_x64-setup.exe.sig"));
     await expect(validateArtifacts(data.directory, { repo, tag, commit })).rejects.toThrow();
+  });
+
+  it("无签名验证产物使用独立清单且不能作为正式发布产物", async () => {
+    const data = await validationFixture();
+    const expected = { repo, commit, version: data.version, ref: data.ref };
+    expect((await validateValidationArtifacts(data.directory, expected)).publishable).toBe(false);
+    await expect(validateArtifacts(data.directory, { repo, tag: `v${data.version}`, commit }))
+      .rejects.toThrow();
+
+    await writeFile(join(data.directory, data.installer), "被替换");
+    await expect(validateValidationArtifacts(data.directory, expected)).rejects.toThrow("校验失败");
+    await data.save();
+    await writeFile(join(data.directory, "latest.json"), "{}");
+    await expect(validateValidationArtifacts(data.directory, expected)).rejects.toThrow("非预期文件");
+    await rm(join(data.directory, "latest.json"));
+    data.context.publishable = true;
+    await writeFile(join(data.directory, "validation-context.json"), JSON.stringify(data.context));
+    await expect(validateValidationArtifacts(data.directory, expected)).rejects.toThrow("上下文无效");
   });
 
   it.each(["url", "signature", "platform", "version"])("即使清单哈希被重写也拒绝错误元数据：%s", async field => {
@@ -144,6 +241,34 @@ describe("发布产物与恢复", () => {
     expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE");
     expect(workflow).toContain("secrets.WINDOWS_CERTIFICATE_PASSWORD");
     expect(workflow).toContain("vars.WINDOWS_TIMESTAMP_URL");
+    expect(workflow).toContain("mode: ${{ steps.prepare.outputs.mode }}");
+    expect(workflow).toContain("FSTTY_REQUIRE_AUTHENTICODE: ${{ needs.prepare.outputs.mode == 'release' && '1' || '0' }}");
+    expect(workflow).toContain("if: needs.prepare.outputs.mode == 'release'");
+    expect(workflow).toContain("if: needs.prepare.outputs.mode == 'validation'");
+    expect(workflow).toContain("release-artifacts.mjs collect-validation");
+    expect(workflow).toContain("windows-validation-${{ github.run_id }}");
+    expect(workflow).toMatch(/needs: \[prepare, verify, build\]\r?\n\s+if: needs\.prepare\.outputs\.mode == 'release'/);
+    for (const name of [
+      "导入 Windows Authenticode 证书",
+      "Broker Authenticode 签名",
+      "校验全部 Authenticode 签名",
+      "签署更新安装包",
+      "整理与校验正式发布产物",
+      "上传本次运行的正式发布产物",
+    ]) {
+      const start = workflow.indexOf(`- name: ${name}`);
+      const end = workflow.indexOf("\n      - ", start + 1);
+      expect(start).toBeGreaterThan(0);
+      expect(workflow.slice(start, end < 0 ? undefined : end))
+        .toContain("if: needs.prepare.outputs.mode == 'release'");
+    }
+    for (const name of ["整理与校验未签名验证产物", "上传本次运行的未签名验证产物"]) {
+      const start = workflow.indexOf(`- name: ${name}`);
+      const end = workflow.indexOf("\n      - ", start + 1);
+      expect(start).toBeGreaterThan(0);
+      expect(workflow.slice(start, end < 0 ? undefined : end))
+        .toContain("if: needs.prepare.outputs.mode == 'validation'");
+    }
     const brokerSignature = workflow.indexOf("ci-build.mjs authenticode-broker");
     const bundle = workflow.indexOf("ci-build.mjs bundle");
     const authenticodeVerification = workflow.indexOf("ci-build.mjs verify-authenticode");

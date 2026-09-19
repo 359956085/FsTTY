@@ -1,6 +1,6 @@
 [package]
 name = "fstty"
-version = "1.6.1"
+version = "1.6.2"
 description = "FsTTY"
 authors = ["fengshi"]
 edition = "2021"

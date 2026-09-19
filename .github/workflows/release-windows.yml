@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 正式发布；关闭时仅验证和构建，必须选择版本标签
+        description: 正式发布；关闭时从默认分支生成未签名验证包
         type: boolean
         default: false
       cold-cache:
@@ -28,6 +28,7 @@ jobs:
     outputs:
       commit: ${{ steps.prepare.outputs.commit }}
       tag: ${{ steps.prepare.outputs.tag }}
+      mode: ${{ steps.prepare.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -36,6 +37,9 @@ jobs:
       - run: npm run check:version
       - id: prepare
         name: 校验标签和更新说明
+        env:
+          FSTTY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FSTTY_PUBLISH_REQUESTED: ${{ inputs.publish }}
         run: node scripts/release-artifacts.mjs prepare
 
   verify:
@@ -61,13 +65,14 @@ jobs:
         run: npm run verify:rust
 
   build:
-    name: Windows 构建与签名
+    name: Windows 构建与产物
     needs: prepare
     runs-on: windows-latest
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/desktop
       FSTTY_BROKER_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/broker
-      FSTTY_REQUIRE_AUTHENTICODE: '1'
+      FSTTY_RELEASE_MODE: ${{ needs.prepare.outputs.mode }}
+      FSTTY_REQUIRE_AUTHENTICODE: ${{ needs.prepare.outputs.mode == 'release' && '1' || '0' }}
       FSTTY_AUTHENTICODE_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
     steps:
       - uses: actions/checkout@v7
@@ -82,6 +87,7 @@ jobs:
           cold-cache: ${{ inputs.cold-cache || false }}
       - run: npm ci
       - name: 导入 Windows Authenticode 证书
+        if: needs.prepare.outputs.mode == 'release'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -103,7 +109,7 @@ jobs:
           } finally {
             Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
           }
-      - name: 编译前注入更新公钥
+      - name: 编译前核对更新公钥
         env:
           FSTTY_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
         run: node scripts/ci-build.mjs configure
@@ -112,29 +118,40 @@ jobs:
       - name: Broker 静态运行库构建
         run: node scripts/ci-build.mjs broker
       - name: Broker Authenticode 签名
+        if: needs.prepare.outputs.mode == 'release'
         run: node scripts/ci-build.mjs authenticode-broker
       - name: 桌面正式编译
         run: node scripts/ci-build.mjs desktop
-      - name: NSIS 安装包生成与 Authenticode 签名
+      - name: NSIS 安装包生成
         run: node scripts/ci-build.mjs bundle
       - name: 校验全部 Authenticode 签名
+        if: needs.prepare.outputs.mode == 'release'
         run: node scripts/ci-build.mjs verify-authenticode
       - name: 签署更新安装包
+        if: needs.prepare.outputs.mode == 'release'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/ci-build.mjs sign
-      - name: 整理与校验产物
+      - name: 整理与校验正式发布产物
+        if: needs.prepare.outputs.mode == 'release'
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
         run: node scripts/release-artifacts.mjs collect
+      - name: 整理与校验未签名验证产物
+        if: needs.prepare.outputs.mode == 'validation'
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: node scripts/release-artifacts.mjs collect-validation
       - name: 开始产物上传计时
         id: artifact-clock
         shell: pwsh
         run: '"started=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT'
-      - name: 上传本次运行的发布产物
-        id: upload
+      - name: 上传本次运行的正式发布产物
+        id: upload-release
+        if: needs.prepare.outputs.mode == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ github.run_id }}
@@ -142,20 +159,41 @@ jobs:
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
-      - name: 记录产物体积与上传耗时
+      - name: 上传本次运行的未签名验证产物
+        id: upload-validation
+        if: needs.prepare.outputs.mode == 'validation'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-${{ github.run_id }}
+          path: artifacts/windows-validation/
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+      - name: 记录正式发布产物体积与上传耗时
+        if: needs.prepare.outputs.mode == 'release'
         shell: pwsh
         env:
-          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_URL: ${{ steps.upload-release.outputs.artifact-url }}
           ARTIFACT_STARTED: ${{ steps.artifact-clock.outputs.started }}
         run: |
           $size = (Get-ChildItem -LiteralPath artifacts/windows-release -File | Measure-Object -Property Length -Sum).Sum
           $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:ARTIFACT_STARTED
           "- 发布产物：$([Math]::Round($size / 1MB, 2)) MiB；Artifact 上传 $elapsed 秒；$env:ARTIFACT_URL" >> $env:GITHUB_STEP_SUMMARY
+      - name: 记录未签名验证产物体积与上传耗时
+        if: needs.prepare.outputs.mode == 'validation'
+        shell: pwsh
+        env:
+          ARTIFACT_URL: ${{ steps.upload-validation.outputs.artifact-url }}
+          ARTIFACT_STARTED: ${{ steps.artifact-clock.outputs.started }}
+        run: |
+          $size = (Get-ChildItem -LiteralPath artifacts/windows-validation -File | Measure-Object -Property Length -Sum).Sum
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:ARTIFACT_STARTED
+          "- 未签名验证产物：$([Math]::Round($size / 1MB, 2)) MiB；Artifact 上传 $elapsed 秒；$env:ARTIFACT_URL" >> $env:GITHUB_STEP_SUMMARY
 
   publish:
     name: GitHub 发布与 CNB 同步
     needs: [prepare, verify, build]
-    if: github.event_name == 'push' || inputs.publish == true
+    if: needs.prepare.outputs.mode == 'release'
     runs-on: windows-latest
     permissions:
       contents: write

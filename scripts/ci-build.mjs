@@ -6,6 +6,7 @@ import {
   readAuthenticodeSettings,
   tauriAuthenticodeConfig,
 } from "./authenticode.mjs";
+import { resolveUpdaterPublicKey } from "./ci-build-config.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const configPath = resolve(root, "src-tauri/target/ci-build.json");
@@ -25,16 +26,15 @@ const started = Date.now();
 try {
   switch (mode) {
     case "configure": {
-      const key = process.env.FSTTY_UPDATER_PUBLIC_KEY?.trim();
-      if (!key || /[\r\n]/.test(key)) throw new Error("缺少或无效的更新公钥");
-      // Broker 构建脚本直接读取基础配置，必须在任何 Rust 编译前注入公钥。
+      // Broker 构建脚本直接读取基础配置，必须在任何 Rust 编译前核对公钥。
       const original = resolve(root, "src-tauri/tauri.conf.json");
       const config = JSON.parse(readFileSync(original, "utf8"));
       const configuredKey = config.plugins?.updater?.pubkey?.trim();
-      if (!configuredKey) throw new Error("基础配置缺少更新公钥");
-      if (configuredKey !== key) throw new Error("Actions 更新公钥与仓库配置不一致");
-      config.plugins.updater.pubkey = key;
-      writeFileSync(original, `${JSON.stringify(config, null, 2)}\n`);
+      resolveUpdaterPublicKey(
+        configuredKey,
+        process.env.FSTTY_UPDATER_PUBLIC_KEY,
+        process.env.FSTTY_REQUIRE_AUTHENTICODE === "1",
+      );
       mkdirSync(resolve(root, "src-tauri/target"), { recursive: true });
       const signing = readAuthenticodeSettings();
       const ciConfig = { build: { beforeBuildCommand: "" }, bundle: { createUpdaterArtifacts: false } };
