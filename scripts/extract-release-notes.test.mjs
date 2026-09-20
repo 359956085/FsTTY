@@ -12,37 +12,24 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
-  it("从真实日志提取 v1.6.2 的无签名验证与正式发布门禁说明", () => {
+  it("从真实日志提取 v1.6.2 合并后的完整说明", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain("## [1.6.2] - 2026-09-19");
     const notes = extractVersionReleaseNotes(changelog, "v1.6.2");
-    expect(notes.match(/^- /gm)).toHaveLength(6);
+    expect(notes.match(/^- /gm)).toHaveLength(22);
     for (const expected of [
       "publish=false",
       "UNSIGNED",
       "Windows Sandbox 或虚拟机",
       "publish=true",
-      "unsigned NSIS validation build",
-      "without Authenticode",
-      "Tauri updater private key",
-    ]) {
-      expect(notes).toContain(expected);
-    }
-    expect(notes).not.toContain("## [1.6.1]");
-    expect(notes).not.toContain("Unreleased");
-  });
-
-  it("从真实日志提取 v1.6.1 的管理员兼容与更新诊断说明", () => {
-    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-    expect(changelog).toContain("## [1.6.1] - 2026-09-19");
-    const notes = extractVersionReleaseNotes(changelog, "v1.6.1");
-    expect(notes.match(/^- /gm)).toHaveLength(16);
-    for (const expected of [
       "存在关联普通令牌时",
       "内置 Administrator 或关闭 UAC",
       "随机操作 ID",
       "ProgramData 日志",
       "Authenticode 签名、时间戳与信任链门禁",
+      "unsigned NSIS validation build",
+      "without Authenticode",
+      "Tauri updater private key",
       "When a linked standard token exists",
       "random operation ID",
       "ACL-protected ProgramData logs",
@@ -50,7 +37,7 @@ describe("发布更新说明提取", () => {
     ]) {
       expect(notes).toContain(expected);
     }
-    expect(notes).not.toContain("## [1.6.0]");
+    expect(notes).not.toContain("## [1.6.1]");
     expect(notes).not.toContain("Unreleased");
   });
 

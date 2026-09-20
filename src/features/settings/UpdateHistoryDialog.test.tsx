@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UpdateHistoryDialog } from "./UpdateHistoryDialog";
 
 const locale = vi.hoisted(() => ({ value: "zh-CN" }));
+const latestVersionHeadings = ["v1.6.2", "v1.6.0", "v1.5.0"];
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -25,7 +26,7 @@ describe("更新日志弹窗", () => {
 
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.6.2");
-    expect(screen.getByText("v1.6.1")).toBeTruthy();
+    expect(screen.queryByText("v1.6.1")).toBeNull();
     expect(screen.getByText("v1.6.0")).toBeTruthy();
     expect(screen.getByText("v1.5.0")).toBeTruthy();
     expect(screen.getByText("v1.4.0")).toBeTruthy();
@@ -75,45 +76,6 @@ describe("更新日志弹窗", () => {
         "从默认分支手动运行 Windows 发布工作流且 publish=false 时，执行完整的前端、Rust、Broker、桌面和 NSIS 无签名验证构建，无需 Windows 代码签名证书或 Tauri 更新私钥。",
         "无签名安装包会以 UNSIGNED 文件名和独立验证清单上传，仅用于 Windows Sandbox 或虚拟机验收，不生成更新签名、latest.json、GitHub Release 或 CNB Release。",
         "标签推送或 publish=true 继续发布未带 Authenticode 的 Windows 安装包，但强制要求 Tauri 更新私钥、更新签名和 latest.json；正式发布不再读取 PFX 或时间戳配置。",
-      ],
-    },
-    {
-      language: "en-US",
-      notes: [
-        "Manually running the Windows release workflow from the default branch with publish=false now performs the complete frontend, Rust, broker, desktop, and unsigned NSIS validation build without requiring a Windows code-signing certificate or Tauri updater private key.",
-        "The unsigned installer is uploaded with an UNSIGNED filename and a separate validation manifest for Windows Sandbox or virtual-machine testing only. It does not generate an updater signature, latest.json, GitHub Release, or CNB Release.",
-        "Tag pushes and publish=true continue to publish Windows installers without Authenticode, while requiring the Tauri updater private key, updater signature, and latest.json. Production releases no longer read PFX or timestamp settings.",
-      ],
-    },
-  ])("$language 展示 v1.6.2 完整说明并保留历史", ({ language, notes }) => {
-    locale.value = language;
-    render(<UpdateHistoryDialog onClose={vi.fn()} open />);
-
-    expect(
-      screen
-        .getAllByRole("heading", { level: 3 })
-        .slice(0, 3)
-        .map((heading) => heading.textContent),
-    ).toEqual(["v1.6.2", "v1.6.1", "v1.6.0"]);
-    const latest = screen
-      .getByRole("heading", { level: 3, name: "v1.6.2" })
-      .closest("article");
-    if (!latest) {
-      throw new Error("缺少 v1.6.2 更新记录");
-    }
-    const content = within(latest);
-    expect(
-      content.getAllByRole("listitem").map((item) => item.textContent),
-    ).toEqual(notes);
-    expect(content.getByText("2026-09-19")).toBeTruthy();
-    expect(screen.queryByText("Unreleased")).toBeNull();
-    expect(screen.queryByText("release-notes:zh-CN:start")).toBeNull();
-  });
-
-  it.each([
-    {
-      language: "zh-CN",
-      notes: [
         "支持从已提权终端启动安装：存在关联普通令牌时，安装完成后以原用户普通权限启动桌面；内置 Administrator 或关闭 UAC 且没有普通令牌时，自动进入管理员兼容模式。",
         "交互安装会在兼容模式继续前说明桌面将保持管理员权限，静默安装会自动继续并写入日志。会话 0、SYSTEM、服务账号、跨会话调用和异常关联令牌仍会被拒绝。",
         "在线更新确认不再显示完整 SID，并会明确说明更新后的桌面权限。",
@@ -127,6 +89,9 @@ describe("更新日志弹窗", () => {
     {
       language: "en-US",
       notes: [
+        "Manually running the Windows release workflow from the default branch with publish=false now performs the complete frontend, Rust, broker, desktop, and unsigned NSIS validation build without requiring a Windows code-signing certificate or Tauri updater private key.",
+        "The unsigned installer is uploaded with an UNSIGNED filename and a separate validation manifest for Windows Sandbox or virtual-machine testing only. It does not generate an updater signature, latest.json, GitHub Release, or CNB Release.",
+        "Tag pushes and publish=true continue to publish Windows installers without Authenticode, while requiring the Tauri updater private key, updater signature, and latest.json. Production releases no longer read PFX or timestamp settings.",
         "Installers can now start from an elevated terminal. When a linked standard token exists, the desktop starts with the original user's standard rights; built-in Administrator and UAC-disabled sessions without a standard token automatically use administrator compatibility mode.",
         "Interactive installs explain that the desktop will retain administrator rights before compatibility mode continues. Silent installs continue automatically and record the mode. Session 0, SYSTEM, service accounts, cross-session callers, and invalid linked tokens remain blocked.",
         "Online update confirmation no longer exposes a full SID and now states the desktop permission level after updating.",
@@ -137,7 +102,7 @@ describe("更新日志弹窗", () => {
         "Production Windows releases now require trusted, timestamped Authenticode signatures on the broker, desktop executable, and installer. Any signature, timestamp, or trust-chain failure stops the release before upload.",
       ],
     },
-  ])("$language 展示 v1.6.1 完整说明并保留历史", ({ language, notes }) => {
+  ])("$language 展示 v1.6.2 完整说明并保留历史", ({ language, notes }) => {
     locale.value = language;
     render(<UpdateHistoryDialog onClose={vi.fn()} open />);
 
@@ -146,12 +111,12 @@ describe("更新日志弹窗", () => {
         .getAllByRole("heading", { level: 3 })
         .slice(0, 3)
         .map((heading) => heading.textContent),
-    ).toEqual(["v1.6.2", "v1.6.1", "v1.6.0"]);
+    ).toEqual(latestVersionHeadings);
     const latest = screen
-      .getByRole("heading", { level: 3, name: "v1.6.1" })
+      .getByRole("heading", { level: 3, name: "v1.6.2" })
       .closest("article");
     if (!latest) {
-      throw new Error("缺少 v1.6.1 更新记录");
+      throw new Error("缺少 v1.6.2 更新记录");
     }
     const content = within(latest);
     expect(
@@ -194,7 +159,7 @@ describe("更新日志弹窗", () => {
         .getAllByRole("heading", { level: 3 })
         .slice(0, 3)
         .map((heading) => heading.textContent),
-    ).toEqual(["v1.6.2", "v1.6.1", "v1.6.0"]);
+    ).toEqual(latestVersionHeadings);
     const latest = screen.getByRole("heading", { level: 3, name: "v1.6.0" }).closest("article");
     if (!latest) {
       throw new Error("缺少 v1.6.0 更新记录");
@@ -234,7 +199,7 @@ describe("更新日志弹窗", () => {
         .getAllByRole("heading", { level: 3 })
         .slice(0, 3)
         .map((heading) => heading.textContent),
-    ).toEqual(["v1.6.2", "v1.6.1", "v1.6.0"]);
+    ).toEqual(latestVersionHeadings);
     const latest = screen.getByRole("heading", { level: 3, name: "v1.5.0" }).closest("article");
     if (!latest) {
       throw new Error("缺少 v1.5.0 更新记录");
