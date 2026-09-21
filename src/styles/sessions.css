@@ -16,7 +16,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--workspace-divider);
-  background: var(--workspace-surface);
+  background: var(--workspace-tabs-bg);
   scrollbar-width: none;
 }
 
@@ -474,11 +474,16 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--workspace-surface);
+  background: var(--workspace-files-bg);
 }
 
 .workspace-grid > .resize-handle-vertical {
   grid-area: divider;
+}
+
+.sessions-page > .resize-handle-vertical,
+.workspace-grid > .resize-handle-vertical {
+  background: linear-gradient(to right, transparent 1px, var(--workspace-resize-divider) 1px 3px, transparent 3px);
 }
 
 .terminal-expand-right {
@@ -513,6 +518,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--workspace-files-bg);
 }
 
 .file-drop-overlay {
@@ -720,7 +726,7 @@
   z-index: 2;
   min-height: 29px;
   border-radius: 0;
-  background: var(--workspace-surface);
+  background: var(--workspace-files-bg);
   color: var(--muted);
 }
 
@@ -982,6 +988,8 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  border-top: 1px solid var(--workspace-panel-divider);
+  background: var(--workspace-status-bg);
 }
 
 .device-metrics {

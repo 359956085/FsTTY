@@ -47,10 +47,10 @@ const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
     selectionBackground: "#5b6b7c66",
   },
   light: {
-    background: "#ffffff",
+    background: "#f6f8fa",
     foreground: "#1f2933",
     cursor: "#1f2933",
-    cursorAccent: "#ffffff",
+    cursorAccent: "#f6f8fa",
     black: "#1f2933",
     red: "#c43c49",
     green: "#257a3e",

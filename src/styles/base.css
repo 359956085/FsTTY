@@ -23,7 +23,13 @@
   --warning: #ffad25;
   --titlebar-bg: #111315;
   --workspace-surface: #111619;
+  --workspace-tabs-bg: var(--workspace-surface);
+  --workspace-sidebar-bg: var(--workspace-surface);
+  --workspace-files-bg: var(--workspace-surface);
+  --workspace-status-bg: var(--workspace-surface);
   --workspace-divider: rgba(180, 188, 196, 0.07);
+  --workspace-panel-divider: transparent;
+  --workspace-resize-divider: transparent;
   --app-shell-bg: linear-gradient(135deg, #111315 0%, #17191b 54%, #101214 100%);
   --page-bg: transparent;
   --settings-sidebar-bg: var(--surface-faint);
@@ -74,14 +80,20 @@
   --success: #299144;
   --danger: #cf3f4b;
   --warning: #9a6500;
-  --titlebar-bg: #ffffff;
+  --titlebar-bg: #f8fafd;
   --workspace-surface: #f7f9fb;
-  --workspace-divider: rgba(44, 62, 80, 0.07);
+  --workspace-tabs-bg: #ebeff4;
+  --workspace-sidebar-bg: #f2f5f8;
+  --workspace-files-bg: #f4f6f9;
+  --workspace-status-bg: #f0f3f7;
+  --workspace-divider: #d1d8e2;
+  --workspace-panel-divider: #d1d8e2;
+  --workspace-resize-divider: #d1d8e2;
   --app-shell-bg: #f7f9fb;
   --page-bg: #f7f9fb;
   --settings-sidebar-bg: var(--panel-2);
   --settings-panel-bg: var(--panel);
-  --terminal-bg: #ffffff;
+  --terminal-bg: #f6f8fa;
   --surface-hover: rgba(34, 92, 151, 0.06);
   --surface-selected: rgba(37, 136, 245, 0.12);
   --divider: rgba(44, 62, 80, 0.16);
@@ -98,7 +110,7 @@
   --notice-bg: #f7f9fb;
   --dialog-bg: #ffffff;
   --dialog-surface: #ffffff;
-  --terminal-overlay: rgba(247, 250, 252, 0.88);
+  --terminal-overlay: #f6f8fa;
   --focus-ring: rgba(37, 136, 245, 0.72);
   --shadow-color: rgba(24, 39, 55, 0.18);
   --resize-highlight: rgba(72, 96, 120, 0.48);
@@ -365,7 +377,7 @@ textarea:focus-visible,
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--workspace-surface);
+  background: var(--workspace-sidebar-bg);
 }
 
 .session-sidebar-header,

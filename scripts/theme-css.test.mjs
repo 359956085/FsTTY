@@ -143,6 +143,73 @@ describe("主题样式契约", () => {
     );
   });
 
+  it("亮色主工作区使用独立分层背景和常驻模块分隔线", () => {
+    for (const declaration of [
+      "--titlebar-bg: #f8fafd;",
+      "--workspace-tabs-bg: #ebeff4;",
+      "--workspace-sidebar-bg: #f2f5f8;",
+      "--workspace-files-bg: #f4f6f9;",
+      "--workspace-status-bg: #f0f3f7;",
+      "--workspace-divider: #d1d8e2;",
+      "--workspace-panel-divider: #d1d8e2;",
+      "--workspace-resize-divider: #d1d8e2;",
+      "--terminal-bg: #f6f8fa;",
+      "--terminal-overlay: #f6f8fa;",
+    ]) {
+      expect(baseCss).toContain(declaration);
+    }
+    for (const declaration of [
+      "--workspace-tabs-bg: var(--workspace-surface);",
+      "--workspace-sidebar-bg: var(--workspace-surface);",
+      "--workspace-files-bg: var(--workspace-surface);",
+      "--workspace-status-bg: var(--workspace-surface);",
+      "--workspace-panel-divider: transparent;",
+      "--workspace-resize-divider: transparent;",
+    ]) {
+      expect(baseCss).toContain(declaration);
+    }
+    expectRuleUses(
+      baseCss,
+      ".session-sidebar",
+      "background: var\\(--workspace-sidebar-bg\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".session-tabs",
+      "background: var\\(--workspace-tabs-bg\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".files-panel",
+      "background: var\\(--workspace-files-bg\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".file-head",
+      "background: var\\(--workspace-files-bg\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".status-panel",
+      "background: var\\(--workspace-status-bg\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".status-panel",
+      "border-top: 1px solid var\\(--workspace-panel-divider\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".sessions-page > .resize-handle-vertical",
+      "background: linear-gradient\\(to right, transparent 1px, var\\(--workspace-resize-divider\\) 1px 3px, transparent 3px\\)",
+    );
+    expectRuleUses(
+      sessionsCss,
+      ".workspace-grid > .resize-handle-vertical",
+      "background: linear-gradient\\(to right, transparent 1px, var\\(--workspace-resize-divider\\) 1px 3px, transparent 3px\\)",
+    );
+  });
+
   it("交互控件不再依赖固定暗色中性色", () => {
     expect(sessionsCss).not.toContain("background: #111820;");
     expectRuleUses(

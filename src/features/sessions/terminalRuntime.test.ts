@@ -9,7 +9,8 @@ describe("终端主题", () => {
   it("提供明暗两套可区分的终端配色", () => {
     const light = getTerminalTheme("light");
     const dark = getTerminalTheme("dark");
-    expect(light.background).toBe("#ffffff");
+    expect(light.background).toBe("#f6f8fa");
+    expect(light.cursorAccent).toBe(light.background);
     expect(dark.background).toBe("#080d11");
     expect(light.foreground).not.toBe(dark.foreground);
     expect(light.overviewRulerBorder).toBe("#00000000");
