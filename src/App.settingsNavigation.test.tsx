@@ -9,6 +9,10 @@ import { App } from "./App";
 const mocks = vi.hoisted(() => ({
   getAppSettings: vi.fn(() => new Promise(() => undefined)),
   enterLightweightMode: vi.fn(),
+  minimizeWindow: vi.fn(),
+  toggleMaximizeWindow: vi.fn(),
+  closeWindow: vi.fn(),
+  setSkipTaskbar: vi.fn(),
   lightweightState: {
     active: false,
     suppressConfirmation: false,
@@ -52,6 +56,14 @@ vi.mock("./features/lightweight/lightweightMode", () => ({
 vi.mock("./shared/api/client", () => ({
   api: { getAppSettings: mocks.getAppSettings },
 }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    close: mocks.closeWindow,
+    minimize: mocks.minimizeWindow,
+    setSkipTaskbar: mocks.setSkipTaskbar,
+    toggleMaximize: mocks.toggleMaximizeWindow,
+  }),
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     i18n: { changeLanguage: vi.fn(), t: (key: string) => key },
@@ -78,6 +90,34 @@ describe("应用页面导航", () => {
     mocks.lightweightState.suppressConfirmation = false;
     mocks.updatePhase = "idle";
     mocks.enterLightweightMode.mockResolvedValue(undefined);
+    mocks.minimizeWindow.mockResolvedValue(undefined);
+    mocks.toggleMaximizeWindow.mockResolvedValue(undefined);
+    mocks.closeWindow.mockResolvedValue(undefined);
+    mocks.setSkipTaskbar.mockResolvedValue(undefined);
+  });
+
+  it("最小化后仍保留任务栏归属", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "nav.minimize" }));
+
+    await waitFor(() => expect(mocks.minimizeWindow).toHaveBeenCalledOnce());
+    expect(mocks.setSkipTaskbar).not.toHaveBeenCalled();
+    expect(mocks.toggleMaximizeWindow).not.toHaveBeenCalled();
+    expect(mocks.closeWindow).not.toHaveBeenCalled();
+  });
+
+  it("最大化和关闭仍调用对应的原生窗口操作", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "nav.maximize" }));
+    await waitFor(() => expect(mocks.toggleMaximizeWindow).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "nav.closeWindow" }));
+    await waitFor(() => expect(mocks.closeWindow).toHaveBeenCalledOnce());
+
+    expect(mocks.minimizeWindow).not.toHaveBeenCalled();
+    expect(mocks.setSkipTaskbar).not.toHaveBeenCalled();
   });
 
   it("首次打开设置立即显示内容且会话页保持挂载", () => {
