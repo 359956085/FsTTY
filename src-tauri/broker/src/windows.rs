@@ -405,6 +405,14 @@ pub fn installed_exe() -> crate::Result<PathBuf> {
         .join("FsTTY")
         .join("fstty-broker.exe"))
 }
+pub fn update_helper() -> crate::Result<PathBuf> {
+    Ok(known_folder(&FOLDERID_ProgramFiles)?
+        .join("FsTTY")
+        .join(format!(
+            "fstty-update-helper-{}.exe",
+            env!("CARGO_PKG_VERSION")
+        )))
+}
 pub fn data_dir() -> crate::Result<PathBuf> {
     Ok(known_folder(&FOLDERID_ProgramData)?.join("FsTTYBroker"))
 }
@@ -443,10 +451,12 @@ pub fn elevate_update(ticket: &str) -> crate::Result<()> {
 
 fn elevate_action(ticket: &str, update: bool) -> crate::Result<()> {
     uuid::Uuid::parse_str(ticket).map_err(|_| "管理请求 ID 无效")?;
-    launch_admin(&format!(
-        "{} {ticket}",
-        if update { "--update" } else { "--manage" }
-    ))
+    let arguments = format!("{} {ticket}", if update { "--update" } else { "--manage" });
+    if update {
+        launch_admin_exe(update_helper()?, &arguments)
+    } else {
+        launch_admin(&arguments)
+    }
 }
 
 pub fn repair() -> crate::Result<()> {
@@ -454,7 +464,10 @@ pub fn repair() -> crate::Result<()> {
 }
 
 fn launch_admin(arguments: &str) -> crate::Result<()> {
-    let exe = installed_exe()?;
+    launch_admin_exe(installed_exe()?, arguments)
+}
+
+fn launch_admin_exe(exe: PathBuf, arguments: &str) -> crate::Result<()> {
     crate::paths::verify(exe.parent().ok_or("安装目录无效")?, "", false)?;
     crate::paths::verify(&exe, "", false)?;
     let verb = wide("runas");
@@ -477,7 +490,12 @@ fn launch_admin(arguments: &str) -> crate::Result<()> {
         };
     }
     let process = Handle(info.hProcess);
-    if unsafe { WaitForSingleObject(process.0, 300_000) } != WAIT_OBJECT_0 {
+    let timeout = if arguments.starts_with("--update ") {
+        900_000
+    } else {
+        300_000
+    };
+    if unsafe { WaitForSingleObject(process.0, timeout) } != WAIT_OBJECT_0 {
         return Err("安全管理操作超时".into());
     }
     let mut code = 1;
@@ -497,7 +515,11 @@ fn launch_admin(arguments: &str) -> crate::Result<()> {
         return Err("更新包签名验证失败，请重新下载".into());
     }
     if code != 0 {
-        return Err("安全管理操作未完成".into());
+        return Err(if arguments.starts_with("--update ") {
+            "更新安装程序未完成，请查看后台安装日志后重试".into()
+        } else {
+            "安全管理操作未完成".into()
+        });
     }
     Ok(())
 }

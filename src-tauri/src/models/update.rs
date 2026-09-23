@@ -19,7 +19,13 @@ pub struct AppUpdateInfo {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AppUpdateProgress {
-    Started { total_bytes: Option<u64> },
-    Progress { chunk_bytes: u64 },
+    Started {
+        total_bytes: Option<u64>,
+    },
+    Progress {
+        chunk_bytes: u64,
+    },
+    Installing,
+    #[cfg(not(windows))]
     Finished,
 }

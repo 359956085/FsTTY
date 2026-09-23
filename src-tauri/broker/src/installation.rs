@@ -481,6 +481,14 @@ pub(super) fn launch_with_token(record: &Installation, token: &Handle) -> crate:
 mod tests {
     use super::*;
     #[test]
+    fn 已退出调用者在部署前被拒绝() {
+        assert!(caller_context(u32::MAX)
+            .err()
+            .expect("无效进程必须被拒绝")
+            .contains("原调用进程已退出"));
+    }
+
+    #[test]
     fn 安装清单拒绝任意路径和未知格式() {
         let mut value = Installation {
             schema: 1,

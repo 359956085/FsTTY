@@ -19,6 +19,12 @@ if ($Mode -eq 'AssertInstalled') {
     if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ine $record.sha256) { throw '桌面文件与安装记录不匹配。' }
     if (-not $service -or $service.State -ne 'Running' -or $service.StartName -ne 'NT SERVICE\FsTTYBroker') { throw '凭据服务未使用预期身份运行。' }
     if ($service.PathName -notlike ('"' + (Join-Path $protectedDirectory 'fstty-broker.exe') + '" --service')) { throw '服务不在固定受保护目录。' }
+    if ([version]$record.version -ge [version]'1.7.1') {
+        $helper = Join-Path $protectedDirectory "fstty-update-helper-$($record.version).exe"
+        $broker = Join-Path $protectedDirectory 'fstty-broker.exe'
+        if (-not (Test-Path -LiteralPath $helper)) { throw '独立更新助手缺失。' }
+        if ((Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash -ine (Get-FileHash -LiteralPath $broker -Algorithm SHA256).Hash) { throw '更新助手与服务程序不一致。' }
+    }
     if ($registration.UninstallString -ne ('"' + (Join-Path $protectedDirectory 'uninstall.exe') + '"')) { throw '卸载入口不在受保护目录。' }
     if ($registration.InstallLocation.TrimEnd('\') -ine $expected) { throw '机器登记未切换到当前桌面。' }
     if (Test-Path -LiteralPath (Join-Path $protectedDirectory 'installation/transaction.json')) { throw '仍存在未完成的安装事务。' }

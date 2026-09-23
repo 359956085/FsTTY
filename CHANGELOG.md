@@ -6,6 +6,25 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-23
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 修复自动更新期间旧程序提前退出导致安装中止的问题。
+- 自动更新现在会关闭旧程序并启动新版，不再弹出安装向导或要求手动重启。
+- 修复更新失败后暂存票据未及时释放的问题，改进重试提示和安装日志。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Fixed an update failure caused by the old app exiting before deployment.
+- Automatic updates now close the old app and launch the new version without an installer wizard or manual restart.
+- Fixed staged update tickets remaining locked after a failed attempt and improved retry messages and installation logs.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.7.0] - 2026-09-23
 
 <!-- release-notes:zh-CN:start -->

@@ -80,6 +80,9 @@ pub enum Request {
         size: u64,
         signature: String,
     },
+    ReleaseUpdate {
+        ticket: String,
+    },
     List,
     Connect {
         id: String,

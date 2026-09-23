@@ -505,9 +505,9 @@ void i18n.use(initReactI18next).init({
           updateNow: "立即更新",
           retryUpdate: "重试",
           downloadingUpdate: "正在下载更新",
-          installingUpdate: "正在安装更新",
+          installingUpdate: "正在安装更新，程序将自动关闭并启动新版",
           updateProgress: "更新下载进度",
-          updateInstalled: "更新已安装，请重新启动应用",
+          updateInstalled: "更新已安装，新版已自动启动",
           updateUnknownError: "更新失败，请稍后重试",
         },
         errors: {
@@ -1035,9 +1035,9 @@ void i18n.use(initReactI18next).init({
           updateNow: "Update now",
           retryUpdate: "Retry",
           downloadingUpdate: "Downloading update",
-          installingUpdate: "Installing update",
+          installingUpdate: "Installing update. The app will close and launch the new version automatically.",
           updateProgress: "Update download progress",
-          updateInstalled: "Update installed. Restart the app to finish.",
+          updateInstalled: "Update installed. The new version has launched.",
           updateUnknownError: "Update failed. Try again later.",
         },
         errors: {

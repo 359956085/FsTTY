@@ -223,6 +223,10 @@ async fn process(
             Ok(Response::BatchReview { reviews })
         };
     }
+    if let Request::ReleaseUpdate { ticket } = &request {
+        crate::update::release_for_owner(&peer.sid, ticket).await?;
+        return Ok(Response::Complete);
+    }
     let mut db = store.lock().map_err(|_| "服务存储不可用")?;
     match request {
         Request::Status => Ok(Response::Ready { version: VERSION }),

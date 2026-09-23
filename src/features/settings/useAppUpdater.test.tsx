@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   checkAppUpdate: vi.fn(),
   closeAppUpdate: vi.fn(),
   getVersion: vi.fn(),
+  installAppUpdate: vi.fn(),
+  channels: [] as Array<{ onmessage?: (event: { kind: string }) => void }>,
   setIgnoredUpdateVersion: vi.fn(),
 }));
 
@@ -19,7 +21,10 @@ vi.mock("@tauri-apps/api/app", () => ({
 
 vi.mock("@tauri-apps/api/core", () => ({
   Channel: class {
-    onmessage = vi.fn();
+    onmessage?: (event: { kind: string }) => void;
+    constructor() {
+      mocks.channels.push(this);
+    }
   },
 }));
 
@@ -27,6 +32,7 @@ vi.mock("../../shared/api/client", () => ({
   api: {
     checkAppUpdate: mocks.checkAppUpdate,
     closeAppUpdate: mocks.closeAppUpdate,
+    installAppUpdate: mocks.installAppUpdate,
     setIgnoredUpdateVersion: mocks.setIgnoredUpdateVersion,
   },
 }));
@@ -40,6 +46,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.channels.length = 0;
   mocks.getVersion.mockResolvedValue("1.2.1");
   mocks.closeAppUpdate.mockResolvedValue(undefined);
   mocks.setIgnoredUpdateVersion.mockResolvedValue(settings);
@@ -110,5 +117,30 @@ describe("应用启动自动更新", () => {
     expect(result.current.phase).toBe("idle");
     expect(result.current.dialogOpen).toBe(false);
     expect(mocks.checkAppUpdate).toHaveBeenCalledWith("mirror");
+  });
+});
+
+describe("应用更新安装状态", () => {
+  it("安装开始后保持安装中，等待安装调用结束再报告完成", async () => {
+    mocks.checkAppUpdate.mockResolvedValue({ version: "1.7.1" });
+    let finishInstall: (() => void) | undefined;
+    mocks.installAppUpdate.mockImplementation(
+      () => new Promise<void>((resolve) => { finishInstall = resolve; }),
+    );
+    const { result } = renderHook(() => useAppUpdater({
+      autoUpdate: false,
+      ignoredUpdateVersion: null,
+      onSettingsChange: vi.fn(),
+      updateSource: "auto",
+      startupReady: true,
+    }));
+    await act(async () => { await result.current.checkForUpdates(); });
+    expect(result.current.phase).toBe("available");
+    act(() => { void result.current.installUpdate(); });
+    await waitFor(() => expect(mocks.channels).toHaveLength(1));
+    act(() => { mocks.channels[0].onmessage?.({ kind: "installing" }); });
+    expect(result.current.phase).toBe("installing");
+    await act(async () => { finishInstall?.(); });
+    expect(result.current.phase).toBe("completed");
   });
 });

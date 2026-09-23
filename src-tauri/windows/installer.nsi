@@ -99,6 +99,10 @@ LangString UninstallFallback ${LANG_ENGLISH} "The uninstaller failed (exit code:
 
 Function .onInit
   ${GetParameters} $R8
+  ${GetOptions} $R8 "/UPDATE" $0
+  ${IfNot} ${Errors}
+    SetSilent silent
+  ${EndIf}
   System::Call 'shell32::IsUserAnAdmin() i.r0'
   ${If} $0 = 0
     System::Call 'kernel32::GetCurrentProcessId() i.r0'
@@ -126,14 +130,29 @@ Function .onInit
   ${EndIf}
   System::Call 'ole32::CoCreateGuid(g .r0) i.r1'
   ${If} $1 != 0
+    SetErrorLevel 1
     Abort "$(GuidFailed)"
   ${EndIf}
   StrCpy $Bootstrap "$PROGRAMFILES64\FsTTY-install-$0"
   IfFileExists "$Bootstrap" 0 +2
+    SetErrorLevel 1
     Abort "$(BootstrapExists)"
   CreateDirectory "$Bootstrap"
   SetOutPath "$Bootstrap"
   File /oname=fstty-broker.exe "${FSTTY_BROKER_BINARY}"
+  ${If} $InstallMode == "update"
+    ; 在线更新由部署入口一次性核对调用者与安装记录，避免向导阶段留下进程退出竞态。
+    ReadRegStr $INSTDIR HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\FsTTY" "InstallLocation"
+    ${If} $INSTDIR == ""
+      MessageBox MB_ICONSTOP "在线更新找不到已登记的安装目录，请手动运行安装包修复。"
+      Call RemoveBootstrap
+      SetErrorLevel 1
+      Quit
+    ${EndIf}
+    StrCpy $InitialDirectory $INSTDIR
+    StrCpy $OperationId $0
+    Return
+  ${EndIf}
   nsExec::ExecToStack '"$Bootstrap\fstty-broker.exe" --desktop-candidates $CallerPid'
   Pop $0
   Pop $CandidateList
@@ -244,6 +263,7 @@ Section "安装"
     File /oname=WebView2Setup.exe "{{webview2_bootstrapper_path}}"
     ExecWait '"$Bootstrap\WebView2Setup.exe" /silent /install' $0
     ${If} $0 != 0
+      SetErrorLevel 1
       Abort "$(WebViewFailed)"
     ${EndIf}
   ${EndIf}
@@ -256,6 +276,7 @@ Section "安装"
       StrCpy $1 "$(DeployFallback)"
     ${EndIf}
     MessageBox MB_ICONSTOP "$1"
+    SetErrorLevel 1
     Abort "$(DeployAbort)"
   ${EndIf}
   CreateShortcut "$SMPROGRAMS\FsTTY.lnk" "$INSTDIR\fstty.exe"
@@ -297,6 +318,7 @@ Function RemoveBootstrap
   ${EndIf}
 FunctionEnd
 Function .onInstFailed
+  SetErrorLevel 1
   Call RemoveBootstrap
 FunctionEnd
 Function .onGUIEnd
@@ -334,6 +356,7 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\FsTTY.lnk"
   Delete "$DESKTOP\FsTTY.lnk"
   Delete "$PROGRAMFILES64\FsTTY\fstty-broker.exe"
+  Delete "$PROGRAMFILES64\FsTTY\fstty-update-helper-*.exe"
   Delete "$PROGRAMFILES64\FsTTY\uninstall.exe"
   Delete "$PROGRAMFILES64\FsTTY\installer-result.ini"
   ; 非空目录及 ProgramData 凭据数据均保留。

@@ -65,6 +65,27 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> crate::Result<()> {
     }
     Ok(())
 }
+fn install_update_helper(bytes: &[u8]) -> crate::Result<()> {
+    let target = windows::update_helper()?;
+    let temporary = target.with_extension(format!("{}.pending", uuid::Uuid::new_v4()));
+    let mut file = File::create(&temporary).map_err(|_| "无法暂存更新助手")?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "无法保存更新助手")?;
+    drop(file);
+    if unsafe {
+        windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+            windows::wide(&temporary.to_string_lossy()).as_ptr(),
+            windows::wide(&target.to_string_lossy()).as_ptr(),
+            windows_sys::Win32::Storage::FileSystem::MOVEFILE_REPLACE_EXISTING
+                | windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err("无法安装更新助手，请查看后台安装日志".into());
+    }
+    crate::paths::verify(&target, "", false)
+}
 fn backup(state: &Path, index: usize, bytes: &[u8]) -> crate::Result<()> {
     let mut file =
         File::create(state.join(format!("rollback-{index}.bin"))).map_err(|_| "无法备份旧程序")?;
@@ -287,7 +308,7 @@ fn deploy_inner(
     }
     let mut close_paths = previous.clone();
     close_paths.push(directory.to_path_buf());
-    close_desktops(&close_paths)?;
+    close_desktops(&close_paths, !update)?;
     let service = DirectoryLock::open(&super::protected_directory()?, false)?;
     let mut application = desktop.file("fstty.exe")?;
     if application.existed {
@@ -324,6 +345,7 @@ fn deploy_inner(
         drop(uninstaller);
         service_command("--install")?;
         health()?;
+        install_update_helper(&payloads[1])?;
         let record = Installation {
             schema: 1,
             directory: directory.to_path_buf(),
@@ -370,7 +392,7 @@ pub fn uninstall() -> crate::Result<()> {
     let (state, _lock) = authority()?;
     recover_locked(&state)?;
     let record = super::read()?.ok_or("没有有效安装记录，拒绝猜测卸载目标")?;
-    close_desktops(std::slice::from_ref(&record.directory))?;
+    close_desktops(std::slice::from_ref(&record.directory), true)?;
     let desktop = DirectoryLock::open(&record.directory, false)?;
     let mut app = desktop.file_for_delete("fstty.exe")?;
     windows::stop(true)?;
@@ -395,7 +417,7 @@ fn same_version(a: &str, b: &str) -> bool {
     matches!((version_numbers(a), version_numbers(b)), (Ok(a), Ok(b)) if a == b)
 }
 
-pub fn close_desktops(directories: &[PathBuf]) -> crate::Result<()> {
+pub fn close_desktops(directories: &[PathBuf], confirm: bool) -> crate::Result<()> {
     use windows_sys::Win32::{
         Foundation::*,
         System::{Diagnostics::ToolHelp::*, Threading::*},
@@ -434,7 +456,8 @@ pub fn close_desktops(directories: &[PathBuf]) -> crate::Result<()> {
         }
         more = unsafe { Process32NextW(snapshot.0, &mut entry) } != 0;
     }
-    if !processes.is_empty()
+    if confirm
+        && !processes.is_empty()
         && unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),

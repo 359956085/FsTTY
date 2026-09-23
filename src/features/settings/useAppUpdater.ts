@@ -290,7 +290,7 @@ export function useAppUpdater({
             ...current,
             downloadedBytes,
           }));
-        } else {
+        } else if (event.kind === "installing" || event.kind === "finished") {
           setState((current) => ({ ...current, phase: "installing" }));
         }
       };

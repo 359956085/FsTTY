@@ -85,7 +85,7 @@ pub async fn receive(
             return Err("已有待确认更新，请完成更新或五分钟后重试".into());
         }
     }
-    for name in ["manifest.json", "installer.exe", "claimed"] {
+    for name in ["installer.exe", "claimed", "manifest.json"] {
         let path = dir.join(name);
         if path.exists() {
             std::fs::remove_file(path).map_err(|_| "更新正在安装，请稍后重试")?;
@@ -213,14 +213,75 @@ pub async fn stage(bytes: &[u8], signature: String) -> crate::Result<String> {
     }
 }
 
+pub async fn release(ticket: &str) -> crate::Result<()> {
+    uuid::Uuid::parse_str(ticket).map_err(|_| "更新请求无效")?;
+    let mut pipe = windows::connect().await?;
+    protocol::write(
+        &mut pipe,
+        &Request::ReleaseUpdate {
+            ticket: ticket.into(),
+        },
+    )
+    .await?;
+    match protocol::read(&mut pipe).await? {
+        Response::Complete => Ok(()),
+        Response::Error { message } => Err(message),
+        _ => Err("更新票据释放响应无效".into()),
+    }
+}
+
+pub async fn release_for_owner(owner: &str, ticket: &str) -> crate::Result<()> {
+    uuid::Uuid::parse_str(ticket).map_err(|_| "更新请求无效")?;
+    let _guard = UPLOAD
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let dir = windows::data_dir()?.join("update");
+    paths::verify_tree(&dir, &windows::service_sid()?, true)?;
+    expire_ticket(&dir.join("manifest.json"), owner, ticket)
+}
+
+fn expire_ticket(metadata: &Path, owner: &str, ticket: &str) -> crate::Result<()> {
+    let mut manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(metadata).map_err(|_| "更新状态不可用")?)
+            .map_err(|_| "更新状态无效")?;
+    if manifest.ticket != ticket || manifest.owner != owner {
+        return Err("更新请求已失效".into());
+    }
+    manifest.expires = 0;
+    let pending = metadata.with_extension("pending");
+    std::fs::write(
+        &pending,
+        serde_json::to_vec(&manifest).map_err(|_| "无法保存更新状态")?,
+    )
+    .map_err(|_| "无法保存更新状态")?;
+    if unsafe {
+        MoveFileExW(
+            windows::wide(&pending.to_string_lossy()).as_ptr(),
+            windows::wide(&metadata.to_string_lossy()).as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err("无法释放更新票据".into());
+    }
+    Ok(())
+}
+
 pub fn install(ticket: &str) -> crate::Result<()> {
     let operation_id = crate::installation::operation_id(Some(ticket));
     let started = std::time::Instant::now();
     let mut caller_mode = None;
     let mut session_id = None;
-    let result = install_inner(ticket, &mut caller_mode, &mut session_id);
+    let mut validated_owner = None;
+    let result = install_inner(
+        ticket,
+        &mut caller_mode,
+        &mut session_id,
+        &mut validated_owner,
+    );
     let (phase, result_name, code, detail) = match &result {
-        Ok(()) => ("installer_start", "success", "ok", None),
+        Ok(()) => ("installer_complete", "success", "ok", None),
         Err(error) => {
             let failure = crate::installation::classify_failure("--update", error);
             (failure.phase, "failure", failure.code, Some(error.as_str()))
@@ -240,6 +301,45 @@ pub fn install(ticket: &str) -> crate::Result<()> {
         detail,
         elapsed: started.elapsed(),
     });
+    let release_error = if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        let mut failure = None;
+        for attempt in 0..3 {
+            match runtime.block_on(release(ticket)) {
+                Ok(()) => break,
+                Err(error) if attempt == 2 => failure = Some(error),
+                Err(_) => std::thread::sleep(Duration::from_secs(1)),
+            }
+        }
+        failure
+    } else {
+        Some("无法启动更新票据清理".into())
+    };
+    if let Some(error) = release_error {
+        let fallback = validated_owner.as_ref().map(|owner| {
+            let metadata = windows::data_dir()?.join("update").join("manifest.json");
+            expire_ticket(&metadata, owner, ticket)
+        });
+        if !matches!(fallback, Some(Ok(()))) {
+            let detail = format!("服务释放失败：{error}；直接释放结果：{fallback:?}");
+            crate::installation::record(crate::installation::InstallerEvent {
+                operation_id: &operation_id,
+                install_mode: "update",
+                phase: "ticket_release",
+                caller_mode,
+                session_id,
+                target: None,
+                result: "failure",
+                code: "ticket_release_failed",
+                exit_code: Some(1),
+                rollback: None,
+                detail: Some(&detail),
+                elapsed: started.elapsed(),
+            });
+        }
+    }
     result
 }
 
@@ -247,6 +347,7 @@ fn install_inner(
     ticket: &str,
     caller_mode: &mut Option<crate::installation::CallerMode>,
     session_id: &mut Option<u32>,
+    validated_owner: &mut Option<String>,
 ) -> crate::Result<()> {
     if !windows::current_identity()?.elevated {
         return Err("更新需要管理员权限".into());
@@ -274,6 +375,7 @@ fn install_inner(
     if caller.identity.sid != manifest.owner {
         return Err("更新调用者身份已变化，请重新检查更新".into());
     }
+    *validated_owner = Some(manifest.owner.clone());
     let path = dir.join("installer.exe");
     let mut file = std::fs::OpenOptions::new()
         .read(true)
@@ -307,15 +409,29 @@ fn install_inner(
         .create_new(true)
         .open(dir.join("claimed"))
         .map_err(|_| "更新请求已使用")?;
+    let status = installer_command(&path, &dir, manifest.caller_pid)
+        .status()
+        .map_err(|_| "无法运行已验证的安装程序")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "安装程序未完成（退出码：{}），请查看后台安装日志后重试",
+            status.code().unwrap_or(-1)
+        ))
+    }
+}
+
+fn installer_command(path: &Path, directory: &Path, caller_pid: u32) -> std::process::Command {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new(&path)
+    let mut command = std::process::Command::new(path);
+    command
+        .arg("/S")
         .arg("/UPDATE")
-        .arg(format!("/CALLERPID={}", manifest.caller_pid))
-        .current_dir(&dir)
-        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|_| "无法启动已验证的安装程序")?;
-    Ok(())
+        .arg(format!("/CALLERPID={caller_pid}"))
+        .current_dir(directory)
+        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    command
 }
 
 fn update_confirmation(mode: crate::installation::CallerMode) -> &'static str {
@@ -355,5 +471,47 @@ mod tests {
         let elevated = update_confirmation(crate::installation::CallerMode::AlwaysElevated);
         assert!(elevated.contains("管理员权限"));
         assert!(!elevated.contains("S-1-"));
+    }
+
+    #[test]
+    fn 只释放匹配调用者与票据的暂存更新() {
+        let directory = std::env::temp_dir().join(format!("fstty-update-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let metadata = directory.join("manifest.json");
+        let ticket = uuid::Uuid::new_v4().to_string();
+        let manifest = Manifest {
+            ticket: ticket.clone(),
+            owner: "S-1-5-21-test".into(),
+            signature: "test".into(),
+            expires: 300,
+            caller_pid: 42,
+        };
+        std::fs::write(&metadata, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(expire_ticket(&metadata, "S-1-5-21-other", &ticket).is_err());
+        assert!(expire_ticket(
+            &metadata,
+            &manifest.owner,
+            &uuid::Uuid::new_v4().to_string()
+        )
+        .is_err());
+        let unchanged: Manifest =
+            serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+        assert_eq!(unchanged.expires, 300);
+        expire_ticket(&metadata, &manifest.owner, &ticket).unwrap();
+        let released: Manifest =
+            serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+        assert_eq!(released.ticket, ticket);
+        assert_eq!(released.expires, 0);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn 更新安装器同时收到静默与更新参数() {
+        let command = installer_command(Path::new(r"C:\test\setup.exe"), Path::new(r"C:\test"), 42);
+        let arguments = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments, ["/S", "/UPDATE", "/CALLERPID=42"]);
     }
 }

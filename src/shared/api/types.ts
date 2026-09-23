@@ -45,6 +45,7 @@ export interface AppUpdateInfo {
 export type AppUpdateProgress =
   | { kind: "started"; totalBytes?: number | null }
   | { kind: "progress"; chunkBytes: number }
+  | { kind: "installing" }
   | { kind: "finished" };
 
 export interface ShortcutBinding {

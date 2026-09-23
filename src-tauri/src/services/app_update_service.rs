@@ -147,7 +147,13 @@ fn preference_name(preference: UpdateSourcePreference) -> &'static str {
 
 fn message_code(message: &str) -> &'static str {
     let lower = message.to_ascii_lowercase();
-    if lower.contains("timeout") || message.contains("超时") {
+    if message.contains("待确认更新")
+        || message.contains("更新正在安装")
+        || message.contains("更新正在暂存")
+        || message.contains("更新请求已使用")
+    {
+        "stage_busy"
+    } else if lower.contains("timeout") || message.contains("超时") {
         "timeout"
     } else if lower.contains("proxy") || message.contains("代理") || lower.contains("407") {
         "proxy"
@@ -217,6 +223,9 @@ fn updater_error_message(code: &str, checking: bool) -> &'static str {
 
 fn broker_update_error(error: &str) -> AppError {
     let message = match message_code(error) {
+        "stage_busy" => {
+            "已有更新包正在暂存或安装；请完成当前更新，若安装已中断请稍后重试（最长五分钟）"
+        }
         "uac_cancelled" => "已取消管理员授权，应用更新未安装",
         "update_cancelled" => "应用更新已取消",
         "caller_exited" => "更新调用进程已退出，请重新检查更新",
@@ -389,11 +398,11 @@ impl AppUpdateService {
         match &result {
             Ok(()) => log_update_event(
                 &audit,
-                "install_handoff",
+                "install_complete",
                 source,
                 target_version,
                 "success",
-                "installer_started",
+                "installed",
                 None,
             ),
             Err(error) => log_update_event(
@@ -528,8 +537,10 @@ impl AppUpdateService {
                 "staged",
                 None,
             );
+            let _ = on_progress.send(AppUpdateProgress::Installing);
+            let elevation_ticket = ticket.clone();
             let elevation = match tokio::task::spawn_blocking(move || {
-                fstty_broker::windows::elevate_update(&ticket)
+                fstty_broker::windows::elevate_update(&elevation_ticket)
             })
             .await
             {
@@ -549,6 +560,11 @@ impl AppUpdateService {
                 }
             };
             if let Err(error) = elevation {
+                if error == "已取消管理员授权" {
+                    if let Err(release_error) = fstty_broker::update::release(&ticket).await {
+                        log::warn!("取消授权后释放更新票据失败：{release_error}");
+                    }
+                }
                 log_update_event(
                     audit,
                     "elevate",
@@ -569,7 +585,6 @@ impl AppUpdateService {
                 "approved",
                 None,
             );
-            let _ = on_progress.send(AppUpdateProgress::Finished);
             Ok::<(), AppError>(())
         }
         .await;
@@ -745,6 +760,15 @@ mod proxy_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 暂存占用错误给出等待和重试提示() {
+        let error = "已有待确认更新，请完成更新或五分钟后重试";
+        assert_eq!(message_code(error), "stage_busy");
+        let message = broker_update_error(error).to_string();
+        assert!(message.contains("五分钟"));
+        assert!(message.contains("重试"));
+    }
 
     #[tokio::test]
     async fn 自动模式采用github更新且不等待镜像() {
