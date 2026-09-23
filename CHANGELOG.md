@@ -6,6 +6,25 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-23
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 调整亮色主工作区模块的分层配色。
+- 修复窗口最小化时的任务栏指示状态。
+- 新增官方更新镜像作为下载源。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Refined the layered colors of main workspace modules in the light theme.
+- Fixed the taskbar indicator when the window is minimized.
+- Added the official update mirror as a download source.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.6.2] - 2026-09-19
 
 <!-- release-notes:zh-CN:start -->

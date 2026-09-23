@@ -1,0 +1,10 @@
+[Unit]
+Description=每五分钟同步 FsTTY 官方更新镜像
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+Unit=fstty-mirror.service
+
+[Install]
+WantedBy=timers.target

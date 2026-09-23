@@ -101,7 +101,7 @@ describe("设置状态控制器", () => {
     let secondSave!: Promise<AppSettings | null>;
     act(() => {
       firstSave = result.current.saveUpdateSettings(true, false, "github");
-      secondSave = result.current.saveUpdateSettings(false, true, "cnb");
+      secondSave = result.current.saveUpdateSettings(false, true, "mirror");
     });
     await act(async () => Promise.resolve());
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(1);
@@ -113,7 +113,7 @@ describe("设置状态控制器", () => {
     });
     expect(apiMocks.updateAppSettings).toHaveBeenCalledTimes(2);
 
-    const secondResult = { ...settings, updateSource: "cnb" as const };
+    const secondResult = { ...settings, updateSource: "mirror" as const };
     await act(async () => {
       second.resolve(secondResult);
       await secondSave;
@@ -146,7 +146,7 @@ describe("设置状态控制器", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("保存自动、GitHub 和 CNB 下载源", async () => {
+  it("保存自动、GitHub 和官方镜像下载源", async () => {
     apiMocks.updateAppSettings.mockImplementation(
       async (
         autoUpdate: boolean,
@@ -168,7 +168,7 @@ describe("设置状态控制器", () => {
       }),
     );
 
-    for (const source of ["auto", "github", "cnb"] as const) {
+    for (const source of ["auto", "github", "mirror"] as const) {
       await act(async () => {
         await result.current.saveUpdateSettings(true, false, source);
       });
@@ -176,7 +176,7 @@ describe("设置状态控制器", () => {
 
     expect(apiMocks.updateAppSettings.mock.calls[0]).toEqual([true, false, "auto"]);
     expect(apiMocks.updateAppSettings.mock.calls[1]).toEqual([true, false, "github"]);
-    expect(apiMocks.updateAppSettings.mock.calls[2]).toEqual([true, false, "cnb"]);
+    expect(apiMocks.updateAppSettings.mock.calls[2]).toEqual([true, false, "mirror"]);
     expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
   });
 
@@ -286,7 +286,7 @@ describe("设置状态控制器", () => {
       onChange, settings, translate: (key) => key, updater: {} as AppUpdaterController,
     }));
     act(() => result.current.setProxy("http://draft:7890"));
-    await act(async () => result.current.saveUpdateSettings(false, true, "cnb"));
+    await act(async () => result.current.saveUpdateSettings(false, true, "mirror"));
     expect(apiMocks.setProxySettings).not.toHaveBeenCalled();
     expect(result.current.proxy).toBe("http://draft:7890");
     const proxy = deferred<AppSettings>();

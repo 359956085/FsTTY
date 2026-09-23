@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UpdateHistoryDialog } from "./UpdateHistoryDialog";
 
 const locale = vi.hoisted(() => ({ value: "zh-CN" }));
-const latestVersionHeadings = ["v1.6.2", "v1.6.0", "v1.5.0"];
+const latestVersionHeadings = ["v1.7.0", "v1.6.2", "v1.6.0"];
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -25,7 +25,7 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.6.2");
+    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.7.0");
     expect(screen.queryByText("v1.6.1")).toBeNull();
     expect(screen.getByText("v1.6.0")).toBeTruthy();
     expect(screen.getByText("v1.5.0")).toBeTruthy();
@@ -67,6 +67,42 @@ describe("更新日志弹窗", () => {
     fireEvent.mouseDown(document.querySelector(".dialog-backdrop") as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "sessions.close" })[0]);
     expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    {
+      language: "zh-CN",
+      notes: [
+        "调整亮色主工作区模块的分层配色。",
+        "修复窗口最小化时的任务栏指示状态。",
+        "新增官方更新镜像作为下载源。",
+      ],
+    },
+    {
+      language: "en-US",
+      notes: [
+        "Refined the layered colors of main workspace modules in the light theme.",
+        "Fixed the taskbar indicator when the window is minimized.",
+        "Added the official update mirror as a download source.",
+      ],
+    },
+  ])("$language 展示 v1.7.0 发布说明", ({ language, notes }) => {
+    locale.value = language;
+    render(<UpdateHistoryDialog onClose={vi.fn()} open />);
+
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .slice(0, 3)
+        .map((heading) => heading.textContent),
+    ).toEqual(latestVersionHeadings);
+    const latest = screen.getByRole("heading", { level: 3, name: "v1.7.0" }).closest("article");
+    if (!latest) {
+      throw new Error("缺少 v1.7.0 更新记录");
+    }
+    const content = within(latest);
+    expect(content.getAllByRole("listitem").map((item) => item.textContent)).toEqual(notes);
+    expect(content.getByText("2026-09-23")).toBeTruthy();
   });
 
   it.each([

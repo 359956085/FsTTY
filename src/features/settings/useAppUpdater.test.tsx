@@ -98,7 +98,7 @@ describe("应用启动自动更新", () => {
           autoUpdate: true,
           ignoredUpdateVersion: "1.3.0",
           onSettingsChange: vi.fn(),
-          updateSource: "cnb",
+          updateSource: "mirror",
           startupReady: true,
         }),
       { wrapper: StrictMode },
@@ -109,6 +109,6 @@ describe("应用启动自动更新", () => {
     expect(mocks.checkAppUpdate).toHaveBeenCalledTimes(1);
     expect(result.current.phase).toBe("idle");
     expect(result.current.dialogOpen).toBe(false);
-    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("cnb");
+    expect(mocks.checkAppUpdate).toHaveBeenCalledWith("mirror");
   });
 });

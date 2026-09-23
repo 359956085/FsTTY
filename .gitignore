@@ -14,6 +14,8 @@ src-tauri/gen/
 # 本地工具缓存
 .codex/
 .agents/
+__pycache__/
+*.py[cod]
 
 # IDE
 .idea/*

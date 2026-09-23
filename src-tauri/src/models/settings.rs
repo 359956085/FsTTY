@@ -92,12 +92,12 @@ pub enum TerminalColorScheme {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum UpdateSourcePreference {
     #[default]
-    #[serde(rename = "auto")]
+    #[serde(rename = "auto", alias = "cnb")]
     Auto,
     #[serde(rename = "github")]
     GitHub,
-    #[serde(rename = "cnb")]
-    Cnb,
+    #[serde(rename = "mirror")]
+    Mirror,
 }
 
 fn default_allow_remote_clipboard_write() -> bool {
@@ -256,6 +256,17 @@ pub enum Language {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 旧_cnb_下载源迁移为自动模式() {
+        let preference: UpdateSourcePreference =
+            serde_json::from_str("\"cnb\"").expect("旧下载源应能读取");
+        assert_eq!(preference, UpdateSourcePreference::Auto);
+        assert_eq!(
+            serde_json::to_string(&preference).expect("迁移后应能序列化"),
+            "\"auto\""
+        );
+    }
 
     #[test]
     fn 终端文字配色使用前端约定名称() {

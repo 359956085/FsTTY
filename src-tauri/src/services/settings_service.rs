@@ -498,6 +498,28 @@ mod tests {
     }
 
     #[test]
+    fn 旧_cnb_偏好读取后保存为自动模式() {
+        let directory = test_directory("legacy-update-source");
+        let mut stored = serde_json::to_value(SettingsStore::default()).unwrap();
+        stored["updateSource"] = serde_json::json!("cnb");
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+
+        let mut service = SettingsService::load(&directory);
+        assert_eq!(service.get().update_source, UpdateSourcePreference::Auto);
+        service
+            .update(true, true, UpdateSourcePreference::Auto)
+            .unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(directory.join(STORE_FILE)).unwrap()).unwrap();
+        assert_eq!(persisted["updateSource"], "auto");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn 旧代理字段迁移不丢失设置且非法旧代理禁止直连回退() {
         for address in ["http://127.0.0.1:7890", "http://proxy:0"] {
             let directory = test_directory("legacy-global-proxy");
@@ -525,7 +547,7 @@ mod tests {
             let mut service = SettingsService::load(&directory);
             assert_eq!(service.get(), expected);
             service
-                .update(false, false, UpdateSourcePreference::Cnb)
+                .update(false, false, UpdateSourcePreference::Mirror)
                 .unwrap();
             assert_eq!(service.get().proxy_address, address);
             let content = fs::read_to_string(directory.join(STORE_FILE)).unwrap();
@@ -543,7 +565,7 @@ mod tests {
             assert_eq!(restored.theme, ThemePreference::Dark);
             assert!(!restored.auto_update);
             assert!(!restored.allow_remote_clipboard_write);
-            assert_eq!(restored.update_source, UpdateSourcePreference::Cnb);
+            assert_eq!(restored.update_source, UpdateSourcePreference::Mirror);
             assert!(!format!("{:?}", service.get()).contains("socks5://"));
             let _ = fs::remove_dir_all(directory);
         }
@@ -1039,7 +1061,7 @@ mod tests {
         assert_eq!(recovered.get().language, Language::EnUs);
         assert!(recovered.get().auto_update);
         recovered
-            .update(false, true, UpdateSourcePreference::Cnb)
+            .update(false, true, UpdateSourcePreference::Mirror)
             .expect("无法替换损坏的设置文件");
         recovered
             .set_proxy_address("socks5://127.0.0.1:7890".into())

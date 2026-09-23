@@ -12,7 +12,7 @@ export type TerminalColorScheme =
   | "oneHalf"
   | "rosePine"
   | "solarized";
-export type UpdateSourcePreference = "auto" | "github" | "cnb";
+export type UpdateSourcePreference = "auto" | "github" | "mirror";
 export type ClipboardContentKind = "empty" | "text" | "nonText";
 
 export interface AppSettings {
@@ -33,7 +33,7 @@ export interface AppSettings {
   shortcuts: ShortcutSettings;
 }
 
-export type AppUpdateSource = "cnb" | "gitHub";
+export type AppUpdateSource = "mirror" | "gitHub";
 
 export interface AppUpdateInfo {
   body?: string;

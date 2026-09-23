@@ -1,0 +1,20 @@
+[Unit]
+Description=FsTTY 官方更新镜像同步
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fstty-mirror
+Group=fstty-mirror
+ExecStart=/usr/bin/python3 /usr/local/lib/fstty-mirror/pull_release.py --root /srv/fstty-mirror
+TimeoutStartSec=240
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/fstty-mirror
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0022

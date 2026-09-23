@@ -163,7 +163,7 @@ export function AboutSettingsPanel({
             options={[
               { value: "auto", label: t("settings.updateSourceAuto") },
               { value: "github", label: "GitHub" },
-              { value: "cnb", label: "CNB" },
+              { value: "mirror", label: t("settings.updateSourceMirror") },
             ]}
             value={settings.updateSource}
           />

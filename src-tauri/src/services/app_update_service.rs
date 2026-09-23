@@ -15,9 +15,9 @@ use tokio::sync::Mutex;
 use url::Url;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+const AUTO_GITHUB_PRIORITY: Duration = Duration::from_secs(2);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const CNB_UPDATE_ENDPOINT: &str =
-    "https://cnb.cool/359956085/FsTTY/-/releases/download/updater/latest.json";
+const MIRROR_UPDATE_ENDPOINT: &str = "https://f.qkw.io/fstty/updater/latest.json";
 const GITHUB_UPDATE_ENDPOINT: &str =
     "https://github.com/359956085/FsTTY/releases/latest/download/latest.json";
 
@@ -132,7 +132,7 @@ fn sanitize_update_detail(value: &str) -> String {
 
 fn source_name(source: AppUpdateSource) -> &'static str {
     match source {
-        AppUpdateSource::Cnb => "cnb",
+        AppUpdateSource::Mirror => "mirror",
         AppUpdateSource::GitHub => "github",
     }
 }
@@ -141,7 +141,7 @@ fn preference_name(preference: UpdateSourcePreference) -> &'static str {
     match preference {
         UpdateSourcePreference::Auto => "auto",
         UpdateSourcePreference::GitHub => "github",
-        UpdateSourcePreference::Cnb => "cnb",
+        UpdateSourcePreference::Mirror => "mirror",
     }
 }
 
@@ -305,22 +305,23 @@ impl AppUpdateService {
 
         let (source, update) = match preference {
             UpdateSourcePreference::Auto => {
-                // 自动模式优先响应速度；首个有效成功结果立即决定，失败才等待备用源。
-                first_successful_source(
+                // GitHub 检查成功即采用该源；仅在失败或超时时检查官方镜像。
+                github_first_source(
                     check_source(
                         app,
-                        AppUpdateSource::Cnb,
-                        CNB_UPDATE_ENDPOINT,
+                        AppUpdateSource::GitHub,
+                        GITHUB_UPDATE_ENDPOINT,
                         proxy.clone(),
                         audit,
                     ),
                     check_source(
                         app,
-                        AppUpdateSource::GitHub,
-                        GITHUB_UPDATE_ENDPOINT,
+                        AppUpdateSource::Mirror,
+                        MIRROR_UPDATE_ENDPOINT,
                         proxy,
                         audit,
                     ),
+                    AUTO_GITHUB_PRIORITY,
                 )
                 .await?
             }
@@ -336,11 +337,17 @@ impl AppUpdateService {
                 .await
                 .map_err(AppError::Connection)?,
             ),
-            UpdateSourcePreference::Cnb => (
-                AppUpdateSource::Cnb,
-                check_source(app, AppUpdateSource::Cnb, CNB_UPDATE_ENDPOINT, proxy, audit)
-                    .await
-                    .map_err(AppError::Connection)?,
+            UpdateSourcePreference::Mirror => (
+                AppUpdateSource::Mirror,
+                check_source(
+                    app,
+                    AppUpdateSource::Mirror,
+                    MIRROR_UPDATE_ENDPOINT,
+                    proxy,
+                    audit,
+                )
+                .await
+                .map_err(AppError::Connection)?,
             ),
         };
 
@@ -681,37 +688,28 @@ fn download_error(
     AppError::Internal(updater_error_message(code, false).into())
 }
 
-async fn first_successful_source<T, CnbFuture, GitHubFuture>(
-    cnb: CnbFuture,
+async fn github_first_source<T, GitHubFuture, MirrorFuture>(
     github: GitHubFuture,
+    mirror: MirrorFuture,
+    priority_timeout: Duration,
 ) -> Result<(AppUpdateSource, T), AppError>
 where
-    CnbFuture: Future<Output = Result<T, String>>,
     GitHubFuture: Future<Output = Result<T, String>>,
+    MirrorFuture: Future<Output = Result<T, String>>,
 {
-    tokio::pin!(cnb);
-    tokio::pin!(github);
-    let (first_source, first_result) = tokio::select! {
-        result = &mut cnb => (AppUpdateSource::Cnb, result),
-        result = &mut github => (AppUpdateSource::GitHub, result),
+    let github_error = match tokio::time::timeout(priority_timeout, github).await {
+        Ok(Ok(value)) => return Ok((AppUpdateSource::GitHub, value)),
+        Ok(Err(error)) => error,
+        Err(_) => "GitHub 更新检查超时".to_owned(),
     };
-    match first_result {
-        Ok(value) => Ok((first_source, value)),
-        Err(first_error) => {
-            log::warn!("应用更新源检查失败：{first_error}");
-            let (second_source, second_result) = match first_source {
-                AppUpdateSource::Cnb => (AppUpdateSource::GitHub, github.await),
-                AppUpdateSource::GitHub => (AppUpdateSource::Cnb, cnb.await),
-            };
-            match second_result {
-                Ok(value) => Ok((second_source, value)),
-                Err(second_error) => {
-                    log::warn!("应用更新源检查失败：{second_error}");
-                    Err(AppError::Connection(format!(
-                        "所有应用更新源均不可用：{first_error}；{second_error}"
-                    )))
-                }
-            }
+    log::warn!("应用更新源检查失败：{github_error}");
+    match mirror.await {
+        Ok(value) => Ok((AppUpdateSource::Mirror, value)),
+        Err(mirror_error) => {
+            log::warn!("应用更新源检查失败：{mirror_error}");
+            Err(AppError::Connection(format!(
+                "所有应用更新源均不可用：{github_error}；{mirror_error}"
+            )))
         }
     }
 }
@@ -749,42 +747,69 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn 自动模式采用首个成功结果且不等待另一源() {
+    async fn 自动模式采用github更新且不等待镜像() {
         let result = tokio::time::timeout(
             Duration::from_millis(50),
-            first_successful_source(
-                std::future::ready(Ok::<Option<u8>, String>(None)),
+            github_first_source(
+                std::future::ready(Ok::<Option<u8>, String>(Some(7))),
                 std::future::pending::<Result<Option<u8>, String>>(),
+                AUTO_GITHUB_PRIORITY,
             ),
         )
         .await
-        .expect("最快成功源应立即返回")
+        .expect("GitHub 成功后应立即返回")
         .expect("成功结果应保留");
-        assert_eq!(result, (AppUpdateSource::Cnb, None));
-    }
-
-    #[tokio::test]
-    async fn 自动模式首源失败后采用备用源() {
-        let result = first_successful_source(
-            std::future::ready(Err::<Option<u8>, String>("CNB 失败".to_owned())),
-            std::future::ready(Ok::<Option<u8>, String>(Some(7))),
-        )
-        .await
-        .expect("备用源成功时检查应成功");
         assert_eq!(result, (AppUpdateSource::GitHub, Some(7)));
     }
 
     #[tokio::test]
-    async fn 自动模式双源失败返回合并错误() {
-        let error = first_successful_source(
-            std::future::ready(Err::<Option<u8>, String>("CNB 失败".to_owned())),
+    async fn 自动模式github无更新也不检查镜像() {
+        let result = github_first_source(
+            std::future::ready(Ok::<Option<u8>, String>(None)),
+            std::future::pending::<Result<Option<u8>, String>>(),
+            AUTO_GITHUB_PRIORITY,
+        )
+        .await
+        .expect("GitHub 无更新也是有效检查结果");
+        assert_eq!(result, (AppUpdateSource::GitHub, None));
+    }
+
+    #[tokio::test]
+    async fn 自动模式github失败后采用镜像() {
+        let result = github_first_source(
             std::future::ready(Err::<Option<u8>, String>("GitHub 失败".to_owned())),
+            std::future::ready(Ok::<Option<u8>, String>(Some(7))),
+            AUTO_GITHUB_PRIORITY,
+        )
+        .await
+        .expect("镜像成功时检查应成功");
+        assert_eq!(result, (AppUpdateSource::Mirror, Some(7)));
+    }
+
+    #[tokio::test]
+    async fn 自动模式github超时后采用镜像() {
+        let result = github_first_source(
+            std::future::pending::<Result<Option<u8>, String>>(),
+            std::future::ready(Ok::<Option<u8>, String>(Some(7))),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("GitHub 超时后应采用镜像");
+        assert_eq!(result, (AppUpdateSource::Mirror, Some(7)));
+    }
+
+    #[tokio::test]
+    async fn 自动模式双源失败返回合并错误() {
+        let error = github_first_source(
+            std::future::ready(Err::<Option<u8>, String>("GitHub 失败".to_owned())),
+            std::future::ready(Err::<Option<u8>, String>("镜像失败".to_owned())),
+            AUTO_GITHUB_PRIORITY,
         )
         .await
         .expect_err("双源失败必须报错");
         let message = error.to_string();
-        assert!(message.contains("CNB 失败"));
         assert!(message.contains("GitHub 失败"));
+        assert!(message.contains("镜像失败"));
     }
 
     #[test]

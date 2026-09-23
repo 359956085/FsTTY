@@ -120,7 +120,7 @@ async fn 更新检查与下载支持socks5并可从旧代理切换为明确直�
         let audit = UpdateAudit::new();
         let mut update = check_source(
             app.handle(),
-            AppUpdateSource::Cnb,
+            AppUpdateSource::Mirror,
             &format!("http://127.0.0.1:{port}/check"),
             parse_proxy(&route.0).unwrap(),
             &audit,
