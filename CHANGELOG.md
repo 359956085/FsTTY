@@ -6,6 +6,21 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-23
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 修复 Windows 安装器初始化时误判暂存目录已存在、导致安装无法继续的问题。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Fixed a Windows installer initialization error that incorrectly reported an existing staging directory and prevented installation.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.7.1] - 2026-09-23
 
 <!-- release-notes:zh-CN:start -->

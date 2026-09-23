@@ -134,9 +134,10 @@ Function .onInit
     Abort "$(GuidFailed)"
   ${EndIf}
   StrCpy $Bootstrap "$PROGRAMFILES64\FsTTY-install-$0"
-  IfFileExists "$Bootstrap" 0 +2
+  IfFileExists "$Bootstrap" 0 bootstrap_create
     SetErrorLevel 1
     Abort "$(BootstrapExists)"
+  bootstrap_create:
   CreateDirectory "$Bootstrap"
   SetOutPath "$Bootstrap"
   File /oname=fstty-broker.exe "${FSTTY_BROKER_BINARY}"

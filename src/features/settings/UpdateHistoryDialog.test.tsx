@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UpdateHistoryDialog } from "./UpdateHistoryDialog";
 
 const locale = vi.hoisted(() => ({ value: "zh-CN" }));
-const latestVersionHeadings = ["v1.7.1", "v1.7.0", "v1.6.2"];
+const latestVersionHeadings = ["v1.7.2", "v1.7.1", "v1.7.0"];
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -25,7 +25,7 @@ describe("更新日志弹窗", () => {
     render(<UpdateHistoryDialog onClose={onClose} open />);
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.7.1");
+    expect(screen.getAllByRole("heading", { level: 3 })[0]?.textContent).toBe("v1.7.2");
     expect(screen.queryByText("v1.6.1")).toBeNull();
     expect(screen.getByText("v1.6.0")).toBeTruthy();
     expect(screen.getByText("v1.5.0")).toBeTruthy();
@@ -67,6 +67,23 @@ describe("更新日志弹窗", () => {
     fireEvent.mouseDown(document.querySelector(".dialog-backdrop") as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "sessions.close" })[0]);
     expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    {
+      language: "zh-CN",
+      note: "修复 Windows 安装器初始化时误判暂存目录已存在、导致安装无法继续的问题。",
+    },
+    {
+      language: "en-US",
+      note: "Fixed a Windows installer initialization error that incorrectly reported an existing staging directory and prevented installation.",
+    },
+  ])("$language 展示 v1.7.2 更新说明", ({ language, note }) => {
+    locale.value = language;
+    render(<UpdateHistoryDialog onClose={vi.fn()} open />);
+    const latest = screen.getByRole("heading", { level: 3, name: "v1.7.2" }).closest("article");
+    expect(latest).toBeTruthy();
+    expect(within(latest as HTMLElement).getByText(note)).toBeTruthy();
   });
 
   it.each([
