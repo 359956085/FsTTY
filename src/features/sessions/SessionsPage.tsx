@@ -11,7 +11,7 @@ import {
 import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
-import type { ShortcutSettings, TerminalColorScheme } from "../../shared/api/types";
+import type { FileEntry, ShortcutSettings, TerminalColorScheme } from "../../shared/api/types";
 import type { ResolvedTheme } from "../../shared/theme";
 import { useLightweightRestore } from "../lightweight/useLightweightRestore";
 
@@ -38,9 +38,23 @@ export function SessionsPage({
     errorFallback: t("errors.unknown"),
   });
   const connections = useSessionConnections({
+    devicePollingRuntimeId: visible && !paneLayout.layout.rightCollapsed
+      ? sessionsState.activeTabId
+      : null,
     errorFallback: t("errors.unknown"),
   });
-  const { pruneRuntimes } = connections;
+  const {
+    pruneRuntimes, cancelTransfer, dismissTransfer, downloadFile, downloadFiles,
+    uploadFile, uploadFiles,
+  } = connections;
+  const transferActions = useMemo(() => ({
+    onCancelTransfer: (id: string) => void cancelTransfer(id),
+    onDismissTransfer: (id: string) => void dismissTransfer(id),
+    onDownload: (id: string, file: FileEntry) => void downloadFile(id, file),
+    onDownloadFiles: (id: string, files: FileEntry[]) => void downloadFiles(id, files),
+    onUpload: (id: string) => void uploadFile(id),
+    onUploadFiles: (id: string, paths: string[]) => void uploadFiles(id, paths),
+  }), [cancelTransfer, dismissTransfer, downloadFile, downloadFiles, uploadFile, uploadFiles]);
   const {
     adjustResize,
     beginResize,
@@ -151,6 +165,7 @@ export function SessionsPage({
       />}
 
       <Workspace
+        {...transferActions}
         allowRemoteClipboardWrite={allowRemoteClipboardWrite}
         activeRuntime={activeRuntime}
         activeTabId={sessionsState.activeTabId}
@@ -158,8 +173,6 @@ export function SessionsPage({
         error={restore.error ?? sessionsState.error}
         onRetryRestore={restore.error ? restore.retry : undefined}
         loading={sessionsState.loading}
-        onCancelTransfer={(sessionId) => void connections.cancelTransfer(sessionId)}
-        onDismissTransfer={(sessionId) => void connections.dismissTransfer(sessionId)}
         onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={connections.handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}
@@ -168,12 +181,6 @@ export function SessionsPage({
         onDeleteRemoteEntry={connections.deleteRemoteEntry}
         onDeleteRemoteEntries={connections.deleteRemoteEntries}
         onDirectoryChange={connections.handleTerminalDirectory}
-        onDownload={(sessionId, file) =>
-          void connections.downloadFile(sessionId, file)
-        }
-        onDownloadFiles={(sessionId, files) =>
-          void connections.downloadFiles(sessionId, files)
-        }
         onMoveRemoteEntry={connections.moveRemoteEntry}
         onOpenPath={connections.openPath}
         onRefreshFiles={connections.refreshFiles}
@@ -181,10 +188,6 @@ export function SessionsPage({
         onSelectTab={sessionsState.selectTab}
         onTerminalState={connections.handleTerminalState}
         onToggleRight={toggleRightCollapsed}
-        onUpload={(sessionId) => void connections.uploadFile(sessionId)}
-        onUploadFiles={(sessionId, localPaths) =>
-          void connections.uploadFiles(sessionId, localPaths)
-        }
         openTabs={sessionsState.openSessionTabs}
         rightCollapsed={layout.rightCollapsed}
         rightResizeHandle={

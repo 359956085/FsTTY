@@ -193,6 +193,84 @@ beforeEach(() => {
   );
 });
 
+describe("仅轮询正在展示的设备面板", () => {
+  it("暂停期间保留画面和文件操作，恢复立即读取后台完整历史", async () => {
+    vi.useFakeTimers();
+    const first = deviceSnapshot();
+    const latest = deviceSnapshot(40_000);
+    latest.history.unshift(...first.history);
+    const refresh = deferred<DeviceMetricsSnapshot>();
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useSessionConnections({
+      devicePollingRuntimeId: id, errorFallback: "未知错误",
+    }), { initialProps: { id: "tab-1" as string | null } });
+    await act(async () => {
+      result.current.handleConnected("tab-1", connection);
+      result.current.handleConnected("tab-2", { ...connection, connectionId: "connection-2" });
+    });
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenCalledTimes(1);
+    expect(result.current.runtimes["tab-2"].deviceHistory).toEqual([]);
+    rerender({ id: null });
+    const history = result.current.runtimes["tab-1"].deviceHistory;
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenCalledTimes(1);
+    expect(result.current.runtimes["tab-1"].deviceHistory).toBe(history);
+    await act(async () => result.current.openPath("tab-1", "/tmp"));
+    expect(mocks.listRemoteFiles).toHaveBeenLastCalledWith(connection.connectionId, "/tmp");
+    mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(refresh.promise);
+    rerender({ id: "tab-1" });
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenCalledTimes(2);
+    expect(result.current.runtimes["tab-1"].deviceHistory).toBe(history);
+    expect(result.current.runtimes["tab-1"].deviceLoading).toBe(false);
+    await act(async () => refresh.resolve(latest));
+    expect(result.current.runtimes["tab-1"].deviceHistory).toEqual(latest.history);
+    expect(result.current.runtimes["tab-1"].deviceWindowEndMs).toBe(40_000);
+  });
+
+  it("快速 A到B到A 复用 A 的进行中请求且丢弃 B 的迟到响应", async () => {
+    vi.useFakeTimers();
+    const first = deferred<DeviceMetricsSnapshot>();
+    const second = deferred<DeviceMetricsSnapshot>();
+    mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { result, rerender } = renderHook(({ id }) => useSessionConnections({
+      devicePollingRuntimeId: id, errorFallback: "未知错误",
+    }), { initialProps: { id: "tab-1" } });
+    await act(async () => {
+      result.current.handleConnected("tab-1", connection);
+      result.current.handleConnected("tab-2", { ...connection, connectionId: "connection-2" });
+    });
+    rerender({ id: "tab-2" });
+    rerender({ id: "tab-1" });
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      second.resolve(deviceSnapshot(500, "connection-2"));
+      first.resolve(deviceSnapshot());
+    });
+    expect(result.current.runtimes["tab-1"].deviceHistory).toEqual(deviceSnapshot().history);
+    expect(result.current.runtimes["tab-2"].deviceHistory).toEqual([]);
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenCalledTimes(3);
+    expect(mocks.getDeviceMetricsSnapshot).toHaveBeenLastCalledWith(connection.connectionId);
+  });
+
+  it("面板隐藏时连接不发起快照请求，首次展示才进入加载流程", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<DeviceMetricsSnapshot>();
+    mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(pending.promise);
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useSessionConnections({
+      devicePollingRuntimeId: id, errorFallback: "未知错误",
+    }), { initialProps: { id: null as string | null } });
+    await act(async () => result.current.handleConnected("tab-1", connection));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(mocks.getDeviceMetricsSnapshot).not.toHaveBeenCalled();
+    expect(result.current.runtimes["tab-1"].connectionState).toBe("connected");
+    rerender({ id: "tab-1" });
+    expect(result.current.runtimes["tab-1"].deviceLoading).toBe(true);
+    await act(async () => pending.resolve(deviceSnapshot()));
+    expect(result.current.runtimes["tab-1"].deviceLoading).toBe(false);
+    expect(result.current.runtimes["tab-1"].deviceHistory).toEqual(deviceSnapshot().history);
+  });
+});
+
 describe("设备状态首屏加载", () => {
   it("连接已完成但缓存为空时保持加载态，250 毫秒后立即展示首轮结果", async () => {
     vi.useFakeTimers();
@@ -200,7 +278,7 @@ describe("设备状态首屏加载", () => {
     mocks.getDeviceMetricsSnapshot
       .mockResolvedValueOnce({ ...ready, status: null, history: [], windowEndMs: 0 })
       .mockResolvedValue(ready);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => result.current.handleConnected("tab-1", connection));
     expect(result.current.runtimes["tab-1"].connectionState).toBe("connected");
     expect(result.current.runtimes["tab-1"].deviceLoading).toBe(true);
@@ -218,7 +296,7 @@ describe("设备状态首屏加载", () => {
   it("首屏读取失败超过期限退出加载态，不覆盖 SSH 状态，后续仍可恢复", async () => {
     vi.useFakeTimers();
     mocks.getDeviceMetricsSnapshot.mockRejectedValue(new Error("缓存暂不可读"));
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => result.current.handleConnected("tab-1", connection));
     expect(result.current.runtimes["tab-1"].deviceLoading).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
@@ -240,7 +318,7 @@ describe("设备状态首屏加载", () => {
     const disconnect = deferred<void>();
     mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(pending.promise);
     mocks.disconnectSession.mockReturnValueOnce(disconnect.promise);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => result.current.handleConnected("tab-1", connection));
     expect(result.current.runtimes["tab-1"].deviceLoading).toBe(true);
     let disconnecting!: Promise<void>;
@@ -262,7 +340,7 @@ describe("轻量模式设备曲线", () => {
   it("窗口重建后立即恢复轻量期间新增的完整历史", async () => {
     const firstSnapshot = deviceSnapshot(30_000);
     mocks.getDeviceMetricsSnapshot.mockResolvedValue(firstSnapshot);
-    const first = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const first = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => first.result.current.handleConnected("tab-1", connection));
     expect(first.result.current.runtimes["tab-1"].deviceHistory).toEqual(firstSnapshot.history);
     first.unmount();
@@ -283,7 +361,7 @@ describe("轻量模式设备曲线", () => {
       }],
       transferJobs: [],
     });
-    const restored = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const restored = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => {
       restored.result.current.handleTerminalState("tab-1", "connecting");
       restored.result.current.handleConnected("tab-1", connection);
@@ -297,7 +375,7 @@ describe("轻量模式设备曲线", () => {
   it("同一连接重复恢复不清空现有曲线，也不重复累计", async () => {
     const snapshot = deviceSnapshot();
     mocks.getDeviceMetricsSnapshot.mockResolvedValueOnce(snapshot);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => result.current.handleConnected("tab-1", connection));
     const pending = deferred<DeviceMetricsSnapshot>();
     mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(pending.promise);
@@ -311,7 +389,7 @@ describe("轻量模式设备曲线", () => {
   it("重连时旧统计请求失效，新连接可以从较小时间起点开始", async () => {
     const pending = deferred<DeviceMetricsSnapshot>();
     mocks.getDeviceMetricsSnapshot.mockReturnValueOnce(pending.promise);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await act(async () => result.current.handleConnected("tab-1", connection));
     act(() => result.current.handleTerminalState("tab-1", "connecting"));
     expect(result.current.runtimes["tab-1"].deviceLoading).toBe(false);
@@ -333,12 +411,16 @@ describe("轻量模式设备曲线", () => {
     mocks.getDeviceMetricsSnapshot.mockImplementation(async (connectionId: string) =>
       connectionId === first.connectionId ? first : second,
     );
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result, rerender } = renderHook(({ id }) => useSessionConnections({
+      devicePollingRuntimeId: id, errorFallback: "未知错误",
+    }), { initialProps: { id: "tab-1" } });
     await act(async () => {
       result.current.handleConnected("tab-1", connection);
       result.current.handleConnected("tab-2", { ...connection, connectionId: second.connectionId });
     });
     expect(result.current.runtimes["tab-1"].deviceHistory).toEqual(first.history);
+    expect(result.current.runtimes["tab-2"].deviceHistory).toEqual([]);
+    await act(async () => rerender({ id: "tab-2" }));
     expect(result.current.runtimes["tab-2"].deviceHistory).toEqual(second.history);
     act(() => result.current.handleTerminalState("tab-1", "disconnected"));
     expect(result.current.runtimes["tab-1"].deviceHistory).toEqual([]);
@@ -350,7 +432,7 @@ describe("会话运行时异步生命周期", () => {
   it("连接完成前收到的首个终端目录会覆盖初始目录", async () => {
     mocks.listRemoteFiles.mockResolvedValue([]);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
 
     act(() => result.current.handleTerminalState("session-1", "connecting"));
@@ -368,7 +450,7 @@ describe("会话运行时异步生命周期", () => {
       .mockReturnValueOnce(homeRequest.promise)
       .mockReturnValueOnce(nextRequest.promise);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
 
     act(() => result.current.handleConnected("session-1", connection));
@@ -397,7 +479,7 @@ describe("会话运行时异步生命周期", () => {
       ...deviceSnapshot(), status: null, history: [], windowEndMs: 0,
     });
     const { result, unmount } = renderHook(
-      () => useSessionConnections({ errorFallback: "未知错误" }),
+      () => useSessionConnections({ devicePollingRuntimeId: "session-1", errorFallback: "未知错误" }),
       { wrapper: StrictMode },
     );
 
@@ -419,7 +501,7 @@ describe("会话运行时异步生命周期", () => {
   it("裁剪失效会话只断开现有连接一次", async () => {
     mocks.listRemoteFiles.mockResolvedValue([]);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -435,7 +517,7 @@ describe("会话运行时异步生命周期", () => {
     const unhandled = vi.fn();
     window.addEventListener("unhandledrejection", unhandled);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -448,7 +530,7 @@ describe("会话运行时异步生命周期", () => {
 
   it("连接中关闭会话时用会话 ID 取消后端尝试", async () => {
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleTerminalState("session-1", "connecting"));
 
@@ -476,7 +558,7 @@ describe("会话运行时异步生命周期", () => {
       transferJobs: [job],
     });
     const { result, unmount } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
 
     await waitFor(() => expect(mocks.attachTransferJob).toHaveBeenCalledWith(
@@ -494,7 +576,7 @@ describe("会话运行时异步生命周期", () => {
     initializeLightweightMode({ active: true, suppressConfirmation: false, phase: "detached",
       terminals: [{ runtimeId: "session-1", connectionId: connection.connectionId, sessionId: connection.sessionId, currentPath: "/home" }],
       transferJobs: [job] });
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     await waitFor(() => expect(mocks.attachTransferJob).toHaveBeenCalledOnce());
     act(() => result.current.handleTerminalState("session-1", "connecting"));
     act(() => result.current.handleConnected("session-1", connection));
@@ -508,7 +590,7 @@ describe("会话运行时异步生命周期", () => {
   it("上传重复点击只创建一个后台任务", async () => {
     const request = deferred<TransferJobSummary>();
     mocks.startTransferJob.mockReturnValueOnce(request.promise);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     let first!: Promise<void>;
     let second!: Promise<void>;
@@ -526,7 +608,7 @@ describe("会话运行时异步生命周期", () => {
   it("上传文件选择结束前重连时不把文件发到新连接", async () => {
     const selection = deferred<string>();
     mocks.open.mockReturnValueOnce(selection.promise);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     let pending!: Promise<void>;
     act(() => { pending = result.current.uploadFile("session-1"); });
@@ -543,7 +625,7 @@ describe("会话运行时异步生命周期", () => {
     );
     mocks.confirm.mockResolvedValueOnce(true);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -573,7 +655,7 @@ describe("会话运行时异步生命周期", () => {
     );
     mocks.confirm.mockResolvedValueOnce(true);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -597,7 +679,7 @@ describe("会话运行时异步生命周期", () => {
 
   it("批量下载只选择一次保存目录，并将全部路径交给后台队列", async () => {
     mocks.open.mockResolvedValueOnce("C:\\downloads");
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     const files = Array.from({ length: 7 }, (_, index) => file(`/home/${index}.txt`));
     await act(async () => result.current.downloadFiles("session-1", files));
@@ -614,7 +696,7 @@ describe("会话运行时异步生命周期", () => {
   });
 
   it("取消保存目录选择不创建任务且下一次批量下载仍可启动", async () => {
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     const files = [file("/home/first.txt"), file("/home/second.txt")];
     await act(async () => result.current.downloadFiles("session-1", files));
@@ -627,7 +709,7 @@ describe("会话运行时异步生命周期", () => {
   it("目录选择期间重连后不把旧文件下载交给新连接", async () => {
     const directory = deferred<string | null>();
     mocks.open.mockReturnValueOnce(directory.promise);
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     let download!: Promise<void>;
     act(() => { download = result.current.downloadFiles("session-1", [file("/home/one.txt"), file("/home/two.txt")]); });
@@ -640,14 +722,14 @@ describe("会话运行时异步生命周期", () => {
   it("批量下载拒绝覆盖时仅跳过该文件", async () => {
     mocks.open.mockResolvedValueOnce("C:\\downloads");
     mocks.startTransferJob.mockImplementationOnce(async (request) => transferJob(request, "waitingForConflict"));
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     await act(async () => result.current.downloadFiles("session-1", [file("/home/one.txt"), file("/home/two.txt")]));
     expect(mocks.resolveTransferJobConflict).toHaveBeenCalledWith("job-1", "skip");
   });
 
   it("空选区和包含目录的选区不弹出下载对话框", async () => {
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     await act(async () => {
       await result.current.downloadFiles("session-1", []);
@@ -659,7 +741,7 @@ describe("会话运行时异步生命周期", () => {
   });
 
   it("批量删除继续处理失败项之后的文件，完成后仅刷新目录一次", async () => {
-    const { result } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     await waitFor(() => expect(result.current.runtimes["session-1"].filesLoading).toBe(false));
     mocks.listRemoteFiles.mockClear();
@@ -684,7 +766,7 @@ describe("会话运行时异步生命周期", () => {
     );
     mocks.confirm.mockResolvedValueOnce(false);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -703,7 +785,7 @@ describe("会话运行时异步生命周期", () => {
     );
     mocks.confirm.mockResolvedValueOnce(false);
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -720,7 +802,7 @@ describe("会话运行时异步生命周期", () => {
     mocks.startTransferJob.mockReturnValueOnce(request.promise);
     const nextConnection = { ...connection, connectionId: "connection-2" };
     const { result } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
 
@@ -749,7 +831,7 @@ describe("会话运行时异步生命周期", () => {
     const unhandled = vi.fn();
     window.addEventListener("unhandledrejection", unhandled);
     const { result, unmount } = renderHook(() =>
-      useSessionConnections({ errorFallback: "未知错误" }),
+      useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }),
     );
     act(() => result.current.handleConnected("session-1", connection));
     let download!: Promise<void>;
@@ -772,7 +854,7 @@ describe("会话运行时异步生命周期", () => {
     const request = deferred<TransferJobSummary>();
     mocks.startTransferJob.mockReturnValueOnce(request.promise);
     mocks.save.mockResolvedValueOnce("C:\\downloads\\report.txt");
-    const { result, unmount } = renderHook(() => useSessionConnections({ errorFallback: "未知错误" }));
+    const { result, unmount } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     let pending!: Promise<void>;
     act(() => {

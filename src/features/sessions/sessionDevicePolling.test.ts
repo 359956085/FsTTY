@@ -73,6 +73,44 @@ afterEach(() => {
 });
 
 describe("设备轮询控制器", () => {
+  it("快速暂停和恢复复用同一连接的未完成读取且仅安排一轮后续请求", async () => {
+    const { controller, getDeviceMetricsSnapshot, runtimes } = createHarness();
+    const pending = deferred<DeviceMetricsSnapshot>();
+    getDeviceMetricsSnapshot.mockReturnValueOnce(pending.promise).mockResolvedValue(snapshot());
+    controller.start("session", "connection-1");
+    controller.cancelSession("session");
+    controller.start("session", "connection-1");
+    controller.cancelSession("session");
+    controller.start("session", "connection-1");
+    expect(getDeviceMetricsSnapshot).toHaveBeenCalledTimes(1);
+    pending.resolve(snapshot());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtimes.session.deviceHistory).toEqual(snapshot().history);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getDeviceMetricsSnapshot).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it("旧连接结束不能清除新连接仍在复用的请求", async () => {
+    const { controller, getDeviceMetricsSnapshot, runtimes } = createHarness();
+    const old = deferred<DeviceMetricsSnapshot>();
+    const current = deferred<DeviceMetricsSnapshot>();
+    getDeviceMetricsSnapshot.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    controller.start("session", "connection-1");
+    runtimes.session.connection = { ...runtimes.session.connection!, connectionId: "connection-2" };
+    controller.start("session", "connection-2");
+    old.resolve(snapshot());
+    await vi.advanceTimersByTimeAsync(0);
+    controller.cancelSession("session");
+    controller.start("session", "connection-2");
+    expect(getDeviceMetricsSnapshot).toHaveBeenCalledTimes(2);
+    current.resolve(snapshot("connection-2", 500));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtimes.session.deviceWindowEndMs).toBe(500);
+    controller.dispose();
+  });
+
   it("首次空缓存每 250 毫秒重读，拿到数据后恢复 5 秒刷新", async () => {
     const { controller, getDeviceMetricsSnapshot, runtimes } = createHarness();
     let cached = emptySnapshot();

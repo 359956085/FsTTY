@@ -43,6 +43,23 @@ export function createSessionDevicePollingController<TRuntime extends DeviceRunt
   const polls = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const initialTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const inFlight = new Map<string, {
+    connectionId: string;
+    promise: Promise<DeviceMetricsSnapshot>;
+  }>();
+
+  const readSnapshot = (sessionId: string, connectionId: string) => {
+    const existing = inFlight.get(sessionId);
+    if (existing?.connectionId === connectionId) return existing.promise;
+    const promise = options.getDeviceMetricsSnapshot(connectionId);
+    inFlight.set(sessionId, { connectionId, promise });
+    const release = () => {
+      if (inFlight.get(sessionId)?.promise === promise) inFlight.delete(sessionId);
+    };
+    // 切走不取消 IPC；切回同一连接复用未完成请求，结果仍由当前代次校验。
+    void promise.then(release, release);
+    return promise;
+  };
 
   const advance = (values: Map<string, number>, sessionId: string) => {
     const next = (values.get(sessionId) ?? 0) + 1;
@@ -106,7 +123,7 @@ export function createSessionDevicePollingController<TRuntime extends DeviceRunt
     const poll = async () => {
       const requestId = advance(requests, sessionId);
       try {
-        const snapshot = await options.getDeviceMetricsSnapshot(connectionId);
+        const snapshot = await readSnapshot(sessionId, connectionId);
         if (
           isCurrent() &&
           requests.get(sessionId) === requestId &&
@@ -179,8 +196,12 @@ export function createSessionDevicePollingController<TRuntime extends DeviceRunt
       timers.clear();
       for (const timer of initialTimers.values()) clearTimeout(timer);
       initialTimers.clear();
+      inFlight.clear();
     },
-    removeSession: cancelSession,
+    removeSession: (sessionId) => {
+      cancelSession(sessionId);
+      inFlight.delete(sessionId);
+    },
     start,
   };
 }

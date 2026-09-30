@@ -1,7 +1,7 @@
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
@@ -19,6 +19,8 @@ import type { OpenSessionTab } from "./useSessionsPageState";
 import type { ResolvedTheme } from "../../shared/theme";
 import { getPreservedRuntimeIds } from "../lightweight/lightweightMode";
 import type { RemoteEntryDeleteFailure } from "./sessionRemoteFiles";
+
+const MemoizedFilesPane = memo(FilesPane);
 
 interface WorkspaceProps {
   allowRemoteClipboardWrite: boolean;
@@ -114,10 +116,36 @@ export function Workspace({
       focusRightToggle.current = false;
     }
   }, [rightCollapsed, visible]);
-  function toggleRight() {
+  const toggleRight = useCallback(() => {
     focusRightToggle.current = true;
     onToggleRight();
-  }
+  }, [onToggleRight]);
+  // 设备快照更新不改变文件面板输入；标签切换时重新绑定全部文件操作。
+  const fileActions = useMemo(() => ({
+    onCancelTransfer: () => activeTabId && onCancelTransfer(activeTabId),
+    onDismissTransfer: () => activeTabId && onDismissTransfer(activeTabId),
+    onCreateDirectory: (name: string) => activeTabId
+      ? onCreateRemoteDirectory(activeTabId, name) : Promise.resolve(),
+    onDeleteEntry: (path: string) => activeTabId
+      ? onDeleteRemoteEntry(activeTabId, path) : Promise.resolve(),
+    onDeleteEntries: (paths: string[]) => activeTabId
+      ? onDeleteRemoteEntries(activeTabId, paths) : Promise.resolve([]),
+    onDownload: (file: FileEntry) => activeTabId && onDownload(activeTabId, file),
+    onDownloadFiles: (files: FileEntry[]) => activeTabId && onDownloadFiles(activeTabId, files),
+    onMoveEntry: (sourcePath: string, targetDirectory: string) => activeTabId
+      ? onMoveRemoteEntry(activeTabId, sourcePath, targetDirectory) : Promise.resolve(),
+    onOpenPath: (path: string) => activeTabId && onOpenPath(activeTabId, path),
+    onRefresh: () => activeTabId && onRefreshFiles(activeTabId),
+    onRenameEntry: (path: string, newName: string) => activeTabId
+      ? onRenameRemoteEntry(activeTabId, path, newName) : Promise.resolve(),
+    onUpload: () => activeTabId && onUpload(activeTabId),
+    onUploadFiles: (localPaths: string[]) => activeTabId && onUploadFiles(activeTabId, localPaths),
+  }), [
+    activeTabId, onCancelTransfer, onDismissTransfer, onCreateRemoteDirectory,
+    onDeleteRemoteEntry, onDeleteRemoteEntries, onDownload, onDownloadFiles,
+    onMoveRemoteEntry, onOpenPath, onRefreshFiles, onRenameRemoteEntry,
+    onUpload, onUploadFiles,
+  ]);
   const activeError = activeRuntime.error ?? error;
   const [tabContextMenu, setTabContextMenu] = useState<{
     x: number;
@@ -287,56 +315,14 @@ export function Workspace({
 
       {!rightCollapsed && (
         <aside className="right-rail">
-          <FilesPane
+          <MemoizedFilesPane
+            {...fileActions}
             collapseButtonRef={rightToggleRef}
             currentPath={activeRuntime.currentPath}
             files={activeRuntime.files}
             key={activeTabId ?? "no-session"}
             loading={activeRuntime.filesLoading}
-            onCancelTransfer={() =>
-              activeTabId && onCancelTransfer(activeTabId)
-            }
-            onDismissTransfer={() =>
-              activeTabId && onDismissTransfer(activeTabId)
-            }
             onCollapse={toggleRight}
-            onCreateDirectory={(name) =>
-              activeTabId
-                ? onCreateRemoteDirectory(activeTabId, name)
-                : Promise.resolve()
-            }
-            onDeleteEntry={(path) =>
-              activeTabId ? onDeleteRemoteEntry(activeTabId, path) : Promise.resolve()
-            }
-            onDeleteEntries={(paths) =>
-              activeTabId ? onDeleteRemoteEntries(activeTabId, paths) : Promise.resolve([])
-            }
-            onDownload={(file) =>
-              activeTabId && onDownload(activeTabId, file)
-            }
-            onDownloadFiles={(files) =>
-              activeTabId && onDownloadFiles(activeTabId, files)
-            }
-            onMoveEntry={(sourcePath, targetDirectory) =>
-              activeTabId
-                ? onMoveRemoteEntry(activeTabId, sourcePath, targetDirectory)
-                : Promise.resolve()
-            }
-            onOpenPath={(path) =>
-              activeTabId && onOpenPath(activeTabId, path)
-            }
-            onRefresh={() =>
-              activeTabId && onRefreshFiles(activeTabId)
-            }
-            onRenameEntry={(path, newName) =>
-              activeTabId
-                ? onRenameRemoteEntry(activeTabId, path, newName)
-                : Promise.resolve()
-            }
-            onUpload={() => activeTabId && onUpload(activeTabId)}
-            onUploadFiles={(localPaths) =>
-              activeTabId && onUploadFiles(activeTabId, localPaths)
-            }
             sftpAvailable={Boolean(activeRuntime.connection?.sftpAvailable)}
             transfer={activeRuntime.transfer}
           />

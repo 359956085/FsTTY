@@ -53,6 +53,7 @@ zeroize = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+tokio = { version = "1", features = ["test-util"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fstty-broker = { path = "broker" }

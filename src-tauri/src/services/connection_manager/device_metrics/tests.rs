@@ -238,6 +238,47 @@ async fn gui_connection_has_one_sampler_and_snapshot_reads_never_execute_command
 }
 
 #[tokio::test]
+async fn reclaiming_headless_connection_keeps_same_session_gui_connection_and_metrics() {
+    let mut gui = Fixture::new(true, false).await;
+    let headless = Fixture::new(false, false).await;
+    // 两个真实内存 SSH 连接归属同一会话，模拟 GUI 与 MCP 共用连接管理器。
+    gui.manager
+        .register_connection(headless.connection_id.clone(), headless.entry.clone())
+        .await;
+    gui.start().await;
+    assert_eq!(gui.event().await, ServerEvent::Requested);
+    assert_eq!(gui.event().await, ServerEvent::Closed);
+    let before = gui.snapshot().await;
+
+    gui.manager
+        .disconnect(&headless.connection_id)
+        .await
+        .unwrap();
+
+    assert!(gui
+        .manager
+        .session_id(&headless.connection_id)
+        .await
+        .is_err());
+    assert_eq!(
+        gui.manager.session_id(&gui.connection_id).await.unwrap(),
+        "session"
+    );
+    assert_eq!(gui.snapshot().await.history, before.history);
+    // 回收后 GUI 的 SSH 通道仍可实际执行采样，不能只检查登记信息。
+    assert!(
+        DeviceService
+            .status(&gui.manager, &gui.connection_id)
+            .await
+            .unwrap()
+            .available
+    );
+    assert_eq!(gui.event().await, ServerEvent::Requested);
+    assert_eq!(gui.event().await, ServerEvent::Closed);
+    gui.manager.disconnect(&gui.connection_id).await.unwrap();
+}
+
+#[tokio::test]
 async fn headless_connections_keep_on_demand_status_without_a_gui_sampler() {
     let mut fixture = Fixture::new(false, false).await;
     fixture.start().await;

@@ -51,7 +51,7 @@ use catalog::permission_guide_response;
 #[cfg(test)]
 use catalog::{guide_permission_for_tool, supported_guide_tools, GUIDE_PERMISSIONS};
 pub(crate) use catalog::{mcp_agent_prompt, permission_catalog, McpPermissionCatalogEntry};
-use connection_cache::{CacheLookup, ConnectionCache};
+use connection_cache::{CacheLookup, ConnectionCache, ConnectionLease};
 pub use http::{get_http_token, get_or_create_http_token, rotate_http_token, McpHttpRuntime};
 #[cfg(test)]
 use http::{http_bind_address, http_server_config, validate_http_headers, RunningMcpHttp};
@@ -923,7 +923,7 @@ impl McpService {
         &self,
         session_id: &str,
         required: Permission,
-    ) -> Result<String, McpError> {
+    ) -> Result<ConnectionLease, McpError> {
         let session = authorized_session(&self.state, self.transport, session_id, required)
             .await
             .map_err(mcp_access_error)?;
@@ -934,7 +934,7 @@ impl McpService {
         &self,
         session_id: &str,
         command: &str,
-    ) -> Result<String, McpError> {
+    ) -> Result<ConnectionLease, McpError> {
         let session = authorized_command_session(&self.state, self.transport, session_id, command)
             .await
             .map_err(mcp_access_error)?;
@@ -945,10 +945,10 @@ impl McpService {
         &self,
         session_id: &str,
         session: StoredSession,
-    ) -> Result<String, McpError> {
+    ) -> Result<ConnectionLease, McpError> {
         let session_gate = self.connections.session_gate(session_id).await;
         let _session_guard = session_gate.lock().await;
-        match self.connections.lookup(session_id, CONNECTION_IDLE).await {
+        match self.connections.lookup(session_id, CONNECTION_IDLE) {
             CacheLookup::Reusable(connection_id) => {
                 let valid = matches!(
                     self.state
@@ -962,8 +962,7 @@ impl McpService {
                 }
                 // 界面断开连接后，MCP 缓存可能暂时保留旧 ID；只删除仍匹配的条目。
                 self.connections
-                    .remove_if_matches(session_id, &connection_id)
-                    .await;
+                    .remove_if_matches(session_id, &connection_id);
             }
             CacheLookup::Expired(connection_id) => {
                 // 先从缓存移除，再在锁外断开，避免慢网络阻塞其他会话。
@@ -981,23 +980,17 @@ impl McpService {
             .connect_headless(session, &self.state.credential_service)
             .await
             .map_err(mcp_error)?;
-        self.connections
-            .insert(session_id.to_owned(), connection.connection_id.clone())
-            .await;
-        let cached_connections = self.connections.clone();
+        let lease = self
+            .connections
+            .insert(session_id.to_owned(), connection.connection_id);
+        let expiry = self.connections.idle_expiry(&lease, CONNECTION_IDLE);
         let connection_manager = self.state.connection_manager.clone();
-        let session_id = session_id.to_owned();
-        let connection_id = connection.connection_id.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(CONNECTION_IDLE).await;
-            if let Some(expired) = cached_connections
-                .take_if_idle(&session_id, &connection_id, CONNECTION_IDLE)
-                .await
-            {
+            if let Some(expired) = expiry.await {
                 let _ = connection_manager.disconnect(&expired).await;
             }
         });
-        Ok(connection.connection_id)
+        Ok(lease)
     }
 }
 

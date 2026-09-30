@@ -63,10 +63,14 @@ export interface SessionRuntime {
 }
 
 interface UseSessionConnectionsOptions {
+  devicePollingRuntimeId: string | null;
   errorFallback: string;
 }
 
-export function useSessionConnections({ errorFallback }: UseSessionConnectionsOptions) {
+export function useSessionConnections({
+  devicePollingRuntimeId,
+  errorFallback,
+}: UseSessionConnectionsOptions) {
   const [runtimes, setRuntimes] = useState<Record<string, SessionRuntime>>({});
   const runtimesRef = useRef(runtimes);
   const errorFallbackRef = useRef(errorFallback);
@@ -141,12 +145,16 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
     [],
   );
 
-  const startDevicePolling = useCallback(
-    (sessionId: string, connectionId: string) => {
-      devicePollingControllerRef.current!.start(sessionId, connectionId);
-    },
-    [],
-  );
+  const observedRuntime = devicePollingRuntimeId ? runtimes[devicePollingRuntimeId] : undefined;
+  const observedConnectionId = observedRuntime?.connectionState === "connected"
+    ? observedRuntime.connection?.connectionId
+    : undefined;
+  useEffect(() => {
+    if (!devicePollingRuntimeId || !observedConnectionId) return;
+    const controller = devicePollingControllerRef.current!;
+    controller.start(devicePollingRuntimeId, observedConnectionId);
+    return () => controller.cancelSession(devicePollingRuntimeId);
+  }, [devicePollingRuntimeId, observedConnectionId]);
 
   const handleConnected = useCallback(
     (sessionId: string, connection: SshConnection) => {
@@ -178,9 +186,8 @@ export function useSessionConnections({ errorFallback }: UseSessionConnectionsOp
       if (connection.sftpAvailable) {
         void loadFiles(sessionId, connection.connectionId, currentPath);
       }
-      startDevicePolling(sessionId, connection.connectionId);
     },
-    [loadFiles, startDevicePolling, updateRuntime],
+    [loadFiles, updateRuntime],
   );
 
   const handleTerminalState = useCallback(
