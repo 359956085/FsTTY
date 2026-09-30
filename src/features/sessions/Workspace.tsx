@@ -1,6 +1,6 @@
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronLeft, Plus, X } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEventHandler, ReactNode, RefObject } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -44,7 +44,8 @@ interface WorkspaceProps {
   onConnected: (tabId: string, connection: SshConnection) => void;
   onCredentialSaved: () => Promise<void> | void;
   onCreateRemoteDirectory: (tabId: string, name: string) => Promise<void>;
-  onCreateSession: () => void;
+  onCreateSession: MouseEventHandler<HTMLButtonElement>;
+  createSessionButtonRef?: RefObject<HTMLButtonElement | null>;
   onDeleteRemoteEntry: (tabId: string, path: string) => Promise<void>;
   onDeleteRemoteEntries: (tabId: string, paths: string[]) => Promise<RemoteEntryDeleteFailure[]>;
   onDirectoryChange: (tabId: string, path: string) => void;
@@ -84,6 +85,7 @@ export function Workspace({
   onCredentialSaved,
   onCreateRemoteDirectory,
   onCreateSession,
+  createSessionButtonRef,
   onDeleteRemoteEntry,
   onDeleteRemoteEntries,
   onDirectoryChange,
@@ -224,6 +226,7 @@ export function Workspace({
         ))}
         <TooltipButton
           label={t("sessions.new")}
+          buttonRef={createSessionButtonRef}
           className="session-tab-add"
           onClick={onCreateSession}
           type="button"

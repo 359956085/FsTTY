@@ -1,6 +1,6 @@
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, FolderOpen, KeyRound, Save, X } from "lucide-react";
-import { type KeyboardEvent, useMemo, useState } from "react";
+import { type KeyboardEvent, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -15,6 +15,7 @@ import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
+import { useDialogFocus } from "../../shared/ui/useDialogFocus";
 import { DEFAULT_SESSION_GROUP } from "./constants";
 import { usesWindowsCredentialBroker } from "../../shared/platform";
 
@@ -25,6 +26,8 @@ interface SessionFormDialogProps {
   saveError?: string | null;
   onClose: () => void;
   onSave: (payload: CreateSessionPayload | UpdateSessionPayload) => Promise<void>;
+  returnFocus?: () => HTMLElement | null;
+  fallbackFocus?: () => HTMLElement | null;
 }
 
 type AuthKind = "password" | "privateKey";
@@ -37,6 +40,8 @@ export function SessionFormDialog({
   onSave,
   saveError,
   session,
+  returnFocus,
+  fallbackFocus,
 }: SessionFormDialogProps) {
   const { t } = useTranslation();
   const brokerRequired = usesWindowsCredentialBroker();
@@ -66,6 +71,14 @@ export function SessionFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [hostKeyMessage, setHostKeyMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const titleId = useId();
+  const { dialogRef, requestClose } = useDialogFocus({
+    onClose,
+    canClose: !submitting,
+    initialFocus: (dialog) => dialog.querySelector("input"),
+    returnFocus,
+    fallbackFocus,
+  });
 
   const title = useMemo(
     () => (mode === "create" ? t("sessions.createTitle") : t("sessions.editTitle")),
@@ -342,14 +355,14 @@ export function SessionFormDialog({
 
   return (
     <div className="dialog-backdrop session-dialog-backdrop" role="presentation">
-      <section aria-modal="true" className="dialog session-dialog" role="dialog">
+      <section aria-labelledby={titleId} aria-modal="true" className="dialog session-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
         <header className="dialog-header">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <button
             aria-label={t("sessions.close")}
             className="icon-button"
             disabled={submitting}
-            onClick={onClose}
+            onClick={requestClose}
             type="button"
           >
             <X size={18} />

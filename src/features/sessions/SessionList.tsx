@@ -16,6 +16,7 @@ import {
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   type KeyboardEvent,
+  type MouseEventHandler,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -51,8 +52,8 @@ interface SessionListProps {
   onOpen: (sessionId: string) => void;
   onToggleFavorite: (sessionId: string) => void;
   onToggleGroup: (groupName: string) => void;
-  onCreate: () => void;
-  onEdit: (sessionId: string) => void;
+  onCreate: MouseEventHandler<HTMLButtonElement>;
+  onEdit: (sessionId: string, returnFocusTarget: HTMLElement | null) => void;
   onDelete: (sessionId: string) => void;
   onDeleteGroup: (
     groupName: string,
@@ -123,6 +124,7 @@ export function SessionList({
   const [filterActiveIndex, setFilterActiveIndex] = useState(0);
   const [filterOpen, setFilterOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
+  const contextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const [copyError, setCopyError] = useState(false);
   const [groupOperation, setGroupOperation] = useState<GroupOperation | null>(null);
   const [dragSource, setDragSource] = useState<SessionDragSource | null>(null);
@@ -607,6 +609,7 @@ export function SessionList({
                       key={session.id}
                       onContextMenu={(event) => {
                         event.preventDefault();
+                        contextMenuReturnFocusRef.current = event.currentTarget.querySelector(".session-item-select");
                         setContextMenu({
                           kind: "session",
                           x: event.clientX,
@@ -665,7 +668,7 @@ export function SessionList({
           items={[
             { id: "connect", label: t("sessions.contextConnect"), icon: <Link size={15} />, onSelect: () => onOpen(contextMenu.sessionId) },
             { id: "copy-session-info", label: t("sessions.contextCopySessionInfo"), icon: <Copy size={15} />, onSelect: () => void copySessionInfo(contextMenu.sessionId) },
-            { id: "edit", label: t("sessions.edit"), icon: <Pencil size={15} />, disabled: mutationPending, onSelect: () => onEdit(contextMenu.sessionId) },
+            { id: "edit", label: t("sessions.edit"), icon: <Pencil size={15} />, disabled: mutationPending, onSelect: () => onEdit(contextMenu.sessionId, contextMenuReturnFocusRef.current) },
             { id: "favorite", label: t(favoriteIds.has(contextMenu.sessionId) ? "sessions.unfavorite" : "sessions.favorite"), icon: <Star size={15} />, onSelect: () => onToggleFavorite(contextMenu.sessionId) },
             { id: "refresh", label: t("sessions.refresh"), icon: <RefreshCcw size={15} />, disabled: mutationPending, onSelect: onRefresh },
             { id: "delete", label: t("sessions.delete"), icon: <Trash2 size={15} />, danger: true, disabled: mutationPending, onSelect: () => onDelete(contextMenu.sessionId) },

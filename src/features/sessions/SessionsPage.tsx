@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
@@ -33,6 +33,8 @@ export function SessionsPage({
   visible,
 }: SessionsPageProps) {
   const { t } = useTranslation();
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
+  const createSessionButtonRef = useRef<HTMLButtonElement | null>(null);
   const sessionsState = useSessionsPageState({
     confirmDeleteText: t("sessions.confirmDelete"),
     errorFallback: t("errors.unknown"),
@@ -86,6 +88,11 @@ export function SessionsPage({
     ? connections.runtimes[sessionsState.activeTabId] ?? createRuntime()
     : createRuntime();
 
+  function openCreateSession(event: MouseEvent<HTMLButtonElement>) {
+    dialogReturnFocusRef.current = event.currentTarget;
+    sessionsState.setDialogState({ mode: "create" });
+  }
+
   async function closeTab(tabId: string) {
     await connections.disconnect(tabId);
     connections.removeRuntime(tabId);
@@ -133,12 +140,13 @@ export function SessionsPage({
           groups={sessionsState.groups}
           mutationPending={sessionsState.listMutationPending}
           query={sessionsState.query}
-          onCreate={() => sessionsState.setDialogState({ mode: "create" })}
+          onCreate={openCreateSession}
           onDelete={(sessionId) => void deleteSession(sessionId)}
           onDeleteGroup={deleteGroup}
-          onEdit={(sessionId) => {
+          onEdit={(sessionId, returnFocusTarget) => {
             const session = sessionsState.sessions.find((item) => item.id === sessionId);
             if (session) {
+              dialogReturnFocusRef.current = returnFocusTarget;
               sessionsState.setDialogState({ mode: "edit", session });
             }
           }}
@@ -177,7 +185,8 @@ export function SessionsPage({
         onConnected={connections.handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}
         onCreateRemoteDirectory={connections.createRemoteDirectory}
-        onCreateSession={() => sessionsState.setDialogState({ mode: "create" })}
+        onCreateSession={openCreateSession}
+        createSessionButtonRef={createSessionButtonRef}
         onDeleteRemoteEntry={connections.deleteRemoteEntry}
         onDeleteRemoteEntries={connections.deleteRemoteEntries}
         onDirectoryChange={connections.handleTerminalDirectory}
@@ -217,6 +226,8 @@ export function SessionsPage({
           session={sessionsState.dialogState.session}
           onClose={() => sessionsState.setDialogState(null)}
           onSave={sessionsState.saveSession}
+          returnFocus={() => dialogReturnFocusRef.current}
+          fallbackFocus={() => createSessionButtonRef.current}
         />
       ) : null}
     </div>

@@ -319,7 +319,7 @@ describe("SettingsPage 本地 Agent 配置", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "settings.viewUpdateHistory" }));
     expect(await screen.findByRole("dialog")).toBeTruthy();
-    expect(screen.getByText("v1.2.1")).toBeTruthy();
+    expect(await screen.findByText("v1.2.1")).toBeTruthy();
   });
 
   it("关于页保存 GitHub 更新源", async () => {

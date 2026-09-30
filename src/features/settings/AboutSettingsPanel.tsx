@@ -1,11 +1,13 @@
-import { Check, Copy, ExternalLink, History, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, History, RefreshCw, X } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import type { AppSettings, UpdateSourcePreference } from "../../shared/api/types";
 import { Button } from "../../shared/ui/Button";
 import { Select } from "../../shared/ui/Select";
+import { useDialogFocus } from "../../shared/ui/useDialogFocus";
 import type { AppUpdaterController } from "./useAppUpdater";
 
 const PROJECT_URL = "https://github.com/359956085/FsTTY";
@@ -41,6 +43,12 @@ export function AboutSettingsPanel({
   const { t } = useTranslation();
   const [emailCopied, setEmailCopied] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const { dialogRef, requestClose } = useDialogFocus({
+    open: historyOpen,
+    onClose: () => setHistoryOpen(false),
+    returnFocus: () => historyTriggerRef.current,
+  });
   const [linkError, setLinkError] = useState<string | null>(null);
 
   async function openProject() {
@@ -175,7 +183,10 @@ export function AboutSettingsPanel({
           </div>
           <Button
             icon={<History aria-hidden="true" size={16} />}
-            onClick={() => setHistoryOpen(true)}
+            onClick={(event) => {
+              historyTriggerRef.current = event.currentTarget;
+              setHistoryOpen(true);
+            }}
             variant="ghost"
           >
             {t("settings.viewUpdateHistory")}
@@ -185,13 +196,26 @@ export function AboutSettingsPanel({
       </section>
       {historyOpen ? (
         <Suspense
-          fallback={
-            <div className="dialog-backdrop update-dialog-backdrop">
-              <div className="loading-banner">{t("common.loading")}</div>
-            </div>
-          }
+          fallback={createPortal(
+            <div className="dialog-backdrop update-dialog-backdrop" onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                event.preventDefault();
+                requestClose();
+              }
+            }}>
+              <section aria-labelledby="update-history-loading-title" aria-modal="true"
+                className="dialog update-dialog update-history-dialog" role="dialog" ref={dialogRef} tabIndex={-1}>
+                <header className="dialog-header">
+                  <h2 id="update-history-loading-title">{t("settings.updateHistory")}</h2>
+                  <button aria-label={t("sessions.close")} className="icon-button update-dialog-close"
+                    onClick={requestClose} type="button"><X aria-hidden="true" size={20} /></button>
+                </header>
+                <div className="loading-banner" role="status">{t("common.loading")}</div>
+              </section>
+            </div>, document.body,
+          )}
         >
-          <UpdateHistoryDialog onClose={() => setHistoryOpen(false)} open />
+          <UpdateHistoryDialog dialogRef={dialogRef} onClose={requestClose} open />
         </Suspense>
       ) : null}
     </>

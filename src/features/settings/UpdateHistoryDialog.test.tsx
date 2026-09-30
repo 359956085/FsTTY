@@ -2,7 +2,14 @@
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { UpdateHistoryDialog } from "./UpdateHistoryDialog";
+import type { ComponentProps } from "react";
+import { useDialogFocus } from "../../shared/ui/useDialogFocus";
+import { UpdateHistoryDialog as UpdateHistoryDialogContent } from "./UpdateHistoryDialog";
+
+function UpdateHistoryDialog(props: Omit<ComponentProps<typeof UpdateHistoryDialogContent>, "dialogRef">) {
+  const { dialogRef, requestClose } = useDialogFocus({ open: props.open, onClose: props.onClose });
+  return <UpdateHistoryDialogContent {...props} dialogRef={dialogRef} onClose={requestClose} />;
+}
 
 const locale = vi.hoisted(() => ({ value: "zh-CN" }));
 const latestVersionHeadings = ["v1.7.2", "v1.7.1", "v1.7.0"];

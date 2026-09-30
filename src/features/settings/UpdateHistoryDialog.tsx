@@ -1,5 +1,5 @@
 import { History, X } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useMemo, type RefCallback } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import changelog from "../../../CHANGELOG.md?raw";
@@ -10,28 +10,15 @@ import { parseUpdateHistory } from "./updateHistory";
 interface UpdateHistoryDialogProps {
   onClose: () => void;
   open: boolean;
+  dialogRef: RefCallback<HTMLElement>;
 }
 
-export function UpdateHistoryDialog({ onClose, open }: UpdateHistoryDialogProps) {
+export function UpdateHistoryDialog({ onClose, open, dialogRef }: UpdateHistoryDialogProps) {
   const { i18n, t } = useTranslation();
   const entries = useMemo(
     () => parseUpdateHistory(changelog, i18n.resolvedLanguage ?? i18n.language),
     [i18n.language, i18n.resolvedLanguage],
   );
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, open]);
 
   return open
     ? createPortal(
@@ -39,6 +26,8 @@ export function UpdateHistoryDialog({ onClose, open }: UpdateHistoryDialogProps)
           className="dialog-backdrop update-dialog-backdrop"
           onMouseDown={(event) => {
             if (event.currentTarget === event.target) {
+              // Keep the mouse's default focus change from undoing restoration.
+              event.preventDefault();
               onClose();
             }
           }}
@@ -48,6 +37,8 @@ export function UpdateHistoryDialog({ onClose, open }: UpdateHistoryDialogProps)
             aria-modal="true"
             className="dialog update-dialog update-history-dialog"
             role="dialog"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             <header className="dialog-header">
               <div className="update-dialog-title">
@@ -63,7 +54,7 @@ export function UpdateHistoryDialog({ onClose, open }: UpdateHistoryDialogProps)
                 <X aria-hidden="true" size={20} />
               </button>
             </header>
-            <div className="update-dialog-body update-history-list">
+            <div aria-label={t("settings.updateHistory")} className="update-dialog-body update-history-list" role="region" tabIndex={0}>
               {entries.map((entry) => (
                 <article className="update-history-entry" key={entry.version}>
                   <header>
