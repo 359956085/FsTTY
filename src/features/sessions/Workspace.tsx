@@ -12,6 +12,7 @@ import type {
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
+import { contextMenuPosition, isComposingKey, isContextMenuKey, isFocusAvailable } from "../../shared/ui/focus";
 import { FilesPane } from "./FilesPane";
 import { TerminalPane } from "./TerminalPane";
 import type { SessionRuntime } from "./useSessionConnections";
@@ -111,6 +112,46 @@ export function Workspace({
 }: WorkspaceProps) {
   const { t } = useTranslation();
   const rightToggleRef = useRef<HTMLButtonElement>(null);
+  const localCreateRef = useRef<HTMLButtonElement>(null);
+  const newSessionRef = createSessionButtonRef ?? localCreateRef;
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabMenuAnchor = useRef<HTMLButtonElement | null>(null);
+  const menuReturnFocusRef = useRef<HTMLElement | null>(null);
+  const closingTabs = useRef<{ ids: Set<string>; owner: HTMLElement | null } | null>(null);
+  useLayoutEffect(() => {
+    const request = closingTabs.current;
+    if (!request) return;
+    const active = document.activeElement;
+    if (!visible || (active !== document.body && active !== request.owner)) {
+      closingTabs.current = null;
+      return;
+    }
+    if (openTabs.some((tab) => request.ids.has(tab.id))) return;
+    closingTabs.current = null;
+    const target = (activeTabId && tabRefs.current.get(activeTabId)) || newSessionRef.current;
+    if (isFocusAvailable(target)) {
+      menuReturnFocusRef.current = target;
+      target.focus({ preventScroll: true });
+    }
+  });
+  useEffect(() => {
+    const cancel = (event: Event) => {
+      if (closingTabs.current && event.target !== closingTabs.current.owner && event.target !== document.body) closingTabs.current = null;
+      if (event.target !== menuReturnFocusRef.current) menuReturnFocusRef.current = null;
+    };
+    document.addEventListener("focusin", cancel);
+    document.addEventListener("pointerdown", cancel, true);
+    return () => {
+      closingTabs.current = null;
+      menuReturnFocusRef.current = null;
+      document.removeEventListener("focusin", cancel);
+      document.removeEventListener("pointerdown", cancel, true);
+    };
+  }, []);
+  function closeTabs(ids: string[]) {
+    closingTabs.current = { ids: new Set(ids), owner: tabMenuAnchor.current };
+    ids.forEach(onCloseTab);
+  }
   const focusRightToggle = useRef(false);
   useLayoutEffect(() => {
     if (focusRightToggle.current && visible) {
@@ -203,10 +244,28 @@ export function Workspace({
             key={tab.id}
             onContextMenu={(event) => {
               event.preventDefault();
-              setTabContextMenu({ x: event.clientX, y: event.clientY, tabId: tab.id });
+              const target = tabRefs.current.get(tab.id);
+              if (!target) return;
+              tabMenuAnchor.current = target;
+              setTabContextMenu({ ...contextMenuPosition(target, event), tabId: tab.id });
+            }}
+            onKeyDown={(event) => {
+              if (event.defaultPrevented || isComposingKey(event.nativeEvent) || !isContextMenuKey(event)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const target = tabRefs.current.get(tab.id);
+              if (!target) return;
+              tabMenuAnchor.current = target;
+              setTabContextMenu({ ...contextMenuPosition(target), tabId: tab.id });
             }}
           >
-            <button onClick={() => onSelectTab(tab.id)} type="button">
+            <button onClick={() => {
+              menuReturnFocusRef.current = null;
+              onSelectTab(tab.id);
+            }} ref={(node) => {
+              if (node) tabRefs.current.set(tab.id, node);
+              else tabRefs.current.delete(tab.id);
+            }} type="button">
               <span
                 className={`status-dot status-${
                   connectionStates[tab.id] === "connected" ? "online" : "offline"
@@ -226,7 +285,7 @@ export function Workspace({
         ))}
         <TooltipButton
           label={t("sessions.new")}
-          buttonRef={createSessionButtonRef}
+          buttonRef={newSessionRef}
           className="session-tab-add"
           onClick={onCreateSession}
           type="button"
@@ -238,11 +297,13 @@ export function Workspace({
       {tabContextMenu ? (
         <ContextMenu
           items={[
-            { id: "close", label: t("sessions.contextCloseCurrent"), icon: <X size={15} />, onSelect: () => onCloseTab(tabContextMenu.tabId) },
-            { id: "closeOthers", label: t("sessions.contextCloseOthers"), onSelect: () => openTabs.filter((tab) => tab.id !== tabContextMenu.tabId).forEach((tab) => onCloseTab(tab.id)) },
-            { id: "closeAll", label: t("sessions.contextCloseAll"), danger: true, onSelect: () => openTabs.forEach((tab) => onCloseTab(tab.id)) },
+            { id: "close", label: t("sessions.contextCloseCurrent"), icon: <X size={15} />, onSelect: () => closeTabs([tabContextMenu.tabId]) },
+            { id: "closeOthers", label: t("sessions.contextCloseOthers"), onSelect: () => closeTabs(openTabs.filter((tab) => tab.id !== tabContextMenu.tabId).map((tab) => tab.id)) },
+            { id: "closeAll", label: t("sessions.contextCloseAll"), danger: true, onSelect: () => closeTabs(openTabs.map((tab) => tab.id)) },
           ]}
           onClose={() => setTabContextMenu(null)}
+          returnFocus={() => tabMenuAnchor.current}
+          fallbackFocus={() => (activeTabId && tabRefs.current.get(activeTabId)) || newSessionRef.current}
           x={tabContextMenu.x}
           y={tabContextMenu.y}
         />
@@ -281,6 +342,7 @@ export function Workspace({
                     autoConnect={tab.autoConnect}
                     connectionState={runtime?.connectionState ?? "disconnected"}
                     currentPath={runtime?.currentPath ?? "/"}
+                    activationFocusTarget={menuReturnFocusRef}
                     onConnected={onConnected}
                     onCredentialSaved={onCredentialSaved}
                     onDirectoryChange={onDirectoryChange}
@@ -321,6 +383,7 @@ export function Workspace({
           <MemoizedFilesPane
             {...fileActions}
             collapseButtonRef={rightToggleRef}
+            connectionId={activeRuntime.connection?.connectionId ?? null}
             currentPath={activeRuntime.currentPath}
             files={activeRuntime.files}
             key={activeTabId ?? "no-session"}

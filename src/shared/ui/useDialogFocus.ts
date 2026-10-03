@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
+import { isFocusAvailable as available } from "./focus";
 
 interface DialogFocusOptions {
   open?: boolean;
@@ -7,15 +8,6 @@ interface DialogFocusOptions {
   initialFocus?: (dialog: HTMLElement) => HTMLElement | null;
   returnFocus?: () => HTMLElement | null;
   fallbackFocus?: () => HTMLElement | null;
-}
-
-function available(element: HTMLElement) {
-  if (!element.isConnected || element.matches(":disabled") || element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
-  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
-    const style = getComputedStyle(current);
-    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
-  }
-  return true;
 }
 
 function tabStops(dialog: HTMLElement) {
@@ -128,7 +120,7 @@ export function useDialogFocus(options: DialogFocusOptions) {
       const active = document.activeElement;
       // A newly opened dialog or page may already own focus when we unmount.
       if (active && active !== document.body && !Array.from(session.nodes).some((root) => root.contains(active))) return;
-      const target = optionsRef.current.returnFocus?.() ?? previousFocus;
+      const target = optionsRef.current.returnFocus ? optionsRef.current.returnFocus() : previousFocus;
       const fallback = optionsRef.current.fallbackFocus?.();
       const restore = target && available(target) ? target : fallback && available(fallback) ? fallback : null;
       restore?.focus({ preventScroll: true });

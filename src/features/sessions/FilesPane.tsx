@@ -22,6 +22,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -37,6 +38,9 @@ import { Button } from "../../shared/ui/Button";
 import type { TransferProgress } from "./useSessionConnections";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
+import { useDialogFocus } from "../../shared/ui/useDialogFocus";
+import { useOperationFocus } from "../../shared/ui/useOperationFocus";
+import { contextMenuPosition, isComposingKey, isContextMenuKey, neighboringKeys } from "../../shared/ui/focus";
 import { ResizeHandle } from "./ResizeHandle";
 import {
   buildBreadcrumbs,
@@ -68,6 +72,7 @@ import {
 
 interface FilesPaneProps {
   collapseButtonRef?: RefObject<HTMLButtonElement | null>;
+  connectionId?: string | null;
   currentPath: string;
   files: FileEntry[];
   loading: boolean;
@@ -114,6 +119,7 @@ type RemoteMoveStatus =
 
 export function FilesPane({
   collapseButtonRef,
+  connectionId = null,
   currentPath,
   files,
   loading,
@@ -140,6 +146,7 @@ export function FilesPane({
     useFileColumnResizing();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(new Set());
   const selectionAnchorRef = useRef<string | null>(null);
+  const selectionRevisionRef = useRef(0);
   const [contextMenu, setContextMenu] = useState<FileContextMenu | null>(null);
   const [fileOperation, setFileOperation] = useState<FileOperationDialog | null>(null);
   const [inlineRename, setInlineRename] = useState<InlineRenameState | null>(null);
@@ -152,6 +159,44 @@ export function FilesPane({
   > | null>(null);
   const filePointerIntentRef = useRef<FilePointerIntent | null>(null);
   const [operationPending, setOperationPending] = useState(false);
+  const operationTitleId = useId();
+  const dialogNodeRef = useRef<HTMLElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const menuAnchorRef = useRef<HTMLElement | null>(null);
+  const operationOriginRef = useRef<{ element: HTMLElement | null; context: string; neighbors: string[] } | null>(null);
+  const focusContext = JSON.stringify([connectionId, currentPath, sftpAvailable]);
+  const { begin: beginFocus, complete: completeFocus, isPending: focusPending } = useOperationFocus({
+    context: focusContext,
+    ready: !operationPending && !loading,
+    listRef: tableRef,
+    findTarget: (key) => key === "@editor" ? inlineRenameInputRef.current
+      : key === "@dialog" ? dialogNodeRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)") ?? null
+        : rowRefs.current.get(key) ?? null,
+    onRestored: (path) => {
+      selectionAnchorRef.current = path;
+      setSelectedPaths(new Set([path]));
+    },
+  });
+  const inlineFocusLease = useRef<ReturnType<typeof beginFocus> | null>(null);
+  const { dialogRef, requestClose } = useDialogFocus({
+    open: fileOperation !== null,
+    onClose: () => {
+      if (!operationControllerRef.current?.isPending("dialog")) setFileOperation(null);
+    },
+    canClose: !operationPending,
+    initialFocus: (dialog) => dialog.querySelector("input, [data-dialog-cancel]"),
+    returnFocus: () => operationOriginRef.current?.context === focusContext
+      ? focusPending() ? tableRef.current : operationOriginRef.current.element : null,
+    fallbackFocus: () => operationOriginRef.current?.context === focusContext ? tableRef.current : null,
+  });
+  const registerDialog = useCallback((node: HTMLElement | null) => {
+    dialogNodeRef.current = node;
+    const cleanup = dialogRef(node);
+    return () => {
+      dialogNodeRef.current = null;
+      cleanup?.();
+    };
+  }, [dialogRef]);
   const [dragUploadActive, setDragUploadActive] = useState(false);
   const [remoteDrag, setRemoteDrag] = useState<RemoteEntryDrag | null>(null);
   const remoteDragControllerRef = useRef<ReturnType<
@@ -212,6 +257,7 @@ export function FilesPane({
     cancelInlineRename,
     clearMoveFeedback,
     currentPath,
+    connectionId,
     finishRemoteDrag,
     sftpAvailable,
   ]);
@@ -238,7 +284,7 @@ export function FilesPane({
     const inlineRenameController = createInlineRenameController({
       onChange: setInlineRename,
       onFocusRequested: () => {
-        window.requestAnimationFrame(() => inlineRenameInputRef.current?.focus());
+        completeFocus(inlineFocusLease.current, ["@editor"]);
       },
       onPendingChange: setOperationPending,
     });
@@ -283,13 +329,16 @@ export function FilesPane({
       }
       copyRequestIdRef.current += 1;
     };
-  }, [finishRemoteDrag]);
+  }, [completeFocus, finishRemoteDrag]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectionAnchorRef.current = null;
     setSelectedPaths(new Set());
     setContextMenu(null);
-  }, [currentPath]);
+    operationControllerRef.current?.cancel("dialog");
+    setOperationPending(false);
+    setFileOperation(null);
+  }, [focusContext]);
 
   useEffect(() => {
     if (loading) return;
@@ -379,6 +428,7 @@ export function FilesPane({
     file: FileEntry,
     modifiers?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
   ) {
+    selectionRevisionRef.current += 1;
     const additive = modifiers?.ctrlKey || modifiers?.metaKey;
     const anchorIndex = files.findIndex((entry) => entry.path === selectionAnchorRef.current);
     const targetIndex = files.findIndex((entry) => entry.path === file.path);
@@ -401,6 +451,7 @@ export function FilesPane({
   }
 
   function clearSelection() {
+    selectionRevisionRef.current += 1;
     setSelectedPaths(new Set());
     selectionAnchorRef.current = null;
     inlineRenameControllerRef.current?.resetClick();
@@ -454,11 +505,22 @@ export function FilesPane({
     inlineRenameControllerRef.current?.update(value);
   }
 
-  async function submitInlineRename() {
+  async function submitInlineRename(restore = false) {
+    if (operationPending || inlineRenameControllerRef.current?.isPending() || !inlineRename) return;
+    const file = inlineRename.file;
+    const selectionRevision = selectionRevisionRef.current;
+    const selectionBefore = selectedPaths;
+    const lease = beginFocus(inlineRenameInputRef.current, restore);
+    inlineFocusLease.current = lease;
     await inlineRenameControllerRef.current?.submit({
       formatError: (error) => resolveApiError(error, t("errors.unknown")),
       rename: onRenameEntry,
       requiredError: t("sessions.remoteNameRequired"),
+      onSuccess: (name) => {
+        const path = resultPath(name);
+        migrateSelection(file.path, path, selectionBefore, selectionRevision);
+        completeFocus(lease, [path], true);
+      },
     });
   }
 
@@ -582,6 +644,37 @@ export function FilesPane({
     );
   }
 
+  function resultPath(name: string) {
+    return `${currentPath.replace(/\/$/, "")}/${name}`;
+  }
+
+  function migrateSelection(previous: string, next: string, selectionBefore: ReadonlySet<string>, revision: number) {
+    // Refresh can remove the old row before this callback; use the submitted
+    // selection unless the user has since selected a different entry.
+    if (selectionRevisionRef.current !== revision) return;
+    setSelectedPaths(new Set([...selectionBefore].map((path) => path === previous ? next : path)));
+    if (selectionAnchorRef.current === previous) selectionAnchorRef.current = next;
+  }
+
+  function openFileOperation(operation: FileOperationDialog) {
+    operationOriginRef.current = {
+      element: menuAnchorRef.current,
+      context: focusContext,
+      neighbors: neighboringKeys(files.map((file) => file.path), contextMenu?.kind === "entry" ? contextMenu.file.path : ""),
+    };
+    setFileOperation(operation);
+  }
+
+  function openEntryMenu(file: FileEntry, target: HTMLDivElement, pointer?: { clientX: number; clientY: number }) {
+    if (inlineRename || fileOperation) return;
+    menuAnchorRef.current = target;
+    inlineRenameControllerRef.current?.resetClick();
+    filePointerIntentRef.current = null;
+    const menuFiles = selectedPaths.has(file.path) ? selectedFiles : [file];
+    if (!selectedPaths.has(file.path)) selectFile(file);
+    setContextMenu({ kind: "entry", ...contextMenuPosition(target, pointer), file, files: menuFiles });
+  }
+
   async function submitFileOperation() {
     const operationController = operationControllerRef.current;
     if (!fileOperation || !operationController || operationController.isPending("dialog")) {
@@ -596,6 +689,9 @@ export function FilesPane({
       return;
     }
 
+    const lease = beginFocus(dialogNodeRef.current);
+    const selectionRevision = selectionRevisionRef.current;
+    const selectionBefore = selectedPaths;
     setFileOperation({ ...fileOperation, error: null });
     await operationController.run(
       "dialog",
@@ -625,6 +721,9 @@ export function FilesPane({
         onPendingChange: setOperationPending,
         onSuccess: (failures) => {
           if (!failures?.length) {
+            const keys = fileOperation.kind === "delete" ? operationOriginRef.current?.neighbors ?? [] : [resultPath(normalizedName!)];
+            if (fileOperation.kind === "rename") migrateSelection(fileOperation.file.path, keys[0], selectionBefore, selectionRevision);
+            completeFocus(lease, keys, true);
             setFileOperation(null);
             return;
           }
@@ -636,12 +735,14 @@ export function FilesPane({
               message: resolveApiError(failures[0].error, t("errors.unknown")),
             }),
           });
+          completeFocus(lease, ["@dialog"]);
         },
         onError: (error) => {
           const message = resolveApiError(error, t("errors.unknown"));
           setFileOperation((current) =>
             current ? { ...current, error: message } : current,
           );
+          completeFocus(lease, ["@dialog"]);
         },
       },
     );
@@ -751,15 +852,26 @@ export function FilesPane({
       ) : null}
 
       <div
+        aria-label={t("sessions.files")}
         className="file-table"
         onClick={(event) => {
           if (event.target === event.currentTarget) clearSelection();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
-          setContextMenu({ kind: "directory", x: event.clientX, y: event.clientY });
+          if (inlineRename || fileOperation) return;
+          menuAnchorRef.current = event.currentTarget;
+          setContextMenu({ kind: "directory", ...contextMenuPosition(event.currentTarget, event) });
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || event.defaultPrevented || isComposingKey(event.nativeEvent) || !isContextMenuKey(event) || inlineRename || fileOperation) return;
+          event.preventDefault();
+          menuAnchorRef.current = event.currentTarget;
+          setContextMenu({ kind: "directory", ...contextMenuPosition(event.currentTarget) });
         }}
         ref={tableRef}
+        role="group"
+        tabIndex={0}
       >
         <div className="file-row file-head">
           {RESIZABLE_FILE_COLUMNS.map((column) => {
@@ -810,6 +922,10 @@ export function FilesPane({
               )}
               data-remote-drop-path={file.kind === "folder" ? file.path : undefined}
               key={file.path}
+              ref={(node) => {
+                if (node) rowRefs.current.set(file.path, node);
+                else rowRefs.current.delete(file.path);
+              }}
               onClick={(event) => handleFileRowClick(file, event)}
               onDoubleClick={(event) => {
                 inlineRenameControllerRef.current?.resetClick();
@@ -824,6 +940,13 @@ export function FilesPane({
                 }
               }}
               onKeyDown={(event) => {
+                if (event.defaultPrevented || isComposingKey(event.nativeEvent)) return;
+                if (!renaming && isContextMenuKey(event)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openEntryMenu(file, event.currentTarget);
+                  return;
+                }
                 if (
                   !renaming &&
                   (event.key === "Enter" || event.key === " ")
@@ -846,17 +969,7 @@ export function FilesPane({
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                inlineRenameControllerRef.current?.resetClick();
-                filePointerIntentRef.current = null;
-                const menuFiles = selectedPaths.has(file.path) ? selectedFiles : [file];
-                if (!selectedPaths.has(file.path)) selectFile(file);
-                setContextMenu({
-                  kind: "entry",
-                  x: event.clientX,
-                  y: event.clientY,
-                  file,
-                  files: menuFiles,
-                });
+                openEntryMenu(file, event.currentTarget, event);
               }}
               role={renaming ? undefined : "button"}
               tabIndex={renaming ? -1 : 0}
@@ -880,12 +993,15 @@ export function FilesPane({
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={(event) => {
                       event.stopPropagation();
+                      if (event.defaultPrevented || isComposingKey(event.nativeEvent) || operationPending || event.repeat) return;
                       if (event.key === "Escape") {
                         event.preventDefault();
+                        const lease = beginFocus(inlineRenameInputRef.current);
+                        completeFocus(lease, [file.path]);
                         cancelInlineRename();
                       } else if (event.key === "Enter") {
                         event.preventDefault();
-                        void submitInlineRename();
+                        void submitInlineRename(true);
                       }
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
@@ -923,7 +1039,7 @@ export function FilesPane({
                     icon: <FolderPlus size={15} />,
                     disabled: operationBlocked,
                     onSelect: () =>
-                      setFileOperation({ kind: "create", value: "", error: null }),
+                      openFileOperation({ kind: "create", value: "", error: null }),
                   },
                   {
                     id: "upload",
@@ -961,7 +1077,7 @@ export function FilesPane({
                       icon: <Trash2 size={15} />,
                       danger: true,
                       disabled: operationBlocked,
-                      onSelect: () => setFileOperation({ kind: "delete", files: contextMenu.files, error: null }),
+                      onSelect: () => openFileOperation({ kind: "delete", files: contextMenu.files, error: null }),
                     },
                   ]
                 : [
@@ -991,7 +1107,7 @@ export function FilesPane({
                     icon: <Pencil size={15} />,
                     disabled: operationBlocked,
                     onSelect: () =>
-                      setFileOperation({
+                      openFileOperation({
                         kind: "rename",
                         file: contextMenu.file,
                         value: contextMenu.file.name,
@@ -1005,7 +1121,7 @@ export function FilesPane({
                     danger: true,
                     disabled: operationBlocked,
                     onSelect: () =>
-                      setFileOperation({
+                      openFileOperation({
                         kind: "delete",
                         files: [contextMenu.file],
                         error: null,
@@ -1027,6 +1143,8 @@ export function FilesPane({
                 ]
           }
           onClose={() => setContextMenu(null)}
+          returnFocus={() => menuAnchorRef.current}
+          fallbackFocus={() => tableRef.current}
           x={contextMenu.x}
           y={contextMenu.y}
         />
@@ -1036,17 +1154,14 @@ export function FilesPane({
         <div className="dialog-backdrop terminal-dialog-backdrop">
           <section
             aria-modal="true"
+            aria-labelledby={operationTitleId}
             className="dialog file-operation-dialog"
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !operationPending) {
-                event.preventDefault();
-                setFileOperation(null);
-              }
-            }}
+            ref={registerDialog}
             role="dialog"
+            tabIndex={-1}
           >
             <header className="dialog-header">
-              <h2>{operationTitle}</h2>
+              <h2 id={operationTitleId}>{operationTitle}</h2>
             </header>
             <div className="file-operation-body">
               {fileOperation.kind === "delete" ? (
@@ -1073,11 +1188,10 @@ export function FilesPane({
                       : t("sessions.newName")}
                   </span>
                   <TextInput
-                    autoFocus
                     disabled={operationPending}
                     onChange={(event) => updateOperationValue(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                      if (event.key === "Enter" && !event.defaultPrevented && !isComposingKey(event.nativeEvent) && !event.repeat) {
                         event.preventDefault();
                         void submitFileOperation();
                       }
@@ -1087,12 +1201,12 @@ export function FilesPane({
                 </label>
               )}
             </div>
-            {fileOperation.error ? <div className="form-error">{fileOperation.error}</div> : null}
+            {fileOperation.error ? <div className="form-error" role="alert">{fileOperation.error}</div> : null}
             <footer className="dialog-actions">
               <Button
-                autoFocus={fileOperation.kind === "delete"}
+                data-dialog-cancel
                 disabled={operationPending}
-                onClick={() => setFileOperation(null)}
+                onClick={requestClose}
                 variant="ghost"
               >
                 {t("sessions.cancel")}

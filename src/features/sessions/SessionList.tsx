@@ -20,6 +20,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,6 +32,11 @@ import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
 import { TextInput } from "../../shared/ui/TextInput";
+import { useDialogFocus } from "../../shared/ui/useDialogFocus";
+import { useOperationFocus } from "../../shared/ui/useOperationFocus";
+import { contextMenuPosition, isComposingKey, isContextMenuKey, neighboringKeys } from "../../shared/ui/focus";
+import { resolveApiError } from "../../shared/api/errors";
+import { createFileOperationController } from "./fileOperationController";
 import { DEFAULT_SESSION_GROUP } from "./constants";
 import {
   resolveSessionDropTarget,
@@ -127,6 +134,45 @@ export function SessionList({
   const contextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const [copyError, setCopyError] = useState(false);
   const [groupOperation, setGroupOperation] = useState<GroupOperation | null>(null);
+  const [groupPending, setGroupPending] = useState(false);
+  const groupBusy = mutationPending || groupPending;
+  const groupTitleId = useId();
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const groupRefs = useRef(new Map<string, HTMLButtonElement>());
+  const dialogNodeRef = useRef<HTMLElement | null>(null);
+  const groupControllerRef = useRef<ReturnType<typeof createFileOperationController> | null>(null);
+  const groupOriginRef = useRef<{ element: HTMLElement | null; context: string; neighbors: string[] } | null>(null);
+  const focusContext = JSON.stringify([query, filter]);
+  const { begin: beginFocus, complete: completeFocus, isPending: focusPending } = useOperationFocus({
+    context: focusContext,
+    ready: !groupBusy,
+    listRef,
+    findTarget: (key) => key === "@dialog" && groupOperation ? dialogNodeRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)") ?? null : groupRefs.current.get(key) ?? null,
+  });
+  const { dialogRef, requestClose } = useDialogFocus({
+    open: groupOperation !== null,
+    canClose: !groupBusy,
+    onClose: () => {
+      if (!groupControllerRef.current?.isPending("dialog")) setGroupOperation(null);
+    },
+    initialFocus: (dialog) => dialog.querySelector("input, [data-dialog-cancel]"),
+    returnFocus: () => groupOriginRef.current?.context === focusContext
+      ? focusPending() ? listRef.current : groupOriginRef.current.element : null,
+    fallbackFocus: () => groupOriginRef.current?.context === focusContext ? listRef.current : null,
+  });
+  const registerDialog = useCallback((node: HTMLElement | null) => {
+    dialogNodeRef.current = node;
+    const cleanup = dialogRef(node);
+    return () => { dialogNodeRef.current = null; cleanup?.(); };
+  }, [dialogRef]);
+  useLayoutEffect(() => {
+    const controller = createFileOperationController();
+    groupControllerRef.current = controller;
+    setGroupOperation(null);
+    setGroupPending(false);
+    setContextMenu(null);
+    return () => { controller.dispose(); };
+  }, [focusContext]);
   const [dragSource, setDragSource] = useState<SessionDragSource | null>(null);
   const [dropTarget, setDropTarget] = useState<SessionDropTarget | null>(null);
   const dragGestureRef = useRef<DragGesture | null>(null);
@@ -393,31 +439,47 @@ export function SessionList({
     return true;
   }
 
+  function openGroupOperation(operation: GroupOperation) {
+    groupOriginRef.current = {
+      element: contextMenuReturnFocusRef.current,
+      context: focusContext,
+      neighbors: neighboringKeys(filteredGroups.map((group) => group.name), operation.groupName),
+    };
+    setGroupOperation(operation);
+  }
+
+  function openGroupMenu(groupName: string, target: HTMLButtonElement, pointer?: { clientX: number; clientY: number }) {
+    if (groupBusy || groupOperation || groupName === DEFAULT_SESSION_GROUP) return;
+    contextMenuReturnFocusRef.current = target;
+    setContextMenu({ kind: "group", groupName, ...contextMenuPosition(target, pointer) });
+  }
+
   async function submitGroupOperation() {
-    if (!groupOperation || mutationPending) return;
-    if (groupOperation.kind === "rename") {
-      const value = groupOperation.value.trim();
-      if (!value) {
-        setGroupOperation({
-          ...groupOperation,
-          error: t("sessions.groupNameRequired"),
-        });
-        return;
-      }
-      const result = await onRenameGroup(groupOperation.groupName, value);
-      if (result.ok) {
-        setGroupOperation(null);
-      } else {
-        setGroupOperation({ ...groupOperation, error: result.error });
-      }
+    const controller = groupControllerRef.current;
+    if (!groupOperation || groupBusy || !controller || controller.isPending("dialog")) return;
+    const value = groupOperation.kind === "rename" ? groupOperation.value.trim() : "";
+    if (groupOperation.kind === "rename" && !value) {
+      setGroupOperation({ ...groupOperation, error: t("sessions.groupNameRequired") });
       return;
     }
-    const result = await onDeleteGroup(groupOperation.groupName);
-    if (result.ok) {
-      setGroupOperation(null);
-    } else {
-      setGroupOperation({ ...groupOperation, error: result.error });
-    }
+    const lease = beginFocus(dialogNodeRef.current);
+    await controller.run("dialog", async () => groupOperation.kind === "rename"
+      ? onRenameGroup(groupOperation.groupName, value) : onDeleteGroup(groupOperation.groupName), {
+      onPendingChange: setGroupPending,
+      onSuccess: (result) => {
+        if (result.ok) {
+          completeFocus(lease, groupOperation.kind === "rename" ? [value] : groupOriginRef.current?.neighbors ?? []);
+          setGroupOperation(null);
+        } else {
+          setGroupOperation({ ...groupOperation, error: result.error });
+          completeFocus(lease, ["@dialog"]);
+        }
+      },
+      onError: (error) => {
+        setGroupOperation({ ...groupOperation, error: resolveApiError(error, t("errors.unknown")) });
+        completeFocus(lease, ["@dialog"]);
+      },
+    });
   }
 
   return (
@@ -516,7 +578,7 @@ export function SessionList({
           {t("sessions.copySessionInfoFailed")}
         </div>
       ) : null}
-      <div className="session-group-list">
+      <div aria-label={t("sessions.title")} className="session-group-list" ref={listRef} role="group" tabIndex={0}>
         {filteredGroups.length === 0 ? (
           <p className="empty-message">{t("sessions.noMatches")}</p>
         ) : null}
@@ -550,6 +612,10 @@ export function SessionList({
                     : "session-group-title"
                 }
                 data-session-drop-group={group.name}
+                ref={(node) => {
+                  if (node) groupRefs.current.set(group.name, node);
+                  else groupRefs.current.delete(group.name);
+                }}
                 onClick={(event) => {
                   if (consumeSuppressedClick(event)) return;
                   onToggleGroup(group.name);
@@ -557,18 +623,13 @@ export function SessionList({
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  if (
-                    mutationPending ||
-                    group.name === DEFAULT_SESSION_GROUP
-                  ) {
-                    return;
-                  }
-                  setContextMenu({
-                    kind: "group",
-                    x: event.clientX,
-                    y: event.clientY,
-                    groupName: group.name,
-                  });
+                  openGroupMenu(group.name, event.currentTarget, event);
+                }}
+                onKeyDown={(event) => {
+                  if (event.defaultPrevented || isComposingKey(event.nativeEvent) || !isContextMenuKey(event)) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openGroupMenu(group.name, event.currentTarget);
                 }}
                 onPointerDown={(event) =>
                   beginDrag(event, {
@@ -612,10 +673,18 @@ export function SessionList({
                         contextMenuReturnFocusRef.current = event.currentTarget.querySelector(".session-item-select");
                         setContextMenu({
                           kind: "session",
-                          x: event.clientX,
-                          y: event.clientY,
+                          ...contextMenuPosition(contextMenuReturnFocusRef.current ?? event.currentTarget, event),
                           sessionId: session.id,
                         });
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.defaultPrevented || isComposingKey(event.nativeEvent) || !isContextMenuKey(event)) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const target = event.currentTarget.querySelector<HTMLButtonElement>(".session-item-select");
+                        if (!target) return;
+                        contextMenuReturnFocusRef.current = target;
+                        setContextMenu({ kind: "session", sessionId: session.id, ...contextMenuPosition(target) });
                       }}
                     >
                       <button
@@ -674,6 +743,8 @@ export function SessionList({
             { id: "delete", label: t("sessions.delete"), icon: <Trash2 size={15} />, danger: true, disabled: mutationPending, onSelect: () => onDelete(contextMenu.sessionId) },
           ]}
           onClose={() => setContextMenu(null)}
+          returnFocus={() => contextMenuReturnFocusRef.current}
+          fallbackFocus={() => listRef.current}
           x={contextMenu.x}
           y={contextMenu.y}
         />
@@ -691,7 +762,7 @@ export function SessionList({
                   (item) => item.name === contextMenu.groupName,
                 );
                 if (!group) return;
-                setGroupOperation({
+                openGroupOperation({
                   kind: "rename",
                   groupName: group.name,
                   sessionCount: group.sessions.length,
@@ -711,7 +782,7 @@ export function SessionList({
                   (item) => item.name === contextMenu.groupName,
                 );
                 if (!group) return;
-                setGroupOperation({
+                openGroupOperation({
                   kind: "delete",
                   groupName: group.name,
                   sessionCount: group.sessions.length,
@@ -721,6 +792,8 @@ export function SessionList({
             },
           ]}
           onClose={() => setContextMenu(null)}
+          returnFocus={() => contextMenuReturnFocusRef.current}
+          fallbackFocus={() => listRef.current}
           x={contextMenu.x}
           y={contextMenu.y}
         />
@@ -729,17 +802,14 @@ export function SessionList({
         <div className="dialog-backdrop terminal-dialog-backdrop">
           <section
             aria-modal="true"
+            aria-labelledby={groupTitleId}
             className="dialog group-operation-dialog"
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !mutationPending) {
-                event.preventDefault();
-                setGroupOperation(null);
-              }
-            }}
+            ref={registerDialog}
             role="dialog"
+            tabIndex={-1}
           >
             <header className="dialog-header">
-              <h2>
+              <h2 id={groupTitleId}>
                 {t(
                   groupOperation.kind === "rename"
                     ? "sessions.renameGroup"
@@ -752,8 +822,7 @@ export function SessionList({
                 <label>
                   <span>{t("sessions.groupName")}</span>
                   <TextInput
-                    autoFocus
-                    disabled={mutationPending}
+                    disabled={groupBusy}
                     maxLength={128}
                     onChange={(event) =>
                       setGroupOperation({
@@ -765,7 +834,7 @@ export function SessionList({
                     onKeyDown={(event) => {
                       if (
                         event.key === "Enter" &&
-                        !event.nativeEvent.isComposing
+                        !event.defaultPrevented && !isComposingKey(event.nativeEvent) && !event.repeat
                       ) {
                         event.preventDefault();
                         void submitGroupOperation();
@@ -789,18 +858,19 @@ export function SessionList({
               )}
             </div>
             {groupOperation.error ? (
-              <div className="form-error">{groupOperation.error}</div>
+              <div className="form-error" role="alert">{groupOperation.error}</div>
             ) : null}
             <footer className="dialog-actions">
               <Button
-                disabled={mutationPending}
-                onClick={() => setGroupOperation(null)}
+                data-dialog-cancel
+                disabled={groupBusy}
+                onClick={requestClose}
                 variant="ghost"
               >
                 {t("sessions.cancel")}
               </Button>
               <Button
-                disabled={mutationPending}
+                disabled={groupBusy}
                 icon={
                   groupOperation.kind === "rename" ? (
                     <Save aria-hidden="true" size={16} />

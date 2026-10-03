@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { StrictMode } from "react";
+import { StrictMode, cloneElement, type ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -113,18 +113,21 @@ function preserveTerminal(): PreservedTerminalAttachment {
   return attachment;
 }
 
-function renderPreservedTerminal() {
+function renderPreservedTerminal(overrides: Partial<ComponentProps<typeof TerminalPane>> = {}) {
   const onConnected = vi.fn();
   const onStateChange = vi.fn();
   const onDirectoryChange = vi.fn();
-  return {
-    ...render(<TerminalPane
+  const pane = <TerminalPane
       active allowRemoteClipboardWrite={false} autoConnect={false}
       connectionState="disconnected" onConnected={onConnected}
       onCredentialSaved={vi.fn()} onDirectoryChange={onDirectoryChange}
       onStateChange={onStateChange} runtimeId="runtime-preserved"
-      session={session} shortcuts={shortcuts} theme="dark" visible
-    />),
+      session={session} shortcuts={shortcuts} theme="dark" visible {...overrides}
+    />;
+  const view = render(pane);
+  return {
+    ...view,
+    rerenderTerminal: (next: Partial<ComponentProps<typeof TerminalPane>>) => view.rerender(cloneElement(pane, next)),
     onConnected, onStateChange, onDirectoryChange,
   };
 }
@@ -134,6 +137,7 @@ describe("终端面板连接", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeMocks.focus.mockReset();
     initializeLightweightMode({
       active: false, suppressConfirmation: false, phase: "normal", terminals: [], transferJobs: [],
     });
@@ -172,6 +176,8 @@ describe("终端面板连接", () => {
       cols: 80,
       element: null,
       focus: runtimeMocks.focus,
+      getSelection: vi.fn(() => ""),
+      selectAll: vi.fn(),
       modes: { mouseTrackingMode: "none" },
       onData: vi.fn(),
       options: runtimeMocks.options,
@@ -356,6 +362,46 @@ describe("终端面板连接", () => {
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.dispose).not.toHaveBeenCalled();
     expect(apiMocks.connectSession).not.toHaveBeenCalled();
+  });
+
+  it("本地右键菜单聚焦可用项，Esc 返回终端输入，外部点击保留目标焦点", async () => {
+    const view = renderPreservedTerminal();
+    await act(async () => { await runtimeMocks.install.mock.results[0].value; });
+    const body = view.container.querySelector<HTMLElement>(".terminal-body")!;
+    const input = document.createElement("textarea");
+    body.append(input);
+    runtimeMocks.focus.mockImplementation(() => input.focus());
+    fireEvent.contextMenu(body, { clientX: 100, clientY: 100 });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "sessions.contextPaste" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(document.activeElement).toBe(input);
+    fireEvent.contextMenu(body);
+    const history = screen.getByRole("button", { name: "sessions.commandHistory" });
+    fireEvent.mouseDown(history);
+    act(() => history.focus());
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(history);
+    expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+    expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+  });
+
+  it("关闭标签返回的入口焦点不会被终端激活覆盖，普通激活仍聚焦终端", async () => {
+    const target = document.createElement("button");
+    document.body.append(target);
+    const activationFocusTarget = { current: target as HTMLElement | null };
+    const view = renderPreservedTerminal({ active: false, connectionState: "connected", activationFocusTarget });
+    await act(async () => { await runtimeMocks.install.mock.results[0].value; });
+    target.focus();
+    runtimeMocks.focus.mockClear();
+    view.rerenderTerminal({ active: true });
+    expect(document.activeElement).toBe(target);
+    expect(runtimeMocks.focus).not.toHaveBeenCalled();
+    view.rerenderTerminal({ active: false });
+    activationFocusTarget.current = null;
+    view.rerenderTerminal({ active: true });
+    expect(runtimeMocks.focus).toHaveBeenCalledOnce();
+    expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+    target.remove();
   });
 
   it("点击历史按钮关闭弹窗后恢复终端焦点", async () => {

@@ -20,7 +20,9 @@ vi.mock("./FilesPane", () => ({ FilesPane: ({ onCollapse, collapseButtonRef }: {
   onCollapse: () => void; collapseButtonRef: RefObject<HTMLButtonElement | null>;
 }) => <TooltipButton label="收起右栏" onClick={onCollapse} buttonRef={collapseButtonRef} /> }));
 
-function Preview({ withTerminal = false, initiallyCollapsed = false }) {
+function Preview({ withTerminal = false, initiallyCollapsed = false, overrides = {} }: {
+  withTerminal?: boolean; initiallyCollapsed?: boolean; overrides?: Partial<ComponentProps<typeof Workspace>>;
+}) {
   const [rightCollapsed, setCollapsed] = useState(initiallyCollapsed);
   const noop = vi.fn();
   const runtime = createRuntime();
@@ -39,7 +41,7 @@ function Preview({ withTerminal = false, initiallyCollapsed = false }) {
     onSelectTab: noop, onTerminalState: noop, onToggleRight: () => setCollapsed(value => !value),
     onUpload: noop, onUploadFiles: noop,
   };
-  return <Workspace {...props} />;
+  return <Workspace {...props} {...overrides} />;
 }
 
 afterEach(() => {
@@ -129,5 +131,63 @@ describe("工作区侧栏布局", () => {
     expect(document.activeElement).not.toBe(expand);
     fireEvent.click(expand);
     expect(screen.getByRole("button", { name: "收起右栏" })).not.toBeNull();
+  });
+});
+
+describe("标签菜单焦点", () => {
+  function tabs(ids: string[]) {
+    return ids.map(id => ({ id, sessionId: id, autoConnect: false, session: {
+      id, name: id, host: "focus.invalid", port: 22, username: "", group: "", tags: [],
+      auth: { kind: "password" as const }, credentialState: "missing" as const, loginSavePrompted: false,
+    } }));
+  }
+  function setup() {
+    const close = vi.fn();
+    let props: Partial<ComponentProps<typeof Workspace>> = { activeTabId: "B", openTabs: tabs(["A", "B", "C"]), onCloseTab: close };
+    const view = render(<Preview overrides={props} />);
+    return { close, ...view, update: (next: Partial<typeof props>) => {
+      props = { ...props, ...next }; view.rerender(<Preview overrides={props} />);
+    } };
+  }
+  function open(name = "B") {
+    const tab = screen.getByRole("button", { name });
+    act(() => tab.focus());
+    fireEvent.keyDown(tab, { key: "F10", shiftKey: true });
+    return tab;
+  }
+  it("Shift+F10 打开，Esc 与 Tab 恢复标签入口，菜单不重建终端", () => {
+    setup();
+    const tab = open();
+    const terminal = screen.getByRole("textbox", { name: "测试终端" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "sessions.contextCloseCurrent" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(document.activeElement).toBe(tab);
+    fireEvent.keyDown(tab, { key: "ContextMenu" });
+    expect(fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true })).toBe(true);
+    expect(document.activeElement).toBe(tab);
+    expect(screen.getByRole("textbox", { name: "测试终端" })).toBe(terminal);
+    expect(mocks.unmount).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("关闭标签后定位活动标签，无标签=%s 时定位新建入口", (all) => {
+    const view = setup(); open();
+    fireEvent.click(screen.getByRole("menuitem", { name: all ? "sessions.contextCloseAll" : "sessions.contextCloseCurrent" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "B" }));
+    view.update({ activeTabId: all ? null : "C", openTabs: tabs(all ? [] : ["A", "C"]) });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: all ? "sessions.new" : "C" }));
+    expect(view.close).toHaveBeenCalledTimes(all ? 3 : 1);
+  });
+  it("关闭其他标签保留入口，关闭结果迟到时不抢回用户的新焦点", () => {
+    const view = setup(); open();
+    fireEvent.click(screen.getByRole("menuitem", { name: "sessions.contextCloseOthers" }));
+    const create = screen.getByRole("button", { name: "sessions.new" });
+    act(() => create.focus());
+    view.update({ openTabs: tabs(["B"]) });
+    expect(document.activeElement).toBe(create);
+  });
+  it("菜单打开期间标签被移除，Esc 使用当前活动标签作为备用入口", () => {
+    const view = setup(); open();
+    view.update({ activeTabId: "C", openTabs: tabs(["A", "C"]) });
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "C" }));
   });
 });

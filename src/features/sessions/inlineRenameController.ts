@@ -18,6 +18,7 @@ interface SubmitInlineRenameOptions {
   formatError: (error: unknown) => string;
   rename: (path: string, newName: string) => Promise<void>;
   requiredError: string;
+  onSuccess?: (newName: string) => void;
 }
 
 export function createInlineRenameController(
@@ -43,6 +44,7 @@ export function createInlineRenameController(
   };
 
   return {
+    isPending: () => pending,
     begin(file: FileEntry) {
       if (disposed || current) return false;
       previousClick = null;
@@ -66,6 +68,7 @@ export function createInlineRenameController(
     reconcile(files: FileEntry[], loading: boolean) {
       if (
         current &&
+        !pending &&
         !loading &&
         !files.some((file) => file.path === current?.file.path)
       ) {
@@ -99,6 +102,7 @@ export function createInlineRenameController(
         return false;
       }
       if (newName === submitted.file.name) {
+        submitOptions.onSuccess?.(newName);
         this.cancel();
         return false;
       }
@@ -109,7 +113,10 @@ export function createInlineRenameController(
       options.onPendingChange(true);
       try {
         await submitOptions.rename(submitted.file.path, newName);
-        if (!disposed && generation === requestGeneration) publish(null);
+        if (!disposed && generation === requestGeneration) {
+          submitOptions.onSuccess?.(newName);
+          publish(null);
+        }
       } catch (error) {
         if (!disposed && generation === requestGeneration) {
           publish({

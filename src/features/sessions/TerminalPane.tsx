@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   UserRound,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
@@ -117,6 +117,7 @@ interface TerminalPaneProps {
   terminalColorScheme?: TerminalColorScheme;
   connectionState: ConnectionState;
   currentPath?: string;
+  activationFocusTarget?: RefObject<HTMLElement | null>;
   onConnected: (sessionId: string, connection: SshConnection) => void;
   onCredentialSaved: () => Promise<void> | void;
   onDirectoryChange: (sessionId: string, path: string) => void;
@@ -133,6 +134,7 @@ export const TerminalPane = memo(function TerminalPane({
   autoConnect,
   connectionState,
   currentPath = "/",
+  activationFocusTarget,
   onConnected,
   onCredentialSaved,
   onDirectoryChange,
@@ -233,6 +235,7 @@ export const TerminalPane = memo(function TerminalPane({
   } = useTerminalAuthDialogs();
   const hostKeyChallengeRef = useRef(hostKeyChallenge);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const contextMenuFocusRef = useRef<HTMLElement | null>(null);
   const [clipboardError, setClipboardError] = useState<ClipboardMessageKind | null>(null);
   lightweightBlockedRef.current =
     connectionState === "connecting" ||
@@ -528,8 +531,6 @@ export const TerminalPane = memo(function TerminalPane({
       }
     } catch {
       reportClipboardError();
-    } finally {
-      restoreTerminalFocus();
     }
   }
 
@@ -568,8 +569,6 @@ export const TerminalPane = memo(function TerminalPane({
       }
     } catch {
       reportClipboardError("read");
-    } finally {
-      restoreTerminalFocus();
     }
   }
 
@@ -1133,7 +1132,9 @@ export const TerminalPane = memo(function TerminalPane({
     }
     const frame = window.requestAnimationFrame(() => {
       fitAndResize();
-      if (connectionState === "connected") {
+      // A tab closed from its menu has already restored keyboard focus. Keep
+      // that entry focused instead of overriding it during terminal activation.
+      if (connectionState === "connected" && (!activationFocusTarget?.current || activationFocusTarget.current !== document.activeElement)) {
         focusTerminal();
       }
     });
@@ -1702,6 +1703,7 @@ export const TerminalPane = memo(function TerminalPane({
             return;
           }
           focusTerminal();
+          contextMenuFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
           setContextMenu({ x: event.clientX, y: event.clientY });
         }}
         onPointerDown={focusTerminal}
@@ -1759,6 +1761,7 @@ export const TerminalPane = memo(function TerminalPane({
             { id: "disconnect", label: t("sessions.disconnect"), disabled: connectionState !== "connected", onSelect: () => void disconnectTerminal() },
           ]}
           onClose={() => setContextMenu(null)}
+          returnFocus={() => active && visible ? contextMenuFocusRef.current : null}
           x={contextMenu.x}
           y={contextMenu.y}
         />
