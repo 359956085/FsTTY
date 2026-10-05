@@ -160,7 +160,7 @@ export function useSessionConnections({
     (sessionId: string, connection: SshConnection) => {
       runtimeControllerRef.current.cancelUploadBatch(sessionId);
       // 登录提示符可能先于 connectSession 返回 OSC；控制器保证首次目录上报不丢失。
-      const currentPath = remoteFilesControllerRef.current!.consumeInitialPath(
+      const currentPath = connection.local ? connection.homePath : remoteFilesControllerRef.current!.consumeInitialPath(
         sessionId,
         connection.homePath,
       );

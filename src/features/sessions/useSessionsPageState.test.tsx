@@ -6,14 +6,16 @@ import type { Session, SessionGroup } from "../../shared/api/types";
 import { useSessionsPageState } from "./useSessionsPageState";
 
 const mocks = vi.hoisted(() => ({
-  listSessions: vi.fn(),
+  listWorkspaceSessions: vi.fn(),
   renameSessionGroup: vi.fn(),
+  saveLocalSession: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
   api: {
-    listSessions: mocks.listSessions,
+    listWorkspaceSessions: mocks.listWorkspaceSessions,
     renameSessionGroup: mocks.renameSessionGroup,
+    saveLocalSession: mocks.saveLocalSession,
   },
 }));
 
@@ -58,10 +60,27 @@ beforeEach(() => {
 });
 
 describe("会话列表异步生命周期", () => {
+  it("本地配置保存后新建标签，重复打开独立标签，编辑仅更新配置", async () => {
+    const local = { kind: "local" as const, id: "local", name: "CMD", group: "默认", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
+    mocks.listWorkspaceSessions.mockResolvedValue(groups("ssh"));
+    mocks.saveLocalSession.mockResolvedValue(local);
+    const { result } = renderHook(() => useSessionsPageState({ confirmDeleteText: "delete", errorFallback: "error" }));
+    await waitFor(() => expect(result.current.sessionsReady).toBe(true));
+    await act(async () => { await result.current.saveLocalSession({ name: "CMD", group: "默认", shell: "cmd", startingDirectory: "", runAsAdmin: true }); });
+    expect(result.current.openSessionTabs).toHaveLength(1); expect(result.current.openSessionTabs[0].autoConnect).toBe(true);
+    const first = result.current.openSessionTabs[0].id;
+    act(() => result.current.openSessionTab(local.id, true, false));
+    expect(result.current.openSessionTabs).toHaveLength(2); expect(result.current.openSessionTabs[1].id).not.toBe(first); expect(result.current.openSessionTabs[1].runAsAdmin).toBe(false);
+    const ids = result.current.openSessionTabs.map((tab) => tab.id);
+    mocks.saveLocalSession.mockResolvedValue({ ...local, name: "Edited", startingDirectory: "C:\\Next" });
+    await act(async () => { await result.current.saveLocalSession({ id: local.id, name: "Edited", group: local.group, shell: local.shell, startingDirectory: "C:\\Next", runAsAdmin: true }); });
+    expect(result.current.openSessionTabs.map((tab) => tab.id)).toEqual(ids);
+    expect(result.current.openSessionTabs.every((tab) => tab.session.name === "Edited")).toBe(true);
+  });
   it("刷新时丢弃晚到的旧列表", async () => {
     const first = deferred<SessionGroup[]>();
     const second = deferred<SessionGroup[]>();
-    mocks.listSessions
+    mocks.listWorkspaceSessions
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const { result } = renderHook(() =>
@@ -84,7 +103,7 @@ describe("会话列表异步生命周期", () => {
 
   it("并发分组操作只提交第一次", async () => {
     const initial = groups("session-1", "旧分组");
-    mocks.listSessions.mockResolvedValue(initial);
+    mocks.listWorkspaceSessions.mockResolvedValue(initial);
     const rename = deferred<void>();
     mocks.renameSessionGroup.mockReturnValue(rename.promise);
     const { result } = renderHook(() =>

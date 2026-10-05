@@ -5,6 +5,7 @@ mod connection;
 mod device;
 mod file;
 mod lightweight;
+mod local_session;
 mod session;
 mod settings;
 mod transfer_job;
@@ -26,6 +27,7 @@ pub use lightweight::{
     LightweightSnapshotKind, LightweightTerminalRequest, PreservedTerminalAttachment,
     PreservedTerminalSummary, TerminalResumeEvent,
 };
+pub use local_session::*;
 pub use session::{
     CreateSessionPayload, CredentialAction, CredentialState, LoginSaveDecision,
     PrivateKeyMaterialAction, PrivateKeySource, SessionAuth, SessionAuthInput, SessionGroup,

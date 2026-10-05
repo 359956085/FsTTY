@@ -321,12 +321,21 @@ fn default_settings() -> AppSettings {
 }
 
 fn validate_shortcut_settings(shortcuts: &ShortcutSettings) -> Result<(), AppError> {
-    let bindings = [
+    let mut bindings = vec![
         &shortcuts.terminal_copy,
         &shortcuts.terminal_paste,
         &shortcuts.command_history,
         &shortcuts.command_history_search,
     ];
+    bindings.extend(
+        [
+            shortcuts.new_session.as_ref(),
+            shortcuts.next_tab.as_ref(),
+            shortcuts.previous_tab.as_ref(),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     for (index, binding) in bindings.iter().enumerate() {
         validate_shortcut_binding(binding)?;
         if bindings[..index].contains(binding) {
@@ -373,6 +382,7 @@ fn is_supported_shortcut_code(code: &str) -> bool {
                 | "Slash"
                 | "Backquote"
                 | "Space"
+                | "Tab"
                 | "Home"
                 | "End"
                 | "PageUp"
@@ -459,14 +469,22 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
             object.insert("proxyEnabled".into(), serde_json::Value::Bool(enabled));
         }
     }
-    let store = serde_json::from_value::<SettingsStore>(wire)
+    let missing_shortcuts = ["newSession", "nextTab", "previousTab"].map(|key| {
+        wire.get("shortcuts")
+            .and_then(|value| value.get(key))
+            .is_none()
+    });
+    let mut store = serde_json::from_value::<SettingsStore>(wire)
         .map_err(|_| AppError::Persistence("设置数据格式无效".to_owned()))?;
     if store.version != STORE_VERSION {
         return Err(AppError::Persistence("设置存储版本无效".to_owned()));
     }
     // 旧代理配置可能不符合新规则；保留其他设置，在建连和保存时严格校验，禁止直连回退。
+    store
+        .settings
+        .shortcuts
+        .preserve_existing_bindings(missing_shortcuts);
     validate_shortcut_settings(&store.settings.shortcuts)?;
-    let mut store = store;
     store.settings.mcp_group_permissions =
         validate_mcp_permissions(store.settings.mcp_group_permissions)?;
     Ok(Some(store))
@@ -476,6 +494,45 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn workspace_shortcuts_migrate_without_overwriting_explicit_bindings() {
+        let directory = test_directory("workspace-shortcuts");
+        let mut json = serde_json::to_value(SettingsStore::default()).unwrap();
+        let keys = json["shortcuts"].as_object_mut().unwrap();
+        keys.insert("terminalCopy".into(), keys["newSession"].clone());
+        keys.insert(
+            "nextTab".into(),
+            serde_json::json!({"code":"Tab","ctrl":true,"alt":false,"shift":true}),
+        );
+        keys.remove("newSession");
+        keys.remove("previousTab");
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let mut service = SettingsService::load(&directory);
+        let shortcuts = service.get().shortcuts;
+        assert_eq!(shortcuts.terminal_copy.code, "KeyT");
+        assert!(shortcuts.new_session.is_none());
+        assert!(shortcuts.previous_tab.is_none());
+        assert!(shortcuts.next_tab.as_ref().unwrap().shift);
+        assert!(validate_shortcut_settings(&shortcuts).is_ok());
+        service.update_shortcut_settings(shortcuts.clone()).unwrap();
+        assert_eq!(SettingsService::load(&directory).get().shortcuts, shortcuts);
+        let mut conflict = ShortcutSettings::default();
+        conflict.new_session = Some(conflict.terminal_copy.clone());
+        assert!(validate_shortcut_settings(&conflict).is_err());
+        assert!(validate_shortcut_binding(&ShortcutBinding {
+            code: "Tab".into(),
+            ctrl: true,
+            alt: false,
+            shift: false
+        })
+        .is_ok());
+        let _ = fs::remove_dir_all(directory);
+    }
 
     fn test_directory(label: &str) -> PathBuf {
         let directory = std::env::temp_dir().join(format!("fstty-{label}-{}", Uuid::new_v4()));

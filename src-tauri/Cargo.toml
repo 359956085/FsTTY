@@ -44,7 +44,7 @@ tauri-plugin-window-state = "2"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
 toml_edit = "0.25"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
@@ -61,7 +61,7 @@ windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell", 
 auto-launch = "=0.5.0"
 clipboard-win = "5.4"
 keyring-core = "1"
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows-native-keyring-store = { version = "1.1", default-features = false }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]

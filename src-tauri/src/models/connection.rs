@@ -9,6 +9,8 @@ pub struct SshConnection {
     pub sftp_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_name: Option<ShellName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<super::LocalTerminalInfo>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -151,6 +153,7 @@ mod tests {
             home_path: "/home/user".to_owned(),
             sftp_available: true,
             shell_name: Some(ShellName::Bash),
+            local: None,
         })
         .expect("SSH 连接应能序列化");
         assert_eq!(value["shellName"], "bash");

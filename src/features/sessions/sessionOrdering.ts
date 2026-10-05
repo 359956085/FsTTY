@@ -1,4 +1,4 @@
-import type { SessionGroup } from "../../shared/api/types";
+import type { WorkspaceSessionGroup as SessionGroup } from "../../shared/api/types";
 
 export function reorderSessionGroups(
   groups: SessionGroup[],

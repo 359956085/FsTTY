@@ -15,6 +15,8 @@ interface TestChannel<T> { onmessage(event: T): void }
 
 const apiMocks = vi.hoisted(() => ({
   connectSession: vi.fn(),
+  startLocalTerminal: vi.fn(),
+  cancelLocalTerminalStart: vi.fn(),
   disconnectSession: vi.fn(),
   setSessionCredential: vi.fn(),
   trustHostKey: vi.fn(),
@@ -87,6 +89,9 @@ const session: Session = {
 
 const shortcut = { alt: false, code: "KeyC", ctrl: true, shift: true };
 const shortcuts: ShortcutSettings = {
+    newSession: { code: "KeyT", ctrl: true, shift: true, alt: false },
+    nextTab: { code: "Tab", ctrl: true, shift: false, alt: false },
+    previousTab: { code: "Tab", ctrl: true, shift: true, alt: false },
   commandHistory: shortcut,
   commandHistorySearch: shortcut,
   terminalCopy: shortcut,
@@ -142,6 +147,8 @@ describe("终端面板连接", () => {
       active: false, suppressConfirmation: false, phase: "normal", terminals: [], transferJobs: [],
     });
     runtimeMocks.options.theme = undefined;
+    apiMocks.startLocalTerminal.mockReturnValue(new Promise(() => undefined));
+    apiMocks.cancelLocalTerminalStart.mockResolvedValue(undefined);
     apiMocks.connectSession.mockReturnValue(new Promise(() => undefined));
     apiMocks.disconnectSession.mockResolvedValue(undefined);
     apiMocks.setSessionCredential.mockResolvedValue(undefined);
@@ -615,4 +622,99 @@ describe("终端面板连接", () => {
 
     expect(apiMocks.connectSession).toHaveBeenCalledTimes(1);
   });
+  it("本地启动独立于 SSH，收到输出后退出保留输出和重启入口", async () => {
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
+    const connection = { connectionId: "local-1", sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell: "cmd" as const, elevated: false, label: "CMD" } };
+    let events!: TestChannel<TerminalEvent>;
+    apiMocks.startLocalTerminal.mockImplementation(async (_id: string, _runtime: string, _cols: number, _rows: number, channel: TestChannel<TerminalEvent>) => { events = channel; return connection; });
+    const view = renderPreservedTerminal({ session: local, autoConnect: true, runAsAdmin: false });
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledWith("runtime-preserved", connection));
+    expect(apiMocks.connectSession).not.toHaveBeenCalled();
+    expect(apiMocks.startLocalTerminal.mock.calls[0][6]).toBe(false);
+    expect(screen.queryByRole("button", { name: "sessions.commandHistory" })).toBeNull();
+    view.rerenderTerminal({ connectionState: "connected" });
+    act(() => events.onmessage({ kind: "data", connectionId: "local-1", data: btoa("output") }));
+    expect(new TextDecoder().decode(runtimeMocks.write.mock.calls[runtimeMocks.write.mock.calls.length - 1]![0] as Uint8Array)).toBe("output");
+    const writes = apiMocks.writeTerminal.mock.calls.length;
+    runtimeMocks.oscHandlers.get(777)?.("fstty-cwd:0123456789abcdef0123456789abcdef:/wrong");
+    expect(view.onDirectoryChange).not.toHaveBeenCalled(); expect(apiMocks.writeTerminal).toHaveBeenCalledTimes(writes);
+    act(() => events.onmessage({ kind: "disconnected", connectionId: "local-1", exitCode: 7, message: "exited" }));
+    view.rerenderTerminal({ connectionState: "disconnected" });
+    expect(screen.getByRole("button", { name: "local.restart" })).toBeTruthy();
+    expect(runtimeMocks.reset).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBeUndefined();
+    view.unmount();
+  });
+
+
+  it("本地 shell 在启动响应前退出，重试时仍恢复配置默认权限", async () => {
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: false };
+    const connection = { connectionId: "short-local", sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell: "cmd" as const, elevated: true, label: "CMD" } };
+    let events!: TestChannel<TerminalEvent>;
+    let finish!: (value: unknown) => void;
+    apiMocks.startLocalTerminal.mockImplementationOnce((_id: string, _runtime: string, _cols: number, _rows: number, channel: TestChannel<TerminalEvent>) => {
+      events = channel;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    const view = renderPreservedTerminal({ session: local, autoConnect: true, runAsAdmin: true });
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledOnce());
+    act(() => events.onmessage({ kind: "disconnected", connectionId: connection.connectionId, exitCode: 0, message: "exited" }));
+    await act(async () => finish(connection));
+    expect(apiMocks.disconnectSession).toHaveBeenCalledWith(connection.connectionId);
+    expect(view.onConnected).not.toHaveBeenCalled();
+    view.rerenderTerminal({ connectionState: "disconnected" });
+    fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBeUndefined();
+    view.unmount();
+  });
+
+  it("取消未完成本地启动后清理迟到结果，不影响下一次尝试", async () => {
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
+    let resolve!: (value: unknown) => void;
+    apiMocks.startLocalTerminal.mockImplementationOnce(() => new Promise((next) => { resolve = next; }));
+    const view = renderPreservedTerminal({ session: local, autoConnect: true, runAsAdmin: false });
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledOnce());
+    const request = apiMocks.startLocalTerminal.mock.calls[0][5] as string;
+    view.rerenderTerminal({ connectionState: "connecting" });
+    fireEvent.click(screen.getByRole("button", { name: "sessions.cancel" }));
+    await waitFor(() => expect(apiMocks.cancelLocalTerminalStart).toHaveBeenCalledWith(request));
+    await act(async () => resolve({ connectionId: "late-local", sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false }));
+    expect(apiMocks.disconnectSession).toHaveBeenCalledWith("late-local"); expect(view.onConnected).not.toHaveBeenCalled();
+    view.rerenderTerminal({ connectionState: "disconnected" });
+    fireEvent.click(screen.getByRole("button", { name: "local.start" }));
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
+    expect(apiMocks.startLocalTerminal.mock.calls[1][5]).not.toBe(request);
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBe(false);
+    view.unmount(); expect(apiMocks.cancelLocalTerminalStart).toHaveBeenCalledTimes(2);
+  });
+
+  it("本地编辑或切换可见性不会重建进程，未运行标签聚焦启动入口", async () => {
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: false };
+    const view = renderPreservedTerminal({ session: local, active: false });
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    view.rerenderTerminal({ active: true });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "local.start" }));
+    view.rerenderTerminal({ session: { ...local, name: "Edited", startingDirectory: "C:\\Next" }, visible: false });
+    view.rerenderTerminal({ visible: true });
+    expect(apiMocks.startLocalTerminal).not.toHaveBeenCalled(); expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("本地轻量恢复接回原通道，不启动进程或请求 UAC", async () => {
+    const attachment = preserveTerminal();
+    attachment.connection = { ...attachment.connection, sftpAvailable: false, homePath: "C:\\Home", local: { shell: "cmd", elevated: true, label: "CMD" } };
+    attachment.currentPath = attachment.connection.homePath;
+    apiMocks.attachPreservedTerminal.mockImplementation(async (_id: string, channel: TestChannel<TerminalResumeEvent>) => {
+      channel.onmessage({ kind: "snapshot", connectionId: attachment.connection.connectionId, data: btoa("local-screen"), chunkIndex: 0, totalChunks: 1, truncated: false });
+      channel.onmessage({ kind: "ready", connectionId: attachment.connection.connectionId, truncated: false }); return attachment;
+    });
+    const view = renderPreservedTerminal({ session: { kind: "local", id: session.id, name: "CMD", group: "", tags: [], shell: "cmd", startingDirectory: "", runAsAdmin: true } });
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledWith("runtime-preserved", attachment.connection));
+    expect(apiMocks.startLocalTerminal).not.toHaveBeenCalled(); expect(apiMocks.connectSession).not.toHaveBeenCalled(); expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
 });

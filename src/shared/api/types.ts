@@ -60,6 +60,9 @@ export interface ShortcutSettings {
   terminalPaste: ShortcutBinding;
   commandHistory: ShortcutBinding;
   commandHistorySearch: ShortcutBinding;
+  newSession: ShortcutBinding | null;
+  nextTab: ShortcutBinding | null;
+  previousTab: ShortcutBinding | null;
 }
 
 export interface McpGroupPermission {
@@ -214,6 +217,7 @@ export type CredentialAction =
   | { mode: "clear" };
 
 export interface Session {
+  kind?: "ssh";
   id: string;
   name: string;
   host: string;
@@ -224,6 +228,30 @@ export interface Session {
   auth: SessionAuth;
   credentialState: "stored" | "missing" | "notRequired" | "migrationRequired" | "cleanupPending" | "serviceUnavailable";
   loginSavePrompted: boolean;
+}
+
+export type LocalShell = "cmd" | "powershell" | "gitBash";
+export interface LocalSession {
+  kind: "local";
+  id: string;
+  name: string;
+  group: string;
+  tags: string[];
+  shell: LocalShell;
+  startingDirectory: string;
+  runAsAdmin: boolean;
+}
+export type WorkspaceSession = Session | LocalSession;
+export interface WorkspaceSessionGroup { name: string; sessions: WorkspaceSession[] }
+export type LocalSessionPayload = Omit<LocalSession, "id" | "kind" | "tags"> & { id?: string };
+export interface LocalShellAvailability {
+  shell: LocalShell;
+  available: boolean;
+  label: string;
+  reason: string | null;
+}
+export function isLocalSession(session: WorkspaceSession): session is LocalSession {
+  return session.kind === "local";
 }
 
 export type LoginSaveDecision =
@@ -262,6 +290,7 @@ export interface SshConnection {
   homePath: string;
   sftpAvailable: boolean;
   shellName?: "bash" | "zsh" | null;
+  local?: { shell: LocalShell; label: string; elevated: boolean };
 }
 
 export interface HostKeyChallenge {

@@ -9,10 +9,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-pub(super) const STORE_VERSION: u8 = 1;
-pub(super) const STORE_FILE: &str = "sessions.v1.json";
-pub(super) const STORE_BACKUP_FILE: &str = "sessions.v1.json.bak";
-pub(super) const STORE_TEMP_FILE: &str = "sessions.v1.json.tmp";
+pub(super) const STORE_VERSION: u8 = 2;
+pub(super) const STORE_FILE: &str = "sessions.v2.json";
+pub(super) const STORE_BACKUP_FILE: &str = "sessions.v2.json.bak";
+pub(super) const STORE_TEMP_FILE: &str = "sessions.v2.json.tmp";
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) const MAX_SESSIONS: usize = 500;
 
@@ -23,6 +23,10 @@ pub(super) struct SessionStore {
     pub(super) sessions: Vec<StoredSession>,
     #[serde(default)]
     pub(super) pending_credential_cleanup_ids: Vec<String>,
+    #[serde(default)]
+    pub(super) local_sessions: Vec<crate::models::LocalSession>,
+    #[serde(default)]
+    pub(super) workspace_order: Vec<String>,
 }
 
 impl Default for SessionStore {
@@ -31,6 +35,8 @@ impl Default for SessionStore {
             version: STORE_VERSION,
             sessions: Vec::new(),
             pending_credential_cleanup_ids: Vec::new(),
+            local_sessions: Vec::new(),
+            workspace_order: Vec::new(),
         }
     }
 }
@@ -42,6 +48,7 @@ pub(super) fn persist_store(
     temp_path: &Path,
     primary_trusted: &mut bool,
 ) -> Result<(), AppError> {
+    validate_store(store)?;
     fs::create_dir_all(
         store_path
             .parent()
@@ -93,15 +100,25 @@ pub(super) fn read_store(path: &Path) -> Result<Option<SessionStore>, AppError> 
     }
     let content =
         fs::read(path).map_err(|_| AppError::Persistence("无法读取会话存储文件".to_owned()))?;
-    let store: SessionStore = serde_json::from_slice(&content)
+    let mut store: SessionStore = serde_json::from_slice(&content)
         .map_err(|_| AppError::Persistence("会话存储文件已损坏".to_owned()))?;
+    if store.version == 1
+        && path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("sessions.v1.json"))
+    {
+        if !store.local_sessions.is_empty() || !store.workspace_order.is_empty() {
+            return Err(AppError::Persistence("旧会话存储字段无效".into()));
+        }
+        store.version = STORE_VERSION;
+    }
     validate_store(&store)?;
     Ok(Some(store))
 }
 
 pub(super) fn validate_store(store: &SessionStore) -> Result<(), AppError> {
     if store.version != STORE_VERSION
-        || store.sessions.len() > MAX_SESSIONS
+        || store.sessions.len() + store.local_sessions.len() > MAX_SESSIONS
         || store.pending_credential_cleanup_ids.len() > MAX_SESSIONS
     {
         return Err(AppError::Persistence("会话存储版本或数量无效".to_owned()));
@@ -133,6 +150,17 @@ pub(super) fn validate_store(store: &SessionStore) -> Result<(), AppError> {
         }
     }
     let mut cleanup_ids = HashSet::new();
+    for session in &store.local_sessions {
+        super::workspace::validate_local(session)?;
+        if !ids.insert(&session.id) {
+            return Err(AppError::Persistence("会话 ID 重复".into()));
+        }
+    }
+    if store.workspace_order.len() > MAX_SESSIONS
+        || store.workspace_order.iter().collect::<HashSet<_>>().len() != store.workspace_order.len()
+    {
+        return Err(AppError::Persistence("工作区排序无效".into()));
+    }
     for id in &store.pending_credential_cleanup_ids {
         validate_id(id).map_err(|_| AppError::Persistence("待清理凭据 ID 无效".to_owned()))?;
         if !cleanup_ids.insert(id) {

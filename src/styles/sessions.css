@@ -1105,3 +1105,13 @@
   color: var(--muted);
 }
 
+.session-type-dialog { max-width: 440px; }
+.session-type-options { display: grid; gap: 12px; padding: 20px; }
+.session-type-option { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 12px; }
+.session-type-option > span { font-size: 12px; overflow-wrap: anywhere; }
+.local-session-fields { padding: 20px; }
+.local-session-fields > label:has(input[type="checkbox"]) { display: flex; flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; }
+.local-session-fields > .form-error { grid-column: 1 / -1; }
+.local-admin-badge { font-size: 10px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 4px; opacity: .85; }
+.terminal-connect-overlay.local-terminal-overlay { inset: auto 16px 16px; flex-direction: row; flex-wrap: wrap; padding: 12px 16px; gap: 12px; border-radius: 6px; }
+.local-terminal-overlay > svg { display: none; }

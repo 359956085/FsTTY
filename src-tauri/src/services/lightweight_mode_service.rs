@@ -921,6 +921,7 @@ impl LightweightModeService {
     pub async fn begin(
         &self,
         connection_manager: &ConnectionManager,
+        local_terminals: &super::LocalTerminalService,
         terminals: Vec<LightweightTerminalRequest>,
         suppress_confirmation: bool,
     ) -> Result<BeginLightweightModeResult, AppError> {
@@ -931,7 +932,7 @@ impl LightweightModeService {
         let gui_activity = self.gui_activity.clone().try_write_owned().map_err(|_| {
             AppError::Busy("连接、认证或更新正在进行，暂时无法进入轻量模式".to_owned())
         })?;
-        if connection_manager.has_connecting_sessions().await {
+        if connection_manager.has_connecting_sessions().await || local_terminals.has_starting() {
             return Err(AppError::Busy(
                 "连接或认证正在进行，暂时无法进入轻量模式".to_owned(),
             ));
@@ -953,12 +954,19 @@ impl LightweightModeService {
             {
                 return Err(AppError::Validation("保活终端映射重复".to_owned()));
             }
-            let bridge = connection_manager
-                .lightweight_terminal_bridge(
+            let bridge = if request.connection.local.is_some() {
+                local_terminals.bridge(
                     &request.connection.connection_id,
                     &request.connection.session_id,
-                )
-                .await?;
+                )?
+            } else {
+                connection_manager
+                    .lightweight_terminal_bridge(
+                        &request.connection.connection_id,
+                        &request.connection.session_id,
+                    )
+                    .await?
+            };
             prepared.insert(
                 request.runtime_id.clone(),
                 PreparedTerminal {
@@ -970,7 +978,9 @@ impl LightweightModeService {
             );
         }
 
-        if connection_manager.lightweight_connection_ids().await != connection_ids {
+        let mut live_ids = connection_manager.lightweight_connection_ids().await;
+        live_ids.extend(local_terminals.connection_ids());
+        if live_ids != connection_ids {
             return Err(AppError::Conflict("终端连接映射已变化，请重试".to_owned()));
         }
         let bridges = prepared
@@ -1186,6 +1196,7 @@ impl LightweightModeService {
     pub async fn finish_restore(
         &self,
         connection_manager: &ConnectionManager,
+        local_terminals: &super::LocalTerminalService,
         valid_runtime_ids: Vec<String>,
     ) -> Result<(), AppError> {
         if valid_runtime_ids.len() > MAX_TERMINALS
@@ -1223,7 +1234,11 @@ impl LightweightModeService {
         };
         drop(runtime);
         for connection_id in orphan_connections {
-            let _ = connection_manager.disconnect(&connection_id).await;
+            if local_terminals.contains(&connection_id) {
+                local_terminals.stop(&connection_id);
+            } else {
+                let _ = connection_manager.disconnect(&connection_id).await;
+            }
         }
         Ok(())
     }
@@ -1251,10 +1266,10 @@ fn validate_terminal_request(request: &LightweightTerminalRequest) -> Result<(),
         || Uuid::parse_str(&request.connection.session_id).is_err()
         || !(1..=1000).contains(&request.columns)
         || !(1..=1000).contains(&request.rows)
-        || !request.current_path.starts_with('/')
+        || (request.connection.local.is_none() && !request.current_path.starts_with('/'))
         || request.current_path.len() > 4096
         || request.current_path.chars().any(char::is_control)
-        || !request.connection.home_path.starts_with('/')
+        || (request.connection.local.is_none() && !request.connection.home_path.starts_with('/'))
         || request.connection.home_path.len() > 4096
         || request.connection.home_path.chars().any(char::is_control)
         || request
@@ -1338,6 +1353,7 @@ mod tests {
                             home_path: "/".to_owned(),
                             sftp_available: false,
                             shell_name: None,
+                            local: None,
                         },
                         current_path: "/".to_owned(),
                         columns: 80,
@@ -1814,16 +1830,34 @@ mod tests {
         let service = LightweightModeService::load(&directory);
         let manager = ConnectionManager::new(&directory);
         let activity = service.try_gui_activity().expect("普通模式应允许连接");
-        assert!(service.begin(&manager, Vec::new(), false).await.is_err());
+        assert!(service
+            .begin(
+                &manager,
+                &super::super::LocalTerminalService::default(),
+                Vec::new(),
+                false
+            )
+            .await
+            .is_err());
         drop(activity);
         let first = service
-            .begin(&manager, Vec::new(), false)
+            .begin(
+                &manager,
+                &super::super::LocalTerminalService::default(),
+                Vec::new(),
+                false,
+            )
             .await
             .expect("应开启事务");
         assert!(service.try_gui_activity().is_err());
         service.abort(&first.token).await;
         let second = service
-            .begin(&manager, Vec::new(), false)
+            .begin(
+                &manager,
+                &super::super::LocalTerminalService::default(),
+                Vec::new(),
+                false,
+            )
             .await
             .expect("应开启新事务");
         service.abort(&first.token).await;
@@ -1906,13 +1940,23 @@ mod tests {
         let window_access = test.service.window_activation_guard().await;
         assert!(test
             .service
-            .begin(&manager, Vec::new(), false)
+            .begin(
+                &manager,
+                &super::super::LocalTerminalService::default(),
+                Vec::new(),
+                false
+            )
             .await
             .is_err());
         drop(window_access);
         let transaction = test
             .service
-            .begin(&manager, Vec::new(), false)
+            .begin(
+                &manager,
+                &super::super::LocalTerminalService::default(),
+                Vec::new(),
+                false,
+            )
             .await
             .unwrap();
         test.service.abort(&transaction.token).await;

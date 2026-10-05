@@ -39,6 +39,7 @@ void i18n.use(initReactI18next).init({
           originalsHint: "导入不会删除原私钥文件；原件仍可被同账号程序读取，请自行妥善处理。服务不提供密钥导出，换机或重装系统需重新导入自有原件。",
           states: { stored: "已托管", missing: "缺少凭据", notRequired: "需要导入私钥", migrationRequired: "等待迁移", cleanupPending: "仍有旧副本", serviceUnavailable: "服务不可用" },
         },
+        local: {"notDetected":"未检测到终端","detectAgain":"重新检测","startingDirectory":"起始目录","homeDirectory":"留空使用当前用户主目录","browseDirectory":"选择目录","defaultAdmin":"默认以管理员权限运行","admin":"管理员","standard":"普通权限","stopped":"已停止","openNormal":"以普通权限打开","openAdmin":"以管理员权限打开","start":"启动","starting":"启动中…","waitingAdmin":"等待管理员授权…","stop":"停止","exited":"已退出","restart":"重新启动","manualStart":"标签已打开，请手动启动","running":"运行中","exitCode":"已退出，退出码：{{code}}"},
         common: {
           loading: "加载中...",
         },
@@ -61,7 +62,7 @@ void i18n.use(initReactI18next).init({
           enter: "进入轻量模式",
           title: "进入轻量模式？",
           description: "主界面 WebView 将关闭，以减少内存占用。",
-          backgroundHint: "现有 SSH、Vim 和上传下载会继续在后台运行。",
+          backgroundHint: "现有 SSH、本地终端、Vim 和上传下载会继续在后台运行。",
           restoreHint: "可从系统托盘选择“显示主窗口”恢复。",
           doNotAskAgain: "不再提示",
           confirm: "进入轻量模式",
@@ -70,7 +71,7 @@ void i18n.use(initReactI18next).init({
         },
         sessions: {
           title: "会话列表",
-          new: "新建会话",
+          new: "新建",
           edit: "编辑",
           delete: "删除",
           refresh: "刷新",
@@ -307,6 +308,7 @@ void i18n.use(initReactI18next).init({
           shortcutTerminalPaste: "终端粘贴",
           shortcutCommandHistory: "终端命令历史列表",
           shortcutCommandHistorySearch: "终端命令历史搜索",
+          shortcutNewSession: "新建会话", shortcutNextTab: "下一个标签", shortcutPreviousTab: "上一个标签", shortcutUnbound: "未设置", shortcutClear: "清除 {{action}}", shortcutClearLabel: "清除",
           shortcutRestoreAll: "全部恢复默认",
           shortcutRestore: "恢复{{action}}默认快捷键",
           shortcutEdit: "修改{{action}}快捷键",
@@ -545,6 +547,7 @@ void i18n.use(initReactI18next).init({
           originalsHint: "Import preserves original key files, which remain readable by other programs under your account. Handle originals separately. The service does not export keys; retain your own originals for a new computer or OS installation.",
           states: { stored: "Managed", missing: "Credentials missing", notRequired: "Key import required", migrationRequired: "Migration required", cleanupPending: "Legacy copies remain", serviceUnavailable: "Service unavailable" },
         },
+        local: {"notDetected":"Terminal not detected","detectAgain":"Detect again","startingDirectory":"Starting directory","homeDirectory":"Leave empty to use your home directory","browseDirectory":"Choose directory","defaultAdmin":"Run as administrator by default","admin":"Administrator","standard":"Standard","stopped":"Stopped","openNormal":"Open with standard rights","openAdmin":"Open as administrator","start":"Start","starting":"Starting…","waitingAdmin":"Waiting for administrator approval…","stop":"Stop","exited":"Exited","restart":"Restart","manualStart":"Tab restored. Start the terminal manually.","running":"Running","exitCode":"Exited with code {{code}}"},
         common: {
           loading: "Loading...",
         },
@@ -576,7 +579,7 @@ void i18n.use(initReactI18next).init({
         },
         sessions: {
           title: "SESSIONS",
-          new: "New Session",
+          new: "New",
           edit: "Edit",
           delete: "Delete",
           refresh: "Refresh",
@@ -824,6 +827,7 @@ void i18n.use(initReactI18next).init({
           shortcutTerminalPaste: "Terminal paste",
           shortcutCommandHistory: "History list",
           shortcutCommandHistorySearch: "History search",
+          shortcutNewSession: "New session", shortcutNextTab: "Next tab", shortcutPreviousTab: "Previous tab", shortcutUnbound: "Not set", shortcutClear: "Clear {{action}}", shortcutClearLabel: "Clear",
           shortcutRestoreAll: "Restore all defaults",
           shortcutRestore: "Restore the default shortcut for {{action}}",
           shortcutEdit: "Change the shortcut for {{action}}",

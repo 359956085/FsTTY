@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, type MouseEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
+import { LocalSessionFormDialog } from "./LocalSessionFormDialog";
+import { SessionTypeDialog } from "./SessionTypeDialog";
+import { isLocalSession } from "../../shared/api/types";
+import { matchesShortcut } from "../../shared/shortcuts";
+import { isComposingKey } from "../../shared/ui/focus";
 import { SessionList } from "./SessionList";
 import type { UsePaneLayoutResult } from "./usePaneLayout";
 import {
@@ -40,7 +45,7 @@ export function SessionsPage({
     errorFallback: t("errors.unknown"),
   });
   const connections = useSessionConnections({
-    devicePollingRuntimeId: visible && !paneLayout.layout.rightCollapsed
+    devicePollingRuntimeId: visible && !paneLayout.layout.rightCollapsed && !sessionsState.openSessionTabs.some((tab) => tab.id === sessionsState.activeTabId && isLocalSession(tab.session))
       ? sessionsState.activeTabId
       : null,
     errorFallback: t("errors.unknown"),
@@ -90,7 +95,28 @@ export function SessionsPage({
 
   function openCreateSession(event: MouseEvent<HTMLButtonElement>) {
     dialogReturnFocusRef.current = event.currentTarget;
-    sessionsState.setDialogState({ mode: "create" });
+    sessionsState.setDialogState({ mode: "choose" });
+  }
+
+  function handleWorkspaceKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (!visible || sessionsState.dialogState || event.defaultPrevented || isComposingKey(event.nativeEvent)) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target || target.closest('[role="dialog"], [role="menu"]') ||
+      document.querySelector('[role="dialog"][aria-modal="true"], [role="menu"], .command-history-popover') ||
+      (target.closest('input, textarea, select, [contenteditable="true"]') && !target.closest('.xterm'))) return;
+    const action = matchesShortcut(event, shortcuts.newSession) ? "new" : matchesShortcut(event, shortcuts.nextTab) ? "next" : matchesShortcut(event, shortcuts.previousTab) ? "previous" : null;
+    if (!action) return;
+    event.preventDefault(); event.stopPropagation();
+    if (action === "new") {
+      if (event.repeat) return;
+      dialogReturnFocusRef.current = target;
+      sessionsState.setDialogState({ mode: "choose" });
+    } else {
+      const tabs = sessionsState.openSessionTabs;
+      if (tabs.length < 2) return;
+      const index = tabs.findIndex((tab) => tab.id === sessionsState.activeTabId);
+      sessionsState.selectTab(tabs[(Math.max(index, 0) + (action === "next" ? 1 : -1) + tabs.length) % tabs.length].id);
+    }
   }
 
   async function closeTab(tabId: string) {
@@ -131,6 +157,7 @@ export function SessionsPage({
         layout.leftCollapsed ? "sessions-page left-collapsed" : "sessions-page"
       }
       ref={rootRef}
+      onKeyDownCapture={handleWorkspaceKey}
     >
       {!layout.leftCollapsed && (
         <SessionList
@@ -199,6 +226,7 @@ export function SessionsPage({
         onToggleRight={toggleRightCollapsed}
         openTabs={sessionsState.openSessionTabs}
         rightCollapsed={layout.rightCollapsed}
+        hideRightPanel={sessionsState.openSessionTabs.some((tab) => tab.id === sessionsState.activeTabId && isLocalSession(tab.session))}
         rightResizeHandle={
           <ResizeHandle
             ariaLabel={t("sessions.resizeRight")}
@@ -218,12 +246,25 @@ export function SessionsPage({
         visible={visible}
       />
 
-      {sessionsState.dialogState ? (
+      {sessionsState.dialogState?.mode === "choose" ? (
+        <SessionTypeDialog onClose={() => sessionsState.setDialogState(null)}
+          onSelect={(shell) => sessionsState.setDialogState({ mode: "create", ...(shell === "ssh" ? {} : { localShell: shell }) })}
+          returnFocus={() => dialogReturnFocusRef.current} fallbackFocus={() => createSessionButtonRef.current} />
+      ) : sessionsState.dialogState && (
+        (sessionsState.dialogState.mode === "create" && sessionsState.dialogState.localShell) ||
+        (sessionsState.dialogState.session && isLocalSession(sessionsState.dialogState.session))
+      ) ? (
+        <LocalSessionFormDialog
+          shell={sessionsState.dialogState.mode === "create" ? sessionsState.dialogState.localShell! : (sessionsState.dialogState.session as import("../../shared/api/types").LocalSession).shell}
+          session={sessionsState.dialogState.session && isLocalSession(sessionsState.dialogState.session) ? sessionsState.dialogState.session : undefined}
+          groupOptions={sessionsState.groups.map((group) => group.name)} onSave={sessionsState.saveLocalSession}
+          onClose={() => sessionsState.setDialogState(null)} returnFocus={() => dialogReturnFocusRef.current} fallbackFocus={() => createSessionButtonRef.current} />
+      ) : sessionsState.dialogState ? (
         <SessionFormDialog
           groupOptions={sessionsState.groups.map((group) => group.name)}
           mode={sessionsState.dialogState.mode}
           saveError={sessionsState.saveError}
-          session={sessionsState.dialogState.session}
+          session={sessionsState.dialogState.session && !isLocalSession(sessionsState.dialogState.session) ? sessionsState.dialogState.session : undefined}
           onClose={() => sessionsState.setDialogState(null)}
           onSave={sessionsState.saveSession}
           returnFocus={() => dialogReturnFocusRef.current}

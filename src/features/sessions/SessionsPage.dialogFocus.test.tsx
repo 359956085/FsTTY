@@ -6,6 +6,7 @@ import type { Session } from "../../shared/api/types";
 import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
 import { SessionsPage } from "./SessionsPage";
 
+vi.mock("../../shared/api/client", () => ({ api: { detectLocalShells: vi.fn().mockResolvedValue([]) } }));
 const state = vi.hoisted(() => ({ hideRow: false }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../shared/platform", () => ({ usesWindowsCredentialBroker: () => true }));
@@ -27,7 +28,7 @@ const session: Session = {
   group: "Servers", tags: [], auth: { kind: "password" }, credentialState: "stored", loginSavePrompted: false,
 };
 function useStateFixture() {
-  const [dialogState, setDialogState] = useState<{ mode: "create" | "edit"; session?: Session } | null>(null);
+  const [dialogState, setDialogState] = useState<{ mode: "choose" | "create" | "edit"; session?: Session } | null>(null);
   return {
     sessionsReady: true, loading: false, error: null, activeTabId: null, openSessionTabs: [],
     groups: state.hideRow ? [] : [{ name: "Servers", sessions: [session] }], sessions: [session],
@@ -50,6 +51,7 @@ describe("会话弹窗入口焦点", () => {
     render(<SessionsPage {...props} />);
     const opener = screen.getAllByRole("button", { name: "sessions.new" })[index];
     fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("button", { name: "SSH" }));
     expect(document.activeElement).toBe(screen.getByLabelText(/sessions.host/));
     fireEvent.change(document.activeElement!, { target: { value: "unsaved.test" } });
     fireEvent.keyDown(window, { key: "Escape" });

@@ -15,26 +15,29 @@ mod services;
 use commands::{
     abort_lightweight_mode, acknowledge_transfer_job, add_command_history,
     append_lightweight_snapshot_chunk, attach_preserved_terminal, attach_transfer_job,
-    begin_lightweight_mode, cancel_transfer, check_app_update, clear_command_history,
-    close_app_update, commit_lightweight_mode, configure_local_agents, connect_session,
-    create_remote_directory, create_session, delete_remote_entry, delete_session,
-    delete_session_group, disconnect_session, download_file, export_command_history,
-    export_mcp_command_policy, finish_lightweight_restore, forget_host_key, get_app_settings,
-    get_autostart_state, get_command_history_settings, get_credential_service_status,
-    get_device_metrics_snapshot, get_device_status, get_installation_status,
-    get_lightweight_mode_state, get_mcp_agent_prompt, get_mcp_http_client_config,
-    get_mcp_http_status, get_mcp_permission_catalog, get_mcp_stdio_client_config,
-    get_system_clipboard_content_kind, import_command_history, import_mcp_command_policy,
-    inspect_local_agent_setup, install_app_update, list_command_history, list_remote_files,
-    list_sessions, manage_ssh_credential, migrate_ssh_credential, migrate_ssh_credentials,
-    move_remote_entry, open_log_directory, open_project_link, rename_remote_entry,
-    rename_session_group, reorder_session, reorder_session_group, repair_credential_service,
-    repair_installation_entries, resize_terminal, resolve_session_login_save_prompt,
-    resolve_transfer_job_conflict, rotate_mcp_http_token, set_autostart_enabled,
-    set_ignored_update_version, set_language, set_proxy_address, set_proxy_settings,
-    set_session_credential, set_terminal_color_scheme, set_theme, start_transfer_job,
-    trust_host_key, update_app_settings, update_command_history_deduplication, update_log_settings,
-    update_mcp_settings, update_session, update_shortcut_settings, upload_file, write_terminal,
+    begin_lightweight_mode, cancel_local_terminal_start, cancel_transfer, check_app_update,
+    clear_command_history, close_app_update, commit_lightweight_mode, configure_local_agents,
+    connect_session, create_remote_directory, create_session, delete_local_session,
+    delete_remote_entry, delete_session, delete_session_group, detect_local_shells,
+    disconnect_session, download_file, export_command_history, export_mcp_command_policy,
+    finish_lightweight_restore, forget_host_key, get_app_settings, get_autostart_state,
+    get_command_history_settings, get_credential_service_status, get_device_metrics_snapshot,
+    get_device_status, get_installation_status, get_lightweight_mode_state, get_mcp_agent_prompt,
+    get_mcp_http_client_config, get_mcp_http_status, get_mcp_permission_catalog,
+    get_mcp_stdio_client_config, get_system_clipboard_content_kind, import_command_history,
+    import_mcp_command_policy, inspect_local_agent_setup, install_app_update, list_command_history,
+    list_remote_files, list_sessions, list_workspace_sessions, manage_ssh_credential,
+    migrate_ssh_credential, migrate_ssh_credentials, move_remote_entry, open_log_directory,
+    open_project_link, rename_remote_entry, rename_session_group, reorder_session,
+    reorder_session_group, repair_credential_service, repair_installation_entries,
+    resize_local_terminal, resize_terminal, resolve_session_login_save_prompt,
+    resolve_transfer_job_conflict, rotate_mcp_http_token, save_local_session,
+    set_autostart_enabled, set_ignored_update_version, set_language, set_proxy_address,
+    set_proxy_settings, set_session_credential, set_terminal_color_scheme, set_theme,
+    start_local_terminal, start_transfer_job, stop_local_terminal, trust_host_key,
+    update_app_settings, update_command_history_deduplication, update_log_settings,
+    update_mcp_settings, update_session, update_shortcut_settings, upload_file,
+    write_local_terminal, write_terminal,
 };
 use gui_lifecycle::{create_main_window, request_app_exit, request_main_window, GuiLifecycle};
 use gui_startup::GuiStartupGuard;
@@ -78,6 +81,10 @@ fn create_system_tray(app: &tauri::App) -> tauri::Result<()> {
 fn keeps_lightweight_background(code: Option<i32>, active: bool) -> bool {
     // 无退出码表示最后一个窗口被销毁；显式关闭按钮和托盘退出仍结束进程。
     code.is_none() && active
+}
+
+pub fn run_local_terminal_host(arguments: &[String]) -> Result<(), String> {
+    services::local_terminal_service::run_host(arguments)
 }
 
 pub fn run_mcp_stdio() -> Result<(), String> {
@@ -229,6 +236,15 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            list_workspace_sessions,
+            save_local_session,
+            delete_local_session,
+            detect_local_shells,
+            start_local_terminal,
+            cancel_local_terminal_start,
+            write_local_terminal,
+            resize_local_terminal,
+            stop_local_terminal,
             get_installation_status,
             repair_installation_entries,
             get_credential_service_status,
@@ -334,6 +350,7 @@ pub fn run() {
             let app = app_handle.clone();
             let shutdown_lifecycle = lifecycle.clone();
             tauri::async_runtime::spawn(async move {
+                state.local_terminal_service.shutdown();
                 state.connection_manager.shutdown_device_metrics().await;
                 state
                     .transfer_job_service

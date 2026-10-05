@@ -9,6 +9,7 @@ mod credential_service;
 mod device_metrics_service;
 mod device_service;
 mod lightweight_mode_service;
+pub(crate) mod local_terminal_service;
 mod mcp_command_policy_service;
 mod mcp_support_service;
 mod session_service;
@@ -26,6 +27,7 @@ pub use connection_manager::{ConnectionManager, OneTimeLogin};
 pub use credential_service::CredentialService;
 pub use device_service::DeviceService;
 pub use lightweight_mode_service::LightweightModeService;
+pub use local_terminal_service::LocalTerminalService;
 pub use mcp_command_policy_service::McpCommandPolicyService;
 pub use mcp_support_service::{McpAuditService, McpOperationLock, McpOperationLockService};
 pub use session_service::SessionService;
@@ -42,6 +44,7 @@ pub struct AppState {
     pub session_service: Arc<Mutex<SessionService>>,
     pub credential_service: CredentialService,
     pub connection_manager: ConnectionManager,
+    pub local_terminal_service: LocalTerminalService,
     pub device_service: DeviceService,
     pub lightweight_mode_service: LightweightModeService,
     pub settings_service: Arc<StdMutex<SettingsService>>,
@@ -84,6 +87,7 @@ impl AppState {
                 settings_service.clone(),
             ),
             device_service: DeviceService,
+            local_terminal_service: LocalTerminalService::default(),
             lightweight_mode_service: LightweightModeService::load(&app_data_dir),
             settings_service,
             transfer_job_service: TransferJobService::default(),

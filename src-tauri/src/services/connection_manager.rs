@@ -784,6 +784,7 @@ impl ConnectionManager {
                 home_path,
                 sftp_available: browser_sftp.is_some(),
                 shell_name,
+                local: None,
             },
         })
     }
@@ -859,6 +860,7 @@ impl ConnectionManager {
             home_path,
             sftp_available: browser_sftp.is_some(),
             shell_name: None,
+            local: None,
         })
     }
 

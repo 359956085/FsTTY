@@ -26,6 +26,9 @@ const actionLabelKeys: Record<ShortcutAction, string> = {
   terminalPaste: "settings.shortcutTerminalPaste",
   commandHistory: "settings.shortcutCommandHistory",
   commandHistorySearch: "settings.shortcutCommandHistorySearch",
+  newSession: "settings.shortcutNewSession",
+  nextTab: "settings.shortcutNextTab",
+  previousTab: "settings.shortcutPreviousTab",
 };
 
 export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettingsSectionProps) {
@@ -64,6 +67,7 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
   }
 
   function recordShortcut(action: ShortcutAction, event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.shiftKey) {
@@ -100,7 +104,10 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
   function restoreAction(action: ShortcutAction) {
     setRecording(null);
     setError(null);
-    if (!shortcutsEqual(settings[action], DEFAULT_SHORTCUTS[action])) {
+    const binding = DEFAULT_SHORTCUTS[action];
+    const conflict = binding && findShortcutConflict(settings, action, binding);
+    if (conflict) { setError(t("settings.shortcutConflict", { action: t(actionLabelKeys[conflict]) })); return; }
+    if (!shortcutsEqual(settings[action], binding)) {
       void saveShortcuts({ ...settings, [action]: DEFAULT_SHORTCUTS[action] });
     }
   }
@@ -144,8 +151,16 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
             >
               {recording === action
                 ? t("settings.shortcutPressKeys")
-                : formatShortcut(settings[action])}
+                : settings[action] ? formatShortcut(settings[action]) : t("settings.shortcutUnbound")}
             </button>
+            {(["newSession", "nextTab", "previousTab"] as string[]).includes(action) && (
+              <button className="settings-shortcut-reset" type="button"
+                disabled={busy || !settings[action]}
+                aria-label={t("settings.shortcutClear", { action: t(actionLabelKeys[action]) })}
+                onClick={() => void saveShortcuts({ ...settings, [action]: null })}>
+                {t("settings.shortcutClearLabel")}
+              </button>
+            )}
             <button
               aria-label={t("settings.shortcutRestore", { action: t(actionLabelKeys[action]) })}
               className="settings-shortcut-reset"

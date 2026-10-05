@@ -17,13 +17,15 @@ import { api } from "../../shared/api/client";
 import { readApiError, resolveApiError } from "../../shared/api/errors";
 import type {
   ConnectionState,
-  Session,
+  WorkspaceSession as Session,
   SshConnection,
   ShortcutSettings,
   TerminalEvent,
   TerminalColorScheme,
   TerminalResumeEvent,
 } from "../../shared/api/types";
+import { isLocalSession } from "../../shared/api/types";
+import { isComposingKey } from "../../shared/ui/focus";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { TextInput } from "../../shared/ui/TextInput";
@@ -111,6 +113,7 @@ interface TerminalPaneProps {
   autoConnect: boolean;
   visible: boolean;
   runtimeId: string;
+  runAsAdmin?: boolean;
   session: Session;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
@@ -140,6 +143,7 @@ export const TerminalPane = memo(function TerminalPane({
   onDirectoryChange,
   onStateChange,
   runtimeId,
+  runAsAdmin,
   session,
   shortcuts,
   theme,
@@ -147,6 +151,13 @@ export const TerminalPane = memo(function TerminalPane({
   visible,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
+  const local = isLocalSession(session);
+  const localRef = useRef(local);
+  localRef.current = local;
+  const localRequestRef = useRef<string | null>(null);
+  const launchOverrideRef = useRef(runAsAdmin);
+  const [localStartingAdmin, setLocalStartingAdmin] = useState<boolean | null>(null);
+  const [localExit, setLocalExit] = useState<{ code: number | null; stopped?: boolean } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<XTermFitAddon | null>(null);
@@ -425,6 +436,7 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   function handleShellOsc(identifier: 7 | 133 | 633 | 777, data: string) {
+    if (localRef.current) return true;
     return shellIntegrationRef.current?.handleOsc(identifier, data) ?? true;
   }
 
@@ -951,17 +963,19 @@ export const TerminalPane = memo(function TerminalPane({
         };
       }
       terminal.attachCustomKeyEventHandler((event) => {
+        if (event.defaultPrevented) return false;
+        if (isComposingKey(event)) return true;
         if (event.type !== "keydown" || !activeRef.current || !visibleRef.current) {
           return true;
         }
         const currentShortcuts = shortcutsRef.current;
-        if (matchesShortcut(event, currentShortcuts.commandHistory)) {
+        if (!localRef.current && matchesShortcut(event, currentShortcuts.commandHistory)) {
           event.preventDefault();
           event.stopPropagation();
           commandHistoryRef.current?.toggle();
           return false;
         }
-        if (matchesShortcut(event, currentShortcuts.commandHistorySearch)) {
+        if (!localRef.current && matchesShortcut(event, currentShortcuts.commandHistorySearch)) {
           event.preventDefault();
           event.stopPropagation();
           commandHistoryRef.current?.focusSearch();
@@ -1101,7 +1115,7 @@ export const TerminalPane = memo(function TerminalPane({
         void api.disconnectSession(connection.connectionId).catch(() => undefined);
       } else if (wasConnecting && !isLightweightTransitioning()) {
         // 卸载发生在后端返回连接 ID 前，使用会话 ID 取消连接尝试，避免迟到注册。
-        void api.disconnectSession(sessionIdRef.current).catch(() => undefined);
+        void cancelPendingStart().catch(() => undefined);
       }
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1124,6 +1138,9 @@ export const TerminalPane = memo(function TerminalPane({
     if (activity.shouldResetInteraction) {
       remoteRightDragStateRef.current.end();
     }
+    if (active && visible && connectionState !== "connected" && !document.querySelector('[aria-modal="true"], [role="menu"]')) {
+      containerRef.current?.parentElement?.querySelector<HTMLButtonElement>(".terminal-connect-button:not(:disabled)")?.focus();
+    }
     if (!activity.shouldFit) {
       clearTemporaryLogin();
       terminalRef.current?.blur();
@@ -1134,7 +1151,7 @@ export const TerminalPane = memo(function TerminalPane({
       fitAndResize();
       // A tab closed from its menu has already restored keyboard focus. Keep
       // that entry focused instead of overriding it during terminal activation.
-      if (connectionState === "connected" && (!activationFocusTarget?.current || activationFocusTarget.current !== document.activeElement)) {
+      if (!document.querySelector('[aria-modal="true"], [role="menu"]') && connectionState === "connected" && (!activationFocusTarget?.current || activationFocusTarget.current !== document.activeElement)) {
         focusTerminal();
       }
     });
@@ -1142,6 +1159,65 @@ export const TerminalPane = memo(function TerminalPane({
     // 终端运行时刻意通过 ref 读取函数，避免可见性变化重建连接。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, connectionState, visible]);
+
+  async function cancelPendingStart() {
+    if (localRef.current) {
+      if (localRequestRef.current) await api.cancelLocalTerminalStart(localRequestRef.current);
+    } else { await api.disconnectSession(sessionIdRef.current); }
+  }
+
+  async function connectLocalTerminal() {
+    const terminal = terminalRef.current;
+    const lifecycle = connectionLifecycleRef.current;
+    if (!terminal || !isLocalSession(session)) return;
+    const attempt = lifecycle.beginConnect();
+    if (attempt === null) return;
+    const requestId = crypto.randomUUID();
+    localRequestRef.current = requestId;
+    const launchOverride = launchOverrideRef.current;
+    setLocalStartingAdmin(launchOverride ?? session.runAsAdmin);
+    clearPendingInput();
+    imeCompositionFallbackRef.current?.reset();
+    setLocalExit(null);
+    reportState("connecting");
+    const current = () => mountedRef.current && connectionLifecycleRef.current === lifecycle && lifecycle.isCurrent(attempt);
+    const channel = new Channel<TerminalEvent>();
+    channel.onmessage = (event) => {
+      if (!current() || !lifecycle.acceptsEvent(attempt, channel, event.connectionId)) return;
+      // Events are attached only after the host is ready. A short-lived shell
+      // may exit before its IPC result arrives, but still used this override.
+      launchOverrideRef.current = undefined;
+      if (event.kind === "data") {
+        if (!consumeLightweightBarrier(event.data)) terminal.write(decodeBase64(event.data));
+        return;
+      }
+      lifecycle.reset();
+      clearPendingInput();
+      setLocalExit((previous) => ({ code: event.kind === "disconnected" ? event.exitCode ?? null : null, stopped: previous?.stopped }));
+      reportState(event.kind === "error" ? "error" : "disconnected", event.kind === "error" ? event.message : null);
+    };
+    lifecycle.attachChannel(attempt, channel);
+    try {
+      const connection = await api.startLocalTerminal(session.id, runtimeId, Math.max(1, terminal.cols), Math.max(1, terminal.rows), channel, requestId, launchOverride);
+      if (!current() || !lifecycle.setConnection(attempt, connection)) {
+        await api.disconnectSession(connection.connectionId).catch(() => undefined);
+        return;
+      }
+      launchOverrideRef.current = undefined;
+      onConnected(runtimeId, connection);
+      flushInput();
+      fitAndResize();
+    } catch (error) {
+      if (current()) {
+        lifecycle.reset();
+        clearPendingInput();
+        reportState("error", resolveApiError(error, t("errors.unknown")));
+      }
+    } finally {
+      lifecycle.finishConnect(attempt);
+      if (localRequestRef.current === requestId) localRequestRef.current = null;
+    }
+  }
 
   async function connectTerminal(options: ConnectTerminalOptions = {}) {
     const { fromCredentialPrompt = false, oneTimeCredential } = options;
@@ -1158,6 +1234,7 @@ export const TerminalPane = memo(function TerminalPane({
       reportState("error", t("sessions.terminalNotReady"));
       return;
     }
+    if (isLocalSession(session)) { await connectLocalTerminal(); return; }
     const oneTimeUsername =
       options.oneTimeUsername ?? temporaryLoginRef.current?.username;
     if (!session.username.trim() && !oneTimeUsername) {
@@ -1491,8 +1568,13 @@ export const TerminalPane = memo(function TerminalPane({
         restoringRef.current = false;
         clearPendingInput();
         resetShellIntegration();
-        runtime.terminal.writeln(`\r\n[FsTTY] ${event.message}`);
-        reportStateRef.current(event.kind === "error" ? "error" : "disconnected", event.message);
+        if (localRef.current) {
+          setLocalExit({ code: event.kind === "disconnected" ? event.exitCode ?? null : null });
+          reportStateRef.current(event.kind === "error" ? "error" : "disconnected", event.kind === "error" ? event.message : null);
+        } else {
+          runtime.terminal.writeln(`\r\n[FsTTY] ${event.message}`);
+          reportStateRef.current(event.kind === "error" ? "error" : "disconnected", event.message);
+        }
       },
     });
     resumeStreamRef.current = stream;
@@ -1518,7 +1600,7 @@ export const TerminalPane = memo(function TerminalPane({
           runtime.terminal.reset();
           runtime.terminal.resize(attachment.columns, attachment.rows);
           lifecycle.setConnection(attemptId, attachment.connection);
-          shellIntegrationRef.current?.restore(attachment.shellIntegrationToken);
+          if (!localRef.current) shellIntegrationRef.current?.restore(attachment.shellIntegrationToken);
           onDirectoryChangeRef.current(runtimeId, attachment.currentPath);
           onConnected(runtimeId, attachment.connection);
           stream.start();
@@ -1629,7 +1711,7 @@ export const TerminalPane = memo(function TerminalPane({
       if (connectionLifecycleRef.current.isConnecting()) {
         // 连接尚未返回 ID 时先使前端尝试失效，再用会话 ID 取消后端尝试，避免迟到注册。
         connectionLifecycleRef.current.cancel();
-        await api.disconnectSession(sessionIdRef.current).catch(() => undefined);
+        await cancelPendingStart().catch(() => undefined);
       }
       reportState("disconnected");
       return;
@@ -1638,6 +1720,7 @@ export const TerminalPane = memo(function TerminalPane({
     if (generation === null) return;
     clearPendingInput();
     resetShellIntegration();
+    if (localRef.current) setLocalExit({ code: null, stopped: true });
     reportState("disconnecting");
     try {
       await api.disconnectSession(connection.connectionId);
@@ -1709,7 +1792,7 @@ export const TerminalPane = memo(function TerminalPane({
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
-      <div className="terminal-toolbar">
+      {!local && <div className="terminal-toolbar">
         <CommandHistoryPopover
           disabled={connectionState !== "connected"}
           onTriggerClose={restoreTerminalFocus}
@@ -1720,20 +1803,18 @@ export const TerminalPane = memo(function TerminalPane({
             window.requestAnimationFrame(focusTerminal);
           }}
         />
-      </div>
+      </div>}
       {clipboardError ? (
         <div aria-live="polite" className="terminal-clipboard-error error-banner">
           {t(CLIPBOARD_MESSAGE_KEYS[clipboardError])}
         </div>
       ) : null}
       {connectionState !== "connected" && !terminalLoginPrompt ? (
-        <div className="terminal-connect-overlay">
+        <div className={local ? "terminal-connect-overlay local-terminal-overlay" : "terminal-connect-overlay"}>
           <Link2Off size={28} />
           <strong>{session.name}</strong>
           <span>
-            {connectionState === "connecting"
-              ? t("sessions.connecting")
-              : t("sessions.manualConnectHint")}
+            {local ? connectionState === "connecting" ? t((localStartingAdmin ?? launchOverrideRef.current ?? (isLocalSession(session) && session.runAsAdmin)) ? "local.waitingAdmin" : "local.starting") : localExit ? localExit.stopped ? t("local.stopped") : localExit.code === null ? t("local.exited") : t("local.exitCode", { code: localExit.code }) : t("local.manualStart") : connectionState === "connecting" ? t("sessions.connecting") : t("sessions.manualConnectHint")}
           </span>
           <Button
             className="terminal-connect-button"
@@ -1743,10 +1824,9 @@ export const TerminalPane = memo(function TerminalPane({
             icon={<Link aria-hidden="true" size={16} />}
             onClick={() => void connectTerminal()}
           >
-            {connectionState === "connecting"
-              ? t("sessions.connecting")
-              : t("sessions.connect")}
+            {local ? t(connectionState === "connecting" ? "local.starting" : localExit ? "local.restart" : "local.start") : t(connectionState === "connecting" ? "sessions.connecting" : "sessions.connect")}
           </Button>
+          {local && connectionState === "connecting" && <Button variant="ghost" onClick={() => void disconnectTerminal()}>{t("sessions.cancel")}</Button>}
         </div>
       ) : null}
 
@@ -1757,8 +1837,8 @@ export const TerminalPane = memo(function TerminalPane({
             { id: "paste", label: t("sessions.contextPaste"), onSelect: () => void pasteTerminalClipboard() },
             { id: "selectAll", label: t("sessions.contextSelectAll"), onSelect: () => terminalRef.current?.selectAll() },
             { id: "clear", label: t("sessions.contextClear"), onSelect: () => terminalRef.current?.clear() },
-            { id: "reconnect", label: t("sessions.contextReconnect"), disabled: connectionState === "connected" || connectionState === "connecting", onSelect: () => void connectTerminal() },
-            { id: "disconnect", label: t("sessions.disconnect"), disabled: connectionState !== "connected", onSelect: () => void disconnectTerminal() },
+            { id: "reconnect", label: t(local ? "local.restart" : "sessions.contextReconnect"), disabled: connectionState === "connected" || connectionState === "connecting", onSelect: () => void connectTerminal() },
+            { id: "disconnect", label: t(local ? "local.stop" : "sessions.disconnect"), disabled: connectionState !== "connected", onSelect: () => void disconnectTerminal() },
           ]}
           onClose={() => setContextMenu(null)}
           returnFocus={() => active && visible ? contextMenuFocusRef.current : null}

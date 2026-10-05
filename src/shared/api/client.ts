@@ -1,5 +1,6 @@
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type {
+  WorkspaceSessionGroup, LocalSession, LocalSessionPayload, LocalShellAvailability, SshConnection,
   AppSettings,
   AppUpdateInfo,
   AppUpdateProgress,
@@ -68,6 +69,15 @@ export const api = {
   listSessions() {
     return invoke<SessionGroup[]>("list_sessions");
   },
+  listWorkspaceSessions() { return invoke<WorkspaceSessionGroup[]>("list_workspace_sessions"); },
+  saveLocalSession(payload: LocalSessionPayload) { return invoke<LocalSession>("save_local_session", { payload }); },
+  deleteLocalSession(sessionId: string) { return invoke<void>("delete_local_session", { sessionId }); },
+  detectLocalShells() { return invoke<LocalShellAvailability[]>("detect_local_shells"); },
+  startLocalTerminal(sessionId: string, runtimeId: string, columns: number, rows: number,
+    onEvent: Channel<TerminalEvent>, requestId: string, runAsAdmin?: boolean) {
+    return invoke<SshConnection>("start_local_terminal", { sessionId, runtimeId, requestId, columns, rows, onEvent, runAsAdmin: runAsAdmin ?? null });
+  },
+  cancelLocalTerminalStart(requestId: string) { return invoke<void>("cancel_local_terminal_start", { requestId }); },
   createSession(payload: CreateSessionPayload) {
     return invoke<Session>("create_session", { payload });
   },

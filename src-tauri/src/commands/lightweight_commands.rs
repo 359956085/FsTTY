@@ -41,7 +41,12 @@ pub async fn begin_lightweight_mode(
     }
     state
         .lightweight_mode_service
-        .begin(&state.connection_manager, terminals, suppress_confirmation)
+        .begin(
+            &state.connection_manager,
+            &state.local_terminal_service,
+            terminals,
+            suppress_confirmation,
+        )
         .await
 }
 
@@ -119,7 +124,11 @@ pub async fn finish_lightweight_restore(
 ) -> Result<(), AppError> {
     state
         .lightweight_mode_service
-        .finish_restore(&state.connection_manager, valid_runtime_ids.clone())
+        .finish_restore(
+            &state.connection_manager,
+            &state.local_terminal_service,
+            valid_runtime_ids.clone(),
+        )
         .await?;
     state
         .transfer_job_service

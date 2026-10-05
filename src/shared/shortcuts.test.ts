@@ -20,6 +20,12 @@ function keyboardEvent(overrides: Partial<KeyboardEvent> = {}) {
 }
 
 describe("快捷键", () => {
+  it("工作区 Tab 默认绑定、清除与全局冲突使用相同规则", () => {
+    expect(validateShortcut(DEFAULT_SHORTCUTS.nextTab!)).toBeNull();
+    expect(formatShortcut(DEFAULT_SHORTCUTS.previousTab)).toBe("Ctrl+Shift+Tab");
+    expect(matchesShortcut(keyboardEvent({ code: "Tab" }), null)).toBe(false);
+    expect(findShortcutConflict(DEFAULT_SHORTCUTS, "terminalPaste", DEFAULT_SHORTCUTS.newSession!)).toBe("newSession");
+  });
   it("使用物理按键编码匹配并格式化", () => {
     expect(matchesShortcut(keyboardEvent(), DEFAULT_SHORTCUTS.commandHistorySearch)).toBe(true);
     expect(formatShortcut(DEFAULT_SHORTCUTS.commandHistory)).toBe("Ctrl+Shift+H");

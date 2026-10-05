@@ -1,8 +1,10 @@
+#[cfg(test)]
 use crate::models::StoredSession;
 use std::collections::HashSet;
 
 pub(super) const DEFAULT_SESSION_GROUP: &str = "未分组";
 
+#[cfg(test)]
 pub(super) fn group_session_blocks(
     sessions: &[StoredSession],
 ) -> Vec<(String, Vec<StoredSession>)> {
@@ -19,6 +21,7 @@ pub(super) fn group_session_blocks(
     groups
 }
 
+#[cfg(test)]
 pub(super) fn flatten_session_blocks(
     groups: Vec<(String, Vec<StoredSession>)>,
 ) -> Vec<StoredSession> {

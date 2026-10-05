@@ -82,7 +82,13 @@ impl SessionService {
         let mut sessions = self.store.sessions.clone();
         // 服务审批已提交而界面元数据写入失败时，仍能重新找到托管会话。
         for profile in &profiles {
-            if !sessions.iter().any(|s| s.id == profile.target.id) {
+            if !sessions.iter().any(|s| s.id == profile.target.id)
+                && !self
+                    .store
+                    .local_sessions
+                    .iter()
+                    .any(|s| s.id == profile.target.id)
+            {
                 sessions.push(StoredSession {
                     id: profile.target.id.clone(),
                     name: profile.target.host.clone(),
@@ -133,7 +139,7 @@ impl SessionService {
         _credentials: &CredentialService,
     ) -> Result<SessionProfile, AppError> {
         self.ensure_writable()?;
-        if self.store.sessions.len() >= MAX_SESSIONS {
+        if self.store.sessions.len() + self.store.local_sessions.len() >= MAX_SESSIONS {
             return Err(AppError::Validation("会话数量不能超过 500 个".into()));
         }
         validate_common(

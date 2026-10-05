@@ -42,6 +42,19 @@ function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
 }
 
 describe("ShortcutSettingsSection", () => {
+  it("工作区绑定可清除和录制 Tab，组合输入不更改绑定", async () => {
+    mocks.updateShortcutSettings.mockResolvedValue(appSettings());
+    const { rerender } = render(<ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "settings.shortcutClear" })[0]);
+    await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenCalledWith({ ...DEFAULT_SHORTCUTS, newSession: null }));
+    rerender(<ShortcutSettingsSection onChange={vi.fn()} settings={{ ...DEFAULT_SHORTCUTS, newSession: null }} />);
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "settings.shortcutEdit" })[4] as HTMLButtonElement).disabled).toBe(false));
+    const edit = screen.getAllByRole("button", { name: "settings.shortcutEdit" })[4];
+    fireEvent.click(edit); fireEvent.keyDown(edit, { key: "Tab", code: "Tab", altKey: true, isComposing: true });
+    expect(mocks.updateShortcutSettings).toHaveBeenCalledOnce();
+    fireEvent.keyDown(edit, { key: "Tab", code: "Tab", altKey: true });
+    await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith({ ...DEFAULT_SHORTCUTS, newSession: { code: "Tab", ctrl: false, alt: true, shift: false } }));
+  });
   it("显示四项默认快捷键并录入新组合键", async () => {
     const nextShortcuts = {
       ...DEFAULT_SHORTCUTS,

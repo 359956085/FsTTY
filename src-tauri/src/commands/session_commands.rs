@@ -81,7 +81,7 @@ pub async fn reorder_session_group(
         .session_service
         .lock()
         .await
-        .reorder_group(&group_name, target_index)
+        .reorder_workspace_group(&group_name, target_index)
 }
 
 #[tauri::command]
@@ -95,7 +95,7 @@ pub async fn reorder_session(
         .session_service
         .lock()
         .await
-        .reorder_session(&session_id, &target_group, target_index)
+        .reorder_workspace_session(&session_id, &target_group, target_index)
 }
 
 #[tauri::command]
@@ -108,7 +108,7 @@ pub async fn rename_session_group(
         .session_service
         .lock()
         .await
-        .rename_group(&group_name, &new_name)?;
+        .rename_workspace_group(&group_name, &new_name)?;
     let policy_result = state
         .mcp_command_policy_service
         .lock()
@@ -119,7 +119,7 @@ pub async fn rename_session_group(
             .session_service
             .lock()
             .await
-            .rename_group(&new_name, &group_name);
+            .rename_workspace_group(&new_name, &group_name);
         return Err(error);
     }
     Ok(())
@@ -135,7 +135,7 @@ pub async fn delete_session_group(
             .session_service
             .lock()
             .await
-            .session_ids_in_group(&group_name)?
+            .workspace_ids_in_group(&group_name)?
     };
     let previous_permissions = state
         .mcp_command_policy_service
@@ -157,8 +157,13 @@ pub async fn delete_session_group(
         .session_service
         .lock()
         .await
-        .delete_group(&group_name, &state.credential_service)
+        .delete_workspace_group(&group_name, &state.credential_service)
         .await;
+    if result.is_ok() {
+        for id in &session_ids {
+            state.local_terminal_service.stop_session(id);
+        }
+    }
     if result.is_err() {
         let _ = state
             .mcp_command_policy_service
@@ -265,6 +270,12 @@ pub async fn write_terminal(
     connection_id: String,
     data: String,
 ) -> Result<(), AppError> {
+    if state.local_terminal_service.contains(&connection_id) {
+        return state
+            .local_terminal_service
+            .write(&connection_id, data)
+            .await;
+    }
     state
         .connection_manager
         .write_terminal(&connection_id, data)
@@ -278,6 +289,12 @@ pub async fn resize_terminal(
     columns: u32,
     rows: u32,
 ) -> Result<(), AppError> {
+    if state.local_terminal_service.contains(&connection_id) {
+        return state
+            .local_terminal_service
+            .resize(&connection_id, columns, rows)
+            .await;
+    }
     state
         .connection_manager
         .resize_terminal(&connection_id, columns, rows)
@@ -289,6 +306,10 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), AppError> {
+    if state.local_terminal_service.contains(&connection_id) {
+        state.local_terminal_service.stop(&connection_id);
+        return Ok(());
+    }
     state
         .transfer_job_service
         .cancel_connection(&state.connection_manager, &connection_id)

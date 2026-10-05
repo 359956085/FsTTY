@@ -232,6 +232,59 @@ pub struct ShortcutSettings {
     pub terminal_paste: ShortcutBinding,
     pub command_history: ShortcutBinding,
     pub command_history_search: ShortcutBinding,
+    #[serde(default = "default_new_session")]
+    pub new_session: Option<ShortcutBinding>,
+    #[serde(default = "default_next_tab")]
+    pub next_tab: Option<ShortcutBinding>,
+    #[serde(default = "default_previous_tab")]
+    pub previous_tab: Option<ShortcutBinding>,
+}
+
+fn default_new_session() -> Option<ShortcutBinding> {
+    Some(ShortcutBinding::new("KeyT", true, false, true))
+}
+fn default_next_tab() -> Option<ShortcutBinding> {
+    Some(ShortcutBinding::new("Tab", true, false, false))
+}
+fn default_previous_tab() -> Option<ShortcutBinding> {
+    Some(ShortcutBinding::new("Tab", true, false, true))
+}
+
+impl ShortcutSettings {
+    pub fn preserve_existing_bindings(&mut self, missing: [bool; 3]) {
+        let mut occupied = vec![
+            self.terminal_copy.clone(),
+            self.terminal_paste.clone(),
+            self.command_history.clone(),
+            self.command_history_search.clone(),
+        ];
+        let fields = [
+            &mut self.new_session,
+            &mut self.next_tab,
+            &mut self.previous_tab,
+        ];
+        for (index, binding) in fields.iter().enumerate() {
+            if !missing[index] {
+                if let Some(value) = binding.as_ref() {
+                    occupied.push(value.clone());
+                }
+            }
+        }
+        for (index, binding) in fields.into_iter().enumerate() {
+            if !missing[index] {
+                continue;
+            }
+            if binding
+                .as_ref()
+                .is_some_and(|value| occupied.contains(value))
+            {
+                *binding = None;
+            }
+            if let Some(value) = binding {
+                occupied.push(value.clone());
+            }
+        }
+    }
 }
 
 impl Default for ShortcutSettings {
@@ -241,6 +294,9 @@ impl Default for ShortcutSettings {
             terminal_paste: ShortcutBinding::new("KeyV", true, false, false),
             command_history: ShortcutBinding::new("KeyH", true, false, true),
             command_history_search: ShortcutBinding::new("KeyF", true, false, false),
+            new_session: default_new_session(),
+            next_tab: default_next_tab(),
+            previous_tab: default_previous_tab(),
         }
     }
 }

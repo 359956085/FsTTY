@@ -27,7 +27,9 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { SessionGroup } from "../../shared/api/types";
+import type { WorkspaceSessionGroup as SessionGroup } from "../../shared/api/types";
+import { isLocalSession } from "../../shared/api/types";
+import { sessionDescription } from "./localSession";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
@@ -56,7 +58,7 @@ interface SessionListProps {
   mutationPending: boolean;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: SessionFilter) => void;
-  onOpen: (sessionId: string) => void;
+  onOpen: (sessionId: string, autoConnect?: boolean, runAsAdmin?: boolean) => void;
   onToggleFavorite: (sessionId: string) => void;
   onToggleGroup: (groupName: string) => void;
   onCreate: MouseEventHandler<HTMLButtonElement>;
@@ -190,7 +192,7 @@ export function SessionList({
         sessions: group.sessions.filter((session) => {
           const matchesQuery =
             !normalizedQuery ||
-            [session.name, session.host, session.username, ...session.tags]
+            [session.name, sessionDescription(session), ...session.tags]
               .join(" ")
               .toLowerCase()
               .includes(normalizedQuery);
@@ -318,9 +320,7 @@ export function SessionList({
       return;
     }
 
-    const target = session.username
-      ? `${session.username}@${session.host}`
-      : session.host;
+    const target = sessionDescription(session);
     try {
       await writeText(`${session.name} ${target}`);
       setCopyError(false);
@@ -482,6 +482,7 @@ export function SessionList({
     });
   }
 
+  const contextIsLocal = contextMenu?.kind === "session" && groups.some((group) => group.sessions.some((session) => session.id === contextMenu.sessionId && isLocalSession(session)));
   return (
     <aside
       id="session-sidebar"
@@ -705,9 +706,8 @@ export function SessionList({
                         <span className="session-item-main">
                           <span className="session-name">{session.name}</span>
                           <span className="session-meta">
-                            {session.username
-                              ? `${session.username}@${session.host}`
-                              : session.host}
+                            {sessionDescription(session)}
+                            {isLocalSession(session) && session.runAsAdmin ? ` · ${t("local.admin")}` : ""}
                           </span>
                         </span>
                       </button>
@@ -735,7 +735,11 @@ export function SessionList({
       {contextMenu?.kind === "session" ? (
         <ContextMenu
           items={[
-            { id: "connect", label: t("sessions.contextConnect"), icon: <Link size={15} />, onSelect: () => onOpen(contextMenu.sessionId) },
+            { id: "connect", label: t(contextIsLocal ? "local.start" : "sessions.contextConnect"), icon: <Link size={15} />, onSelect: () => onOpen(contextMenu.sessionId) },
+            ...(contextIsLocal ? [
+              { id: "local-normal", label: t("local.openNormal"), onSelect: () => onOpen(contextMenu.sessionId, true, false) },
+              { id: "local-admin", label: t("local.openAdmin"), onSelect: () => onOpen(contextMenu.sessionId, true, true) },
+            ] : []),
             { id: "copy-session-info", label: t("sessions.contextCopySessionInfo"), icon: <Copy size={15} />, onSelect: () => void copySessionInfo(contextMenu.sessionId) },
             { id: "edit", label: t("sessions.edit"), icon: <Pencil size={15} />, disabled: mutationPending, onSelect: () => onEdit(contextMenu.sessionId, contextMenuReturnFocusRef.current) },
             { id: "favorite", label: t(favoriteIds.has(contextMenu.sessionId) ? "sessions.unfavorite" : "sessions.favorite"), icon: <Star size={15} />, onSelect: () => onToggleFavorite(contextMenu.sessionId) },

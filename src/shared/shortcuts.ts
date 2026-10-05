@@ -8,6 +8,9 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   "terminalPaste",
   "commandHistory",
   "commandHistorySearch",
+  "newSession",
+  "nextTab",
+  "previousTab",
 ];
 
 export const DEFAULT_SHORTCUTS: ShortcutSettings = {
@@ -15,6 +18,9 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
   terminalPaste: { code: "KeyV", ctrl: true, alt: false, shift: false },
   commandHistory: { code: "KeyH", ctrl: true, alt: false, shift: true },
   commandHistorySearch: { code: "KeyF", ctrl: true, alt: false, shift: false },
+  newSession: { code: "KeyT", ctrl: true, alt: false, shift: true },
+  nextTab: { code: "Tab", ctrl: true, alt: false, shift: false },
+  previousTab: { code: "Tab", ctrl: true, alt: false, shift: true },
 };
 
 interface ShortcutEvent {
@@ -35,8 +41,9 @@ export function shortcutFromEvent(event: ShortcutEvent): ShortcutBinding | null 
   };
 }
 
-export function matchesShortcut(event: ShortcutEvent, shortcut: ShortcutBinding) {
+export function matchesShortcut(event: ShortcutEvent, shortcut: ShortcutBinding | null) {
   return (
+    shortcut != null &&
     !event.metaKey &&
     event.code === shortcut.code &&
     event.ctrlKey === shortcut.ctrl &&
@@ -64,7 +71,8 @@ export function findShortcutConflict(
   );
 }
 
-export function formatShortcut(shortcut: ShortcutBinding) {
+export function formatShortcut(shortcut: ShortcutBinding | null) {
+  if (!shortcut) return "—";
   const parts: string[] = [];
   if (shortcut.ctrl) parts.push("Ctrl");
   if (shortcut.alt) parts.push("Alt");
@@ -73,7 +81,8 @@ export function formatShortcut(shortcut: ShortcutBinding) {
   return parts.join("+");
 }
 
-export function shortcutsEqual(left: ShortcutBinding, right: ShortcutBinding) {
+export function shortcutsEqual(left: ShortcutBinding | null, right: ShortcutBinding | null) {
+  if (!left || !right) return left === right;
   return (
     left.code === right.code &&
     left.ctrl === right.ctrl &&
@@ -112,6 +121,7 @@ function isSupportedCode(code: string) {
     "Slash",
     "Backquote",
     "Space",
+    "Tab",
     "Home",
     "End",
     "PageUp",

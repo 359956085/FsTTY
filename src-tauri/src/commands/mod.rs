@@ -43,3 +43,6 @@ pub use settings_commands::{
     update_app_settings, update_log_settings, update_mcp_settings, update_shortcut_settings,
 };
 pub use update_commands::{check_app_update, close_app_update, install_app_update};
+
+mod local_terminal_commands;
+pub use local_terminal_commands::*;

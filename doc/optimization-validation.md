@@ -199,3 +199,80 @@ npm run tauri -- build --debug --bundles nsis --config src-tauri/windows/validat
 最终 `tauri build --debug --bundles nsis --config src-tauri/windows/validation.conf.json` 成功。安装包 SHA-256：`4B03040ECB0550EAF41C68EF3C883E565C0836570F98945E6AEF286F39D9CE61`。
 
 本地材料位于 `artifacts/keyboard-ux-validation-20261003/`（Git 忽略），包括 `verify-all-final.log`、`build-validation-final.log`、最终安装包 `input/FsTTY_1.7.2_x64-setup.exe`、沙盒准备脚本、首包运行记录 `output/initial-validation.json`、最终包运行记录 `output/validation.json` 及观察结果 `output/interaction-results.json`。两次验证专用沙盒均已关闭，宿主安装及真实远端文件未修改。
+
+## 本地终端、统一新建表单与工作区快捷键
+
+日期：2026-10-05。源码基线：`802fc84`，结果来自本轮工作区修改。
+
+### 实现边界
+
+- 侧栏及标签栏入口统一为“新建”，先选择 SSH、CMD、PowerShell 或 Git Bash，再填写对应表单。SSH 保留原流程；本地表单保存名称、分组、起始目录和默认管理员权限。取消不创建配置或进程，保存失败保留草稿，提交期间禁止关闭和重复提交。类型检测保留不可用项及原因，并允许重新检测。
+- 本地配置复用会话列表、收藏、搜索、分组、排序及多标签逻辑。新建保存后打开独立标签，编辑不重启已有进程；右键普通/管理员打开仅覆盖该次启动。取消后的重试保留本次选择，成功启动后的重新启动使用配置默认值。运行标签显示实际权限，退出后保留输出、退出码及重新启动入口。
+- 本地活动标签隐藏右栏和展开按钮，切回 SSH 恢复原布局。新增 Ctrl+Shift+T、Ctrl+Tab、Ctrl+Shift+Tab，可修改、清除和恢复；前后端统一支持 Tab、检查冲突。旧配置补齐新增默认值，与用户已有绑定冲突时将新动作设为未设置。工作区在 xterm 之前统一消费快捷键，并隔离文本编辑、弹窗、菜单、组合输入和已处理事件。
+- 每个本地标签使用独立 host，内部子命令在 GUI、单实例和 MCP 初始化前分流。ConPTY 的读写及控制分开处理，管道使用有界队列和输出批处理；双向命名管道使用独立 OVERLAPPED 操作，避免读阻塞写。管道限制本地访问，并核验双方 PID、可执行文件及启动请求。
+- 普通启动检查标准令牌，无法取得时明确失败；管理员启动在后台请求 runas，主界面不提权。启动尝试拥有独立请求 ID，取消、卸载及迟到结果均可清理。host 的 Job Object 管理子进程，父进程退出监控覆盖异常退出；轻量模式接回原桥接通道，完整重启只恢复未运行标签。
+- 会话存储升级到 v2，校验后提交并保留 v1 原文件；损坏文件可从备份恢复，提交失败不覆盖旧数据。本地配置与 SSH 凭据分开保存，MCP/权限设置仍只查询 SSH，本地 ID 不能用于 SSH 操作；本地终端不进入设备轮询或 MCP 空闲回收。删除本地配置不删除起始目录，混合分组先完成 SSH 凭据审批再删除本地记录。
+- 未新增依赖，仅启用已有 Rust 依赖的必要功能；原有 SSH IPC、配置兼容读取、弹窗加载方式、文件面板记忆化边界及终端 key 保持。没有引入自定义启动命令、手动程序路径、自动安装或本地 FsTTY 命令历史采集。
+
+ConPTY 生命周期参考 [Microsoft 创建伪控制台会话](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)。隔离测试修复了 CMD 可执行路径混用斜杠导致退出、同步双向管道读写互相阻塞，以及 shell 继承忽略 Ctrl+C 标志的问题；host 在创建 shell 前恢复默认控制事件处理，依据 [SetConsoleCtrlHandler](https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler) 的继承行为。
+
+### 自动测试：通过
+
+最终 `npm run verify:all` 退出码为 0，版本一致性、TypeScript、ESLint、生产构建、Rust 格式、Clippy（`-D warnings`）及工作区测试均通过。
+
+| 检查 | 结果与覆盖 |
+| --- | --- |
+| 前端 | 92 个测试文件、697 项通过，相对基线新增 22 项 |
+| Rust | 410 项通过；4 项默认忽略，其中 2 项为原有真实 SSH/系统凭据测试，另 2 项为下节显式运行的隔离 ConPTY 测试 |
+| 新建及编辑 | 两个入口的 SSH 表单焦点回归；三种本地表单默认值、取消无保存、分组 Esc、双向 Tab、组合输入、提交去重、失败保留草稿/焦点、管理员默认值、编辑及重渲染保护；类型检测失败原因、重新检测和取消后的迟到结果 |
+| 本地标签 | 保存后新建、重复打开独立标签、编辑更新配置；临时权限覆盖、退出输出保留、快速退出先于启动 IPC 返回、取消与迟到结果、新尝试隔离；轻量恢复模拟接回原通道而不重新启动 |
+| 工作区快捷键 | 默认/自定义/未设置、双向顺序循环、零/单标签、取消返回原焦点、新建忽略重复键、工作区隐藏/文本编辑/菜单/弹窗/组合输入/已处理事件隔离、终端不收到已消费事件、StrictMode 和卸载清理 |
+| 快捷键设置 | Tab 录制与校验、清除绑定、冲突检测、旧配置补默认及保留已有绑定、显式未设置不被覆盖 |
+| 存储及隔离 | v1 原文件保留和备份恢复、损坏数据阻止覆盖、写入失败回滚、混合分组顺序/重命名/持久化、MCP 只见 SSH、本地类型不可更换、删除配置保留目录 |
+| 后端协议与取消 | 帧长度/输入/尺寸限制、畸形及截断请求、请求取消记录有界、取消按尝试隔离、丢弃启动释放占用并取消迟到 host、成功启动保留运行实例 |
+| 既有回归 | 前三轮焦点、菜单、文件多选/拖放/进度、设备轮询和文件面板渲染隔离、SSH 连接、终端输入、轻量模式及 MCP 测试随完整校验通过 |
+
+最终主 JS 为 **598.47 kB**（gzip **178.78 kB**），CSS **74.01 kB**（gzip **14.36 kB**），HTML **1.12 kB**。相对第三轮主 JS 增加 13.75 kB（gzip 3.87 kB）；原有 xterm、更新日志和 Markdown 分块保持。500 kB 包体积告警仍存在，本轮未重测 GUI 冷启动或首次弹窗耗时，不能据此宣称响应速度变化。
+
+### 隔离 Windows 原生终端检查：通过
+
+在本任务专用 Windows Sandbox（Windows 11 build 26100）中运行 Rust 原生测试程序。测试只写入新建的独立临时目录；测试程序及 Git for Windows 安装目录为只读映射，结果目录为可写映射。未修改宿主安装、真实会话、凭据或远端文件。本轮没有生成或安装新的 GUI 验证包。
+
+沙盒令牌为管理员且没有可交互的 UAC 提示，测试按该实际权限启动 host，不请求 UAC。因此这里验证的是 ConPTY、管道及进程回收，不能作为普通令牌启动或真实 runas 授权通过的证据。沙盒没有 PowerShell 7，实际启动的是 Windows PowerShell 5.1；稳定版 PowerShell 7 优先/缺失回退另由自动测试覆盖。
+
+| 原生路径 | 结果 |
+| --- | --- |
+| CMD | 交互启动、中文输出、中文及空格起始目录、3,000 行输出、调整尺寸、Ctrl+C 及时返回提示符、退出码 7，通过 |
+| Windows PowerShell 5.1 | 同上；额外启动受管子进程，shell 退出后子进程被回收，通过 |
+| Git Bash | 同上；`stty size` 确认 35 行/110 列；分别中断不会自行结束的 Bash 前台循环和长时间运行的 Windows ping 子进程，均在 5 秒内返回提示符，通过 |
+| 受限命名管道 | 真实 host 握手、双方 PID/映像校验及错误客户端身份拒绝，通过 |
+| 主进程异常退出 | 父进程绕过 Rust 清理直接退出，独立 host 与 PTY shell 均在 5 秒内回收，通过 |
+
+最终两项原生测试连续两次全部通过，分别耗时 **9.67 秒**、**10.15 秒**，均退出 0。Ctrl+C 判定等待提示符恢复，不以长命令自然结束冒充中断成功。原生读写测试使用真实 ConPTY 和 shell，前端焦点及 xterm 事件分发仍属于上节自动测试范围。
+
+测试编译命令：
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run
+```
+
+将生成的库测试程序及所需运行库复制到沙盒后，仅在隔离环境执行：
+
+```powershell
+C:\FsTTYTests\native-tests.exe conpty_ --ignored --nocapture --test-threads=1
+```
+
+### 待人工实机验证
+
+- 普通权限启动、管理员默认值与临时覆盖的实际令牌、真实 UAC 确认/取消、授权期间切换标签及关闭后的迟到结果。对应请求隔离和界面状态已有自动回归，但沙盒不能验证真实 UAC 流程。
+- 原生 WebView2 的真实 Tab 顺序、选择器到表单的焦点交接、工作区快捷键与 xterm 集成、中文输入法候选/组合输入、原生目录/凭据窗口返回焦点；不能把注入中文文本等同于输入法验证。
+- GUI 的轻量模式完整退出/恢复、管理员终端恢复不重复授权、完整应用重启后标签保持未运行，以及 PowerShell 7 实际安装环境；桥接和前端恢复已有自动测试，但尚未补齐 GUI 实机验收。
+- 混合分组的原生凭据审批取消、真实 SSH/SFTP 文件传输与操作回归，继续使用独立测试账号和目录补验。
+
+本轮未自动操作 FsTTY 原生界面。[Computer Use 技能](C:/Users/fengshi/.codex/plugins/cache/openai-bundled/computer-use/26.930.31730/skills/computer-use/SKILL.md) 要求遵循配套指引；[guidance.md](C:/Users/fengshi/.codex/plugins/cache/openai-bundled/computer-use/26.930.31730/docs/guidance.md) 明确规定 “Do not automate terminal applications such as Windows Terminal, Command Prompt, or Windows PowerShell.” 及 “Do not automate user authentication dialogs.”。本轮将 FsTTY 终端界面按该限制处理，界面及授权流程保留人工验收；命令行编译、自动测试和沙盒原生测试不使用 UI 自动化。
+
+### 验证材料
+
+本地材料位于 `artifacts/local-terminal-validation-20261005/`（Git 忽略）：`verify-all-final.log`、`native-build.log`、`input/run-native-tests.ps1`、`input/native-tests.exe`，以及 `output/native-tests-first.log`、`output/native-tests-first.stderr.log`、`output/native-tests.log`、`output/native-tests.stderr.log` 和 `output/native-result.json`。最终原生测试程序 SHA-256：`01A63F1B293889093703155EDFF9BF0676402576AFE5FD40ABF742C3151866B3`。
+
+验证结束后已关闭本任务创建的专用沙盒；宿主 FsTTY 安装和真实会话保持原状。

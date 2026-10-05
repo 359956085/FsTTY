@@ -58,6 +58,17 @@ function mockFocusVisible(visible: boolean) {
 }
 
 describe("工作区侧栏布局", () => {
+  it("本地标签隐藏整个右栏，切回 SSH 保留展开状态且终端不重建", () => {
+    const view = render(<Preview withTerminal />);
+    const terminal = screen.getByRole("textbox", { name: "测试终端" });
+    view.rerender(<Preview withTerminal overrides={{ hideRightPanel: true }} />);
+    expect(view.container.querySelector(".right-rail")).toBeNull();
+    expect(screen.queryByRole("button", { name: "nav.expandFiles" })).toBeNull();
+    view.rerender(<Preview withTerminal />);
+    expect(view.container.querySelector(".right-rail")).not.toBeNull();
+    expect(screen.getByRole("textbox", { name: "测试终端" })).toBe(terminal);
+    expect(mocks.mount).toHaveBeenCalledOnce(); expect(mocks.unmount).not.toHaveBeenCalled();
+  });
   it("收起移除右栏及手柄，焦点往返且终端不重建", () => {
     const { container } = render(<Preview withTerminal />);
     const terminal = screen.getByRole("textbox", { name: "测试终端" });

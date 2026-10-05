@@ -1,7 +1,6 @@
-use super::session_structure::{
-    flatten_session_blocks, group_session_blocks, normalize_group, normalize_tags,
-    DEFAULT_SESSION_GROUP,
-};
+#[cfg(test)]
+use super::session_structure::{flatten_session_blocks, group_session_blocks};
+use super::session_structure::{normalize_group, normalize_tags, DEFAULT_SESSION_GROUP};
 #[cfg(all(windows, not(test)))]
 mod broker_windows;
 #[cfg(any(not(windows), test))]
@@ -9,6 +8,7 @@ mod credentials;
 mod persistence;
 #[cfg_attr(all(windows, not(test)), allow(dead_code))]
 mod validation;
+mod workspace;
 use crate::models::{
     AppError, CreateSessionPayload, SessionGroup, SessionProfile, StoredSession,
     UpdateSessionPayload,
@@ -53,11 +53,27 @@ impl SessionService {
         let backup_path = app_data_dir.join(STORE_BACKUP_FILE);
         let temp_path = app_data_dir.join(STORE_TEMP_FILE);
 
-        let (store, primary_trusted, blocked_error) = match read_store(&store_path) {
+        let migrate = !store_path.exists() && !backup_path.exists() && !temp_path.exists();
+        let read_path = if migrate {
+            app_data_dir.join("sessions.v1.json")
+        } else {
+            store_path.clone()
+        };
+        let read_backup = if migrate {
+            app_data_dir.join("sessions.v1.json.bak")
+        } else {
+            backup_path.clone()
+        };
+        let read_temp = if migrate {
+            app_data_dir.join("sessions.v1.json.tmp")
+        } else {
+            temp_path.clone()
+        };
+        let (store, primary_trusted, blocked_error) = match read_store(&read_path) {
             Ok(Some(store)) => (store, true, None),
-            primary_result => match read_store(&backup_path) {
+            primary_result => match read_store(&read_backup) {
                 Ok(Some(store)) => (store, false, None),
-                backup_result => match read_store(&temp_path) {
+                backup_result => match read_store(&read_temp) {
                     Ok(Some(store)) => (store, false, None),
                     Ok(None)
                         if matches!(&primary_result, Ok(None))
@@ -82,7 +98,7 @@ impl SessionService {
             },
         };
 
-        Self {
+        let mut service = Self {
             store,
             store_path,
             backup_path,
@@ -91,7 +107,16 @@ impl SessionService {
             blocked_error,
             #[cfg(all(windows, not(test)))]
             settings_service: None,
+        };
+        if migrate
+            && service.blocked_error.is_none()
+            && (read_path.exists() || read_backup.exists() || read_temp.exists())
+        {
+            if let Err(error) = service.persist() {
+                service.blocked_error = Some(error);
+            }
         }
+        service
     }
 
     #[cfg(any(not(windows), test))]
@@ -136,7 +161,7 @@ impl SessionService {
         credentials: &CredentialService,
     ) -> Result<SessionProfile, AppError> {
         self.ensure_writable()?;
-        if self.store.sessions.len() >= MAX_SESSIONS {
+        if self.store.sessions.len() + self.store.local_sessions.len() >= MAX_SESSIONS {
             return Err(AppError::Validation("会话数量不能超过 500 个".to_owned()));
         }
         validate_common(
@@ -339,6 +364,7 @@ impl SessionService {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn reorder_group(&mut self, group_name: &str, target_index: usize) -> Result<(), AppError> {
         self.ensure_writable()?;
         let mut groups = group_session_blocks(&self.store.sessions);
@@ -358,6 +384,7 @@ impl SessionService {
         self.replace_sessions(flatten_session_blocks(groups))
     }
 
+    #[cfg(test)]
     pub fn reorder_session(
         &mut self,
         session_id: &str,
@@ -413,6 +440,7 @@ impl SessionService {
         self.replace_sessions(flatten_session_blocks(groups))
     }
 
+    #[cfg(test)]
     pub fn rename_group(&mut self, group_name: &str, new_name: &str) -> Result<(), AppError> {
         self.ensure_writable()?;
         validate_text("分组", new_name, 128, false)?;
@@ -614,6 +642,8 @@ mod tests {
             login_save_prompted: false,
         };
         let store = SessionStore {
+            local_sessions: Vec::new(),
+            workspace_order: Vec::new(),
             version: STORE_VERSION,
             sessions: vec![session.clone(), session],
             pending_credential_cleanup_ids: vec![],
@@ -826,6 +856,8 @@ mod tests {
             passphrase_required: false,
         };
         let mut store = SessionStore {
+            local_sessions: Vec::new(),
+            workspace_order: Vec::new(),
             version: STORE_VERSION,
             sessions: vec![session],
             pending_credential_cleanup_ids: vec![],
@@ -865,6 +897,8 @@ mod tests {
         let directory = test_directory("temp-recovery");
         fs::create_dir_all(&directory).expect("无法创建测试目录");
         let store = SessionStore {
+            local_sessions: Vec::new(),
+            workspace_order: Vec::new(),
             version: STORE_VERSION,
             sessions: vec![sample_session("临时恢复")],
             pending_credential_cleanup_ids: vec![],

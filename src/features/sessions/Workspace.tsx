@@ -33,6 +33,7 @@ interface WorkspaceProps {
   loading: boolean;
   openTabs: OpenSessionTab[];
   rightCollapsed: boolean;
+  hideRightPanel?: boolean;
   rightResizeHandle: ReactNode;
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
@@ -103,6 +104,7 @@ export function Workspace({
   onUploadFiles,
   openTabs,
   rightCollapsed,
+  hideRightPanel = false,
   rightResizeHandle,
   shortcuts,
   theme,
@@ -231,7 +233,7 @@ export function Workspace({
 
   return (
     <section
-      className={rightCollapsed ? "workspace-grid right-collapsed" : "workspace-grid"}
+      className={rightCollapsed || hideRightPanel ? "workspace-grid right-collapsed" : "workspace-grid"}
     >
       <div className="session-tabs" onContextMenu={(event) => event.preventDefault()}>
         {openTabs.map((tab) => (
@@ -272,6 +274,11 @@ export function Workspace({
                 }`}
               />
               <span>{tab.session.name}</span>
+              {runtimes[tab.id]?.connection?.local && (
+                <span className="local-admin-badge" title={`${runtimes[tab.id]?.connection?.local?.label} · ${t("local.running")}`}>
+                  {t(runtimes[tab.id]?.connection?.local?.elevated ? "local.admin" : "local.standard")}
+                </span>
+              )}
             </button>
             <button
               aria-label={`${t("sessions.closeTab")} ${tab.session.name}`}
@@ -349,6 +356,7 @@ export function Workspace({
                     onStateChange={onTerminalState}
                     runtimeId={tab.id}
                     session={tab.session}
+                    runAsAdmin={tab.runAsAdmin}
                     shortcuts={shortcuts}
                     theme={theme}
                     terminalColorScheme={terminalColorScheme}
@@ -362,7 +370,7 @@ export function Workspace({
             <div className="workspace-empty">{t("sessions.noSession")}</div>
           ) : null}
         </div>
-        {rightCollapsed && (
+        {rightCollapsed && !hideRightPanel && (
           <TooltipButton
             aria-expanded={false}
             buttonRef={rightToggleRef}
@@ -376,9 +384,9 @@ export function Workspace({
         )}
       </section>
 
-      {!rightCollapsed && rightResizeHandle}
+      {!rightCollapsed && !hideRightPanel && rightResizeHandle}
 
-      {!rightCollapsed && (
+      {!rightCollapsed && !hideRightPanel && (
         <aside className="right-rail">
           <MemoizedFilesPane
             {...fileActions}

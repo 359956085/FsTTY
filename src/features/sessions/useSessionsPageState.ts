@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
+import { isLocalSession, type LocalSessionPayload, type LocalShell } from "../../shared/api/types";
 import type {
   CreateSessionPayload,
-  Session,
-  SessionGroup,
+  WorkspaceSession as Session,
+  WorkspaceSessionGroup as SessionGroup,
   UpdateSessionPayload,
 } from "../../shared/api/types";
 import {
@@ -19,7 +20,8 @@ import {
 } from "./sessionOrdering";
 
 export type SessionDialogState =
-  | { mode: "create"; session?: undefined }
+  | { mode: "choose"; session?: undefined }
+  | { mode: "create"; session?: undefined; localShell?: LocalShell }
   | { mode: "edit"; session: Session }
   | null;
 
@@ -29,6 +31,7 @@ interface SessionTabState {
   id: string;
   sessionId: string;
   autoConnect: boolean;
+  runAsAdmin?: boolean;
 }
 
 export interface OpenSessionTab extends SessionTabState {
@@ -145,7 +148,7 @@ export function useSessionsPageState({
     setLoading(true);
     setError(null);
     try {
-      const nextGroups = await api.listSessions();
+      const nextGroups = await api.listWorkspaceSessions();
       if (requestId.current !== nextRequestId) return;
       const nextSessions = nextGroups.flatMap((group) => group.sessions);
       const validIds = new Set(nextSessions.map((session) => session.id));
@@ -195,13 +198,14 @@ export function useSessionsPageState({
   }, [refreshSessions]);
 
   const openSessionTab = useCallback(
-    (sessionId: string, autoConnect = true) => {
+    (sessionId: string, autoConnect = true, runAsAdmin?: boolean) => {
       const session = sessions.find((item) => item.id === sessionId);
       if (!session) return;
       const tab: SessionTabState = {
         id: crypto.randomUUID(),
         sessionId,
         autoConnect,
+        runAsAdmin,
       };
       applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
     },
@@ -478,6 +482,25 @@ export function useSessionsPageState({
     }
   }
 
+  async function saveLocalSession(payload: LocalSessionPayload) {
+    setError(null);
+    setSaveError(null);
+    try {
+      const saved = await api.saveLocalSession(payload);
+      const next = upsertSessionInGroups(groupsRef.current, saved);
+      groupsRef.current = next;
+      setGroups(next);
+      if (!payload.id) {
+        const tab: SessionTabState = { id: crypto.randomUUID(), sessionId: saved.id, autoConnect: true };
+        applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
+      }
+      setDialogState(null);
+    } catch (error) {
+      setSaveError(resolveApiError(error, errorFallback));
+      throw error;
+    }
+  }
+
   const changeDialogState = useCallback((next: SessionDialogState) => {
     setSaveError(null);
     setDialogState(next);
@@ -487,7 +510,9 @@ export function useSessionsPageState({
     if (!window.confirm(confirmDeleteText)) return null;
     setError(null);
     try {
-      await api.deleteSession(sessionId);
+      const session = sessions.find((item) => item.id === sessionId);
+      if (session && isLocalSession(session)) await api.deleteLocalSession(sessionId);
+      else await api.deleteSession(sessionId);
       const currentTabs = openTabsRef.current;
       const removedIndexes = currentTabs
         .map((tab, index) => (tab.sessionId === sessionId ? index : -1))
@@ -546,6 +571,7 @@ export function useSessionsPageState({
     reorderSession,
     saveError,
     saveSession,
+    saveLocalSession,
     selectTab,
     sessions,
     sessionsReady,
