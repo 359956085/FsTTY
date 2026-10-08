@@ -2,6 +2,17 @@
 
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
+    #[cfg(windows)]
+    if arguments
+        .get(1)
+        .is_some_and(|arg| arg == "--check-webview-runtime")
+    {
+        if let Err(error) = fstty_lib::check_webview_runtime() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if arguments
         .get(1)
         .is_some_and(|arg| arg == "--local-terminal-host")

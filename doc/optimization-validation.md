@@ -276,3 +276,52 @@ C:\FsTTYTests\native-tests.exe conpty_ --ignored --nocapture --test-threads=1
 本地材料位于 `artifacts/local-terminal-validation-20261005/`（Git 忽略）：`verify-all-final.log`、`native-build.log`、`input/run-native-tests.ps1`、`input/native-tests.exe`，以及 `output/native-tests-first.log`、`output/native-tests-first.stderr.log`、`output/native-tests.log`、`output/native-tests.stderr.log` 和 `output/native-result.json`。最终原生测试程序 SHA-256：`01A63F1B293889093703155EDFF9BF0676402576AFE5FD40ABF742C3151866B3`。
 
 验证结束后已关闭本任务创建的专用沙盒；宿主 FsTTY 安装和真实会话保持原状。
+
+## 验收包主窗口启动修复（2026-10-08）
+
+用户在自己的 Windows Sandbox 安装 1.7.2 验收包后，桌面只有后台进程及托盘。日志确认 WebView2 自动发现失败；注册版本 `154.0.4258.53.deleting` 与磁盘运行时 `154.0.4258.62` 不一致。安装器原先以注册值非空判断可用，已改为实际 API 探测及引导安装后的复查；GUI 初始化及主窗口恢复失败补充原生提示。没有修改本地终端、工作区快捷键、权限校验或运行时依赖。
+
+### 自动校验：通过
+
+`npm run verify:all` 退出 0：前端 92 个测试文件、697 项通过；Rust 410 项通过、原有 4 项忽略；版本一致性、TypeScript、ESLint、构建、格式和 Clippy 均通过。修正版 NSIS 验收包构建成功，仍为 Debug，不含正式在线更新签名。
+
+### 当前用户沙箱中的原生检查：通过
+
+| 检查 | 实测结果 |
+| --- | --- |
+| 新增只读运行时探测 | 默认发现退出 1；指定不存在目录退出 1；仅为探测进程指定已有 WebView2 目录退出 0 |
+| 运行时文件 | `msedgewebview2.exe` Authenticode 签名为 Valid，签名者为 Microsoft Corporation |
+| 主窗口恢复 | 使用上述进程环境启动原已安装 FsTTY，窗口标题 `FsTTY`、非零句柄、`IsWindowVisible=true`，6 个 WebView2 子进程；没有仅凭托盘或进程存在判断通过 |
+| 重复启动入口 | 提供的 `sandbox-runtime.ps1` 签名检查通过、退出 0，沿用已有主窗口 |
+
+微软引导安装器返回 `-2147219198`，已有安装器卸载尝试返回 93，未修复系统注册状态。恢复通过 FsTTY 进程环境完成，不持久化环境或改写注册表，不声称 WebView2 重装成功。宿主安装保持原状，用户正在验收的沙箱保持运行。
+
+### 待人工验证
+
+修正版安装包在正常和异常 WebView2 环境中的完整向导、引导安装失败后的提示及旧安装保留、原生启动错误提示、安装后正常启动、真实 UAC，以及前节尚未完成的 GUI 键盘/中文输入法验收仍待验证。当前恢复并未覆盖沙箱安装，因此不能把已恢复主窗口记作修正版 NSIS 完整安装通过。
+
+材料位于 `artifacts/acceptance-package-20261008/`（Git 忽略）：`verify-startup-fix.log`、`build-startup-fix.log`、`diagnostics/startup.txt`、`diagnostics/runtime-probe.json`、`diagnostics/window-check.json`、`package-info-startup-fix.json`、`SHA256SUMS-startup-fix.txt`，以及安装/启动辅助脚本。修正版安装包 SHA-256：`D5F49E31BBFD7ED7EE0A0366BAD8A7B66F0363591CFE0159F52904322C62A7D2`。
+
+## 本地终端启动提示优化（2026-10-08）
+
+统一 CMD、PowerShell、Git Bash 的权限、授权取消、程序缺失、目录、超时、进程/ConPTY/管道及安全校验启动提示。普通启动失败仍直接终止，不自动提权；仅当当前管理员令牌的关联令牌获取失败、且只读类型查询明确为默认令牌时，提示“当前环境无法以普通权限启动终端。请右键会话，选择‘以管理员权限打开’。”。查询失败或关联令牌验证失败使用原因未确定的提示，不判定沙箱或 UAC 设置。正常启动的令牌校验、启动标志、取消和进程回收流程保持。
+
+主进程把错误阶段和原始系统错误/错误码写入既有日志，界面只显示操作指引。host 通过原有字符串错误消息携带诊断，主进程记录后移除；host 在管道建立前失败时也可直接写入既有日志目录，不初始化 GUI 或运行配置迁移。日志不记录凭据、终端输入和输出。`AppError`、IPC 及 host 帧结构保持兼容，无新增依赖。
+
+未运行、普通启动和管理员启动状态分别改为“终端未运行，点击‘启动’。”、“正在启动终端…”及“正在请求管理员权限并启动终端…”，同步英文界面状态；后端错误沿用中文返回。通知、按钮和焦点处理保持原有方式，SSH、安装器及 WebView2 提示本轮未改动。
+
+### 自动测试：通过
+
+- `npm run verify:all` 退出 0：前端 92 个文件、705 项通过；Rust 413 项通过、5 项默认忽略，其中新增 1 项为下面显式运行的隔离权限测试。版本、TypeScript、ESLint、生产构建、格式及 Clippy 均通过。
+- 新增 8 项前端回归：六类启动失败不会自动重试或提权，重试保留启动覆盖并换用新请求，配置、终端输出和焦点保持；中英文普通/管理员启动状态，以及语言更新不重置焦点。原有取消、迟到结果、轻量恢复和 SSH 测试继续通过。
+- 新增 3 项 Rust 自动回归：确认无关联令牌与查询失败分开处理、无效令牌读取使用未知原因提示、host 内部诊断保留原始错误而不进入用户消息。关联令牌验证失败不会宣称环境缺少普通令牌。
+
+### 隔离 Windows 原生检查：通过
+
+在用户当前验收沙箱中只读映射本轮测试程序及运行库，使用独立可写结果目录，显式运行 `standard_launch_without_linked_token_fails_before_creating_host --ignored --nocapture --test-threads=1`，1 项通过、退出 0。实测当前令牌为提权的默认令牌；普通启动调用返回新提示，在创建 host 前拒绝，未发起 UAC 或管理员终端启动。未覆盖沙箱或宿主安装，未关闭用户沙箱。
+
+### 待人工验收与材料
+
+真实普通账户/关联普通令牌启动、UAC 确认与取消，以及新版 GUI 通知显示和安装向导仍待隔离虚拟机人工验收；上述原生检查验证后端分类，不能算作已在 GUI 中看见新提示。
+
+完整校验及构建日志位于 `artifacts/acceptance-package-20261008/verify-local-startup-messages.log`、`build-local-startup-messages.log`；新版验收包为同目录的 `FsTTY_1.7.2_x64-acceptance-startup-messages.exe`，校验值见 `SHA256SUMS-startup-messages.txt`。原生测试及结果位于 `artifacts/local-startup-messages-20261008/`。异常 WebView2 沙箱使用已有 `Install-FsTTY-in-sandbox.cmd`，该辅助入口已指向新版包；先由用户正常关闭当前 FsTTY，再进行安装。

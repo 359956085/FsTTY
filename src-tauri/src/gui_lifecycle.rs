@@ -209,6 +209,8 @@ pub(crate) fn request_main_window(app: &AppHandle) {
                 Ok(None) => return,
                 Err(error) => {
                     log::error!("恢复主窗口失败：{error}");
+                    #[cfg(windows)]
+                    crate::show_gui_error(&format!("恢复主窗口失败：{error}"));
                     return;
                 }
             };
@@ -238,6 +240,11 @@ pub(crate) fn request_app_exit(app: &AppHandle) {
 }
 
 pub(crate) fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    // Do not dispatch window creation into a runtime that cannot create WebViews;
+    // otherwise a hidden tray process can remain after the event-loop error.
+    #[cfg(windows)]
+    crate::check_webview_runtime()
+        .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
     let config = app
         .config()
         .app

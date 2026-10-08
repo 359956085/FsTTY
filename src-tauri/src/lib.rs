@@ -84,7 +84,36 @@ fn keeps_lightweight_background(code: Option<i32>, active: bool) -> bool {
 }
 
 pub fn run_local_terminal_host(arguments: &[String]) -> Result<(), String> {
-    services::local_terminal_service::run_host(arguments)
+    let result = services::local_terminal_service::run_host(arguments);
+    #[cfg(windows)]
+    if let Err(message) = &result {
+        // Record failures before the authenticated pipe is ready as well. Do
+        // not initialize GUI services or run profile migrations in the host.
+        logging::record_local_terminal_host_failure(message);
+    }
+    result
+}
+
+// Use WebView2's discovery API, which also catches an invalid registration or
+// missing runtime files. The installer invokes this before deploying the app.
+#[cfg(windows)]
+pub fn check_webview_runtime() -> Result<String, String> {
+    tauri::webview_version().map_err(|error| {
+        format!("无法加载 Microsoft Edge WebView2 Runtime。请安装或修复 WebView2 Runtime 后重试。\n诊断：{error}")
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn show_gui_error(message: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            fstty_broker::windows::wide(message).as_ptr(),
+            fstty_broker::windows::wide("FsTTY").as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
 }
 
 pub fn run_mcp_stdio() -> Result<(), String> {
@@ -326,8 +355,16 @@ pub fn run() {
             install_app_update,
             close_app_update
         ])
-        .build(tauri::generate_context!())
-        .expect("启动 FsTTY 失败");
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            log::error!("启动 FsTTY 失败：{error}");
+            #[cfg(windows)]
+            show_gui_error(&format!("启动 FsTTY 失败：{error}"));
+            return;
+        }
+    };
     app.run(move |app_handle, event| {
         if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
             let state = app_handle.state::<AppState>().inner().clone();

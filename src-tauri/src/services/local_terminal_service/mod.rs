@@ -4,6 +4,7 @@ mod host;
 #[cfg(windows)]
 mod pipe;
 mod protocol;
+mod startup_errors;
 #[cfg(windows)]
 mod windows;
 
@@ -216,12 +217,12 @@ impl LocalTerminalService {
         let directory = if session.starting_directory.is_empty() {
             std::env::var_os("USERPROFILE")
                 .map(std::path::PathBuf::from)
-                .ok_or_else(|| AppError::Connection("无法确定当前用户主目录".into()))?
+                .ok_or_else(|| AppError::Connection(startup_errors::HOME_DIRECTORY.into()))?
         } else {
             std::path::PathBuf::from(&session.starting_directory)
         };
         if !directory.is_absolute() || !directory.is_dir() {
-            return Err(AppError::Validation("起始目录不存在或无法访问".into()));
+            return Err(AppError::Validation(startup_errors::DIRECTORY.into()));
         }
         let startup = Startup {
             shell: session.shell,
@@ -287,7 +288,8 @@ impl LocalTerminalService {
         channel: Channel<TerminalEvent>,
         cancel: CancellationToken,
     ) -> Result<SshConnection, AppError> {
-        let mut pipe = windows::listener(request_id).map_err(AppError::Connection)?;
+        let mut pipe = windows::listener(request_id)
+            .map_err(|e| AppError::Connection(startup_errors::report(e)))?;
         let nonce = request_id.to_owned();
         let elevated = startup.elevated;
         // ShellExecuteEx may remain in UAC. Dropping the await never abandons a
@@ -297,38 +299,52 @@ impl LocalTerminalService {
         });
         let child = tokio::select! {
             _ = cancel.cancelled() => return Err(AppError::Connection("本地终端启动已取消".into())),
-            result = launch => result.map_err(|_| AppError::Internal("本地终端启动任务失败".into()))?.map_err(AppError::Connection)?,
+            result = launch => result
+                .map_err(|e| AppError::Internal(startup_errors::report(startup_errors::failure("launch-task", e))))?
+                .map_err(|e| AppError::Connection(startup_errors::report(e)))?,
         };
         let handshake = async {
-            pipe.connect().await.map_err(|e| e.to_string())?;
+            pipe.connect()
+                .await
+                .map_err(|e| startup_errors::failure("pipe-connect", e))?;
             windows::verify_client(&pipe, &child.0)?;
             match protocol::receive::<Response>(&mut pipe)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| startup_errors::failure("handshake-read", e))?
             {
                 Response::Hello { nonce } if nonce == request_id => {}
-                _ => return Err("本地终端启动请求不匹配".into()),
+                _ => {
+                    return Err(startup_errors::security(
+                        "handshake",
+                        "unexpected response or nonce mismatch",
+                    ))
+                }
             }
             let directory = startup.directory.clone();
             let shell = startup.shell;
             protocol::send(&mut pipe, &Request::Start(startup))
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| startup_errors::failure("startup-write", e))?;
             match protocol::receive::<Response>(&mut pipe)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| startup_errors::failure("startup-read", e))?
             {
                 Response::Ready {
                     elevated: actual,
                     label,
                 } if actual == elevated => Ok((directory, shell, label)),
                 Response::Error { message } => Err(message),
-                _ => Err("本地终端启动响应无效".into()),
+                _ => Err(startup_errors::security(
+                    "startup-response",
+                    "unexpected response or actual rights mismatch",
+                )),
             }
         };
         let (directory, shell, label) = tokio::select! {
             _ = cancel.cancelled() => return Err(AppError::Connection("本地终端启动已取消".into())),
-            result = tokio::time::timeout(Duration::from_secs(30), handshake) => result.map_err(|_| AppError::Connection("本地终端启动超时".into()))?.map_err(AppError::Connection)?,
+            result = tokio::time::timeout(Duration::from_secs(30), handshake) => result
+                .map_err(|e| AppError::Connection(startup_errors::report(startup_errors::diagnostic(startup_errors::TIMEOUT, "handshake-timeout", e))))?
+                .map_err(|e| AppError::Connection(startup_errors::report(e)))?,
         };
         let connection = SshConnection {
             connection_id: uuid::Uuid::new_v4().to_string(),
@@ -384,7 +400,7 @@ impl LocalTerminalService {
                                 .map_err(|_| "终端界面已关闭".to_owned())?;
                         }
                         Response::Exit { code } => return Ok(code),
-                        Response::Error { message } => return Err(message),
+                        Response::Error { message } => return Err(startup_errors::report(message)),
                         _ => return Err("本地终端返回了无效消息".into()),
                     }
                 }

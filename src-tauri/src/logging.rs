@@ -15,6 +15,19 @@ const LOG_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
     );
 const MANAGED_PREFIXES: [&str; 2] = ["fstty", "mcp-audit"];
 
+#[cfg(windows)]
+pub(crate) fn record_local_terminal_host_failure(message: &str) {
+    if let Some(root) = std::env::var_os("APPDATA") {
+        let mut writer = DailyLogWriter::new(PathBuf::from(root).join("FsTTY/logs"), "fstty");
+        let line = format!(
+            "{} [WARN] 本地终端 host：{}",
+            local_timestamp(),
+            message.replace(['\r', '\n'], " ")
+        );
+        let _ = writer.write_line(line.as_bytes());
+    }
+}
+
 pub struct DailyLogWriter {
     directory: PathBuf,
     prefix: &'static str,

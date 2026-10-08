@@ -255,15 +255,20 @@ Section "安装"
   SetOutPath "$Bootstrap"
   File /oname=fstty.exe "{{main_binary_path}}"
   WriteUninstaller "$Bootstrap\uninstall.exe"
-  ; WebView2 引导程序只从包内释放到受保护目录。
-  ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-  ${If} $0 == ""
-    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-  ${EndIf}
-  ${If} $0 == ""
+  ; 用真实运行时 API 检测，不能将 .deleting 等残留注册值视为可用。
+  nsExec::ExecToStack /TIMEOUT=30000 '"$Bootstrap\fstty.exe" --check-webview-runtime'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    ; WebView2 引导程序只从包内释放到受保护目录。
     File /oname=WebView2Setup.exe "{{webview2_bootstrapper_path}}"
     ExecWait '"$Bootstrap\WebView2Setup.exe" /silent /install' $0
+    ; 安装器返回成功也不代表运行时已可用；失败时不部署无法打开的桌面。
+    nsExec::ExecToStack /TIMEOUT=30000 '"$Bootstrap\fstty.exe" --check-webview-runtime'
+    Pop $0
+    Pop $1
     ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONSTOP "$(WebViewFailed)"
       SetErrorLevel 1
       Abort "$(WebViewFailed)"
     ${EndIf}

@@ -39,7 +39,7 @@ void i18n.use(initReactI18next).init({
           originalsHint: "导入不会删除原私钥文件；原件仍可被同账号程序读取，请自行妥善处理。服务不提供密钥导出，换机或重装系统需重新导入自有原件。",
           states: { stored: "已托管", missing: "缺少凭据", notRequired: "需要导入私钥", migrationRequired: "等待迁移", cleanupPending: "仍有旧副本", serviceUnavailable: "服务不可用" },
         },
-        local: {"notDetected":"未检测到终端","detectAgain":"重新检测","startingDirectory":"起始目录","homeDirectory":"留空使用当前用户主目录","browseDirectory":"选择目录","defaultAdmin":"默认以管理员权限运行","admin":"管理员","standard":"普通权限","stopped":"已停止","openNormal":"以普通权限打开","openAdmin":"以管理员权限打开","start":"启动","starting":"启动中…","waitingAdmin":"等待管理员授权…","stop":"停止","exited":"已退出","restart":"重新启动","manualStart":"标签已打开，请手动启动","running":"运行中","exitCode":"已退出，退出码：{{code}}"},
+        local: {"notDetected":"未检测到终端","detectAgain":"重新检测","startingDirectory":"起始目录","homeDirectory":"留空使用当前用户主目录","browseDirectory":"选择目录","defaultAdmin":"默认以管理员权限运行","admin":"管理员","standard":"普通权限","stopped":"已停止","openNormal":"以普通权限打开","openAdmin":"以管理员权限打开","start":"启动","starting":"正在启动终端…","waitingAdmin":"正在请求管理员权限并启动终端…","stop":"停止","exited":"已退出","restart":"重新启动","manualStart":"终端未运行，点击‘启动’。","running":"运行中","exitCode":"已退出，退出码：{{code}}"},
         common: {
           loading: "加载中...",
         },
@@ -547,7 +547,7 @@ void i18n.use(initReactI18next).init({
           originalsHint: "Import preserves original key files, which remain readable by other programs under your account. Handle originals separately. The service does not export keys; retain your own originals for a new computer or OS installation.",
           states: { stored: "Managed", missing: "Credentials missing", notRequired: "Key import required", migrationRequired: "Migration required", cleanupPending: "Legacy copies remain", serviceUnavailable: "Service unavailable" },
         },
-        local: {"notDetected":"Terminal not detected","detectAgain":"Detect again","startingDirectory":"Starting directory","homeDirectory":"Leave empty to use your home directory","browseDirectory":"Choose directory","defaultAdmin":"Run as administrator by default","admin":"Administrator","standard":"Standard","stopped":"Stopped","openNormal":"Open with standard rights","openAdmin":"Open as administrator","start":"Start","starting":"Starting…","waitingAdmin":"Waiting for administrator approval…","stop":"Stop","exited":"Exited","restart":"Restart","manualStart":"Tab restored. Start the terminal manually.","running":"Running","exitCode":"Exited with code {{code}}"},
+        local: {"notDetected":"Terminal not detected","detectAgain":"Detect again","startingDirectory":"Starting directory","homeDirectory":"Leave empty to use your home directory","browseDirectory":"Choose directory","defaultAdmin":"Run as administrator by default","admin":"Administrator","standard":"Standard","stopped":"Stopped","openNormal":"Open with standard rights","openAdmin":"Open as administrator","start":"Start","starting":"Starting terminal…","waitingAdmin":"Requesting administrator rights and starting terminal…","stop":"Stop","exited":"Exited","restart":"Restart","manualStart":"Terminal is not running. Click ‘Start’.","running":"Running","exitCode":"Exited with code {{code}}"},
         common: {
           loading: "Loading...",
         },

@@ -2,6 +2,7 @@ use super::{
     discovery,
     pipe::DuplexPipe,
     protocol::{self, Request, Response, Startup},
+    startup_errors as startup,
     windows::{self, Handle},
 };
 use std::{
@@ -87,14 +88,20 @@ fn open_parent_pipe(parent_id: u32, nonce: &str) -> Result<(DuplexPipe, Arc<Hand
         return Err(windows::error("本地终端父进程已退出"));
     }
     windows::verify_image(parent.0)?;
-    let pipe =
-        DuplexPipe::connect(&windows::pipe_name(nonce)).map_err(|error| error.to_string())?;
+    let pipe = DuplexPipe::connect(&windows::pipe_name(nonce))
+        .map_err(|e| startup::failure("host-pipe-connect", e))?;
     let mut server = 0;
-    if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut server) } == 0
-        || server != parent_id
-        || unsafe { WaitForSingleObject(parent.0, 0) } != WAIT_TIMEOUT
-    {
-        return Err("本地终端父进程身份不匹配".into());
+    if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut server) } == 0 {
+        return Err(startup::security(
+            "pipe-server-query",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    if server != parent_id || unsafe { WaitForSingleObject(parent.0, 0) } != WAIT_TIMEOUT {
+        return Err(startup::security(
+            "pipe-server",
+            "PID mismatch or parent exited",
+        ));
     }
     Ok((pipe, parent))
 }
@@ -113,10 +120,15 @@ pub(super) fn run(arguments: &[String]) -> Result<(), String> {
         WaitForSingleObject(parent.0, INFINITE);
         TerminateProcess(GetCurrentProcess(), 1);
     });
-    protocol::write(&mut pipe, &Response::Hello { nonce }).map_err(|e| e.to_string())?;
-    let request: Request = protocol::read(&mut pipe).map_err(|e| e.to_string())?;
+    protocol::write(&mut pipe, &Response::Hello { nonce })
+        .map_err(|e| startup::failure("host-hello", e))?;
+    let request: Request =
+        protocol::read(&mut pipe).map_err(|e| startup::failure("host-startup-read", e))?;
     let Request::Start(startup) = request else {
-        return Err("本地终端启动顺序无效".into());
+        return Err(startup::security(
+            "host-startup-order",
+            "unexpected request",
+        ));
     };
     match serve(&mut pipe, startup) {
         Ok(()) => Ok(()),
@@ -136,14 +148,25 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     if !protocol::dimensions(startup.columns, startup.rows)
         || startup.directory.len() > 4096
         || startup.directory.chars().any(char::is_control)
-        || !std::path::Path::new(&startup.directory).is_absolute()
+    {
+        return Err(startup::failure(
+            "host-startup-validation",
+            "invalid directory encoding or dimensions",
+        ));
+    }
+    if !std::path::Path::new(&startup.directory).is_absolute()
         || !std::path::Path::new(&startup.directory).is_dir()
     {
-        return Err("本地终端起始目录或尺寸无效".into());
+        return Err(startup::diagnostic(
+            startup::DIRECTORY,
+            "host-directory",
+            "not an accessible absolute directory",
+        ));
     }
-    let identity = fstty_broker::windows::current_identity()?;
+    let identity = fstty_broker::windows::current_identity()
+        .map_err(|e| startup::security("host-identity", e))?;
     if identity.elevated != startup.elevated {
-        return Err("本地终端实际权限与请求不一致".into());
+        return Err(startup::security("host-rights", "actual rights mismatch"));
     }
     let program = discovery::resolve(startup.shell)?;
     let (input_read, mut input_write) = anonymous_pipe()?;
@@ -163,7 +186,10 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
         )
     };
     if hr < 0 {
-        return Err(format!("无法创建 ConPTY（{hr:#x}）"));
+        return Err(startup::failure(
+            "conpty-create",
+            format!("HRESULT={hr:#x}"),
+        ));
     }
     let console = PseudoConsole(raw_console);
     // The ignore-Ctrl+C process attribute is inherited by child processes.
@@ -256,7 +282,7 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
             label: program.label,
         },
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| startup::failure("host-ready-write", e))?;
     let mut output_pipe = pipe.clone();
     let (exit_tx, exit_rx) = mpsc::sync_channel(1);
     let writer = std::thread::spawn(move || {

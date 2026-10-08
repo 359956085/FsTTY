@@ -102,7 +102,7 @@ fn candidate(
             label: label.into(),
             args,
         })
-        .ok_or_else(|| format!("未检测到 {label}，安装后可重新检测"))
+        .ok_or_else(|| format!("未检测到 {label}。安装或修复后，请点击“重新检测”。"))
 }
 fn path_programs(name: &str) -> impl Iterator<Item = PathBuf> {
     std::env::var_os("PATH")

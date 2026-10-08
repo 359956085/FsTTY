@@ -7,11 +7,13 @@ import type {
   PreservedTerminalAttachment, Session, ShortcutSettings, TerminalEvent, TerminalResumeEvent,
 } from "../../shared/api/types";
 import { TerminalPane } from "./TerminalPane";
+import i18n from "../../shared/i18n";
 import {
   enterLightweightMode, hasPreservedTerminal, initializeLightweightMode,
 } from "../lightweight/lightweightMode";
 
 interface TestChannel<T> { onmessage(event: T): void }
+const translationMocks = vi.hoisted(() => ({ language: null as "zh" | "en" | null }));
 
 const apiMocks = vi.hoisted(() => ({
   connectSession: vi.fn(),
@@ -55,8 +57,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  useTranslation: () => ({ t: (key: string) => translationMocks.language ? i18n.getFixedT(translationMocks.language)(key) : key }),
 }));
 
 vi.mock("../../shared/api/client", () => ({ api: apiMocks }));
@@ -141,6 +144,7 @@ describe("终端面板连接", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
+    translationMocks.language = null;
     vi.clearAllMocks();
     runtimeMocks.focus.mockReset();
     initializeLightweightMode({
@@ -701,6 +705,61 @@ describe("终端面板连接", () => {
     view.rerenderTerminal({ visible: true });
     expect(apiMocks.startLocalTerminal).not.toHaveBeenCalled(); expect(runtimeMocks.dispose).not.toHaveBeenCalled();
     view.unmount();
+  });
+
+  it.each([
+    "当前环境无法以普通权限启动终端。请右键会话，选择“以管理员权限打开”。",
+    "已取消管理员授权，终端未启动。点击“启动”可重试。",
+    "起始目录不存在或无法访问。请编辑会话，选择可用目录，或留空使用用户主目录。",
+    "未检测到 Git Bash。安装或修复后，请点击“重新检测”。",
+    "本地终端启动超时。请重试；如仍失败，请查看日志。",
+    "本地终端安全校验失败，启动已停止。请查看日志。",
+  ])("本地启动失败保留标签、权限配置及输出，并允许重试：%s", async (message) => {
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "C:\\Draft", runAsAdmin: true };
+    apiMocks.startLocalTerminal.mockRejectedValueOnce({ kind: "connection", message });
+    const view = renderPreservedTerminal({ session: local, autoConnect: true, runAsAdmin: false });
+    await waitFor(() => expect(view.onStateChange).toHaveBeenCalledWith("runtime-preserved", "error", message));
+    view.rerenderTerminal({ connectionState: "error" });
+    expect(screen.getByText("local.manualStart")).toBeTruthy();
+    const start = screen.getByRole("button", { name: "local.start" });
+    start.focus();
+    view.rerenderTerminal({ connectionState: "error", session: { ...local } });
+    expect(document.activeElement).toBe(start);
+    expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+    expect(runtimeMocks.reset).not.toHaveBeenCalled();
+    expect(local.runAsAdmin).toBe(true);
+    expect(local.startingDirectory).toBe("C:\\Draft");
+    expect(view.onConnected).not.toHaveBeenCalled();
+    // Failure must not automatically retry or escalate the request.
+    expect(apiMocks.startLocalTerminal).toHaveBeenCalledOnce();
+    fireEvent.click(start);
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBe(false);
+    expect(apiMocks.startLocalTerminal.mock.calls[1][5]).not.toBe(apiMocks.startLocalTerminal.mock.calls[0][5]);
+    view.unmount();
+  });
+
+  it.each(["zh", "en"] as const)("%s 本地启动状态准确，语言更新不重置焦点", async (language) => {
+    translationMocks.language = language;
+    const t = i18n.getFixedT(language);
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: false };
+    const view = renderPreservedTerminal({ session: local });
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    const start = screen.getByRole("button", { name: t("local.start") });
+    expect(screen.getByText(t("local.manualStart"))).toBeTruthy();
+    start.focus();
+    translationMocks.language = language === "zh" ? "en" : "zh";
+    view.rerenderTerminal({ theme: "light" });
+    expect(document.activeElement).toBe(start);
+    translationMocks.language = language;
+    view.rerenderTerminal({ connectionState: "connecting" });
+    expect(screen.getAllByText(t("local.starting")).length).toBeGreaterThan(0);
+    view.unmount();
+    const admin = renderPreservedTerminal({ session: { ...local, runAsAdmin: true } });
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledTimes(2));
+    admin.rerenderTerminal({ connectionState: "connecting" });
+    expect(screen.getByText(t("local.waitingAdmin"))).toBeTruthy();
+    admin.unmount();
   });
 
   it("本地轻量恢复接回原通道，不启动进程或请求 UAC", async () => {

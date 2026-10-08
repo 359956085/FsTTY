@@ -80,6 +80,18 @@ powershell -NoProfile -File scripts/test-windows-installation.ps1 -Mode AssertUn
 
 本次自动验证通过前端 417 项、Rust 337 项，另有 2 项原有忽略测试。双账号测试位于同一沙盒桌面会话；实际 UAC 交互、快速用户切换或跨远程桌面会话、带发布签名的在线升级与更多失败回滚场景仍需验收。当前工作环境的正式安装没有被替换。
 
+## WebView2 启动失败排查（2026-10-08）
+
+若只有托盘及后台进程而没有主窗口，先查看 `%APPDATA%\FsTTY\logs` 中是否有 `Could not find the webview runtime`。本次 Windows Sandbox 的 WebView2 注册版本为 `154.0.4258.53.deleting`，磁盘上却有有效的 `154.0.4258.62` 运行时；旧安装器只判断注册字符串非空，误判为已安装。此故障取决于运行时状态，不能推断所有沙箱或普通 Windows 都会发生。
+
+安装器改为运行受保护暂存目录内桌面的内部只读命令 `--check-webview-runtime`，通过 WebView2 API 判断可用性。不可用时运行包内微软引导安装器，随后再次检测；仍不可用则在部署桌面前终止。桌面创建主窗口前也检测运行时，初始化或恢复失败显示原生错误提示，避免只留下日志和无窗口进程。该检测入口不初始化 GUI、单实例、MCP 或凭据服务。检测方式参考 [Microsoft WebView2 分发文档](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。
+
+本次异常沙箱中，微软引导安装器未能修复注册状态。仅在该隔离环境中，验收目录的 `Start-FsTTY-in-sandbox.cmd` 调用同目录的 `sandbox-runtime.ps1`，检查已有 WebView2 程序的微软签名并为新进程设置 `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`，随后启动有效安装。设置只随该次进程继承，不写系统环境变量或注册表，不用于生产环境固定运行时版本。重复启动已验证可激活现有主窗口。
+
+修正版验收包为 `artifacts/acceptance-package-20261008/FsTTY_1.7.2_x64-acceptance-startup-fix.exe`。在当前异常沙箱中更新时，先正常关闭 FsTTY，再从映射目录 `C:\FsTTYAcceptance` 双击 `Install-FsTTY-in-sandbox.cmd`，由用户完成安装向导；该入口为安装器及后续桌面传递同一进程环境。以后从 `Start-FsTTY-in-sandbox.cmd` 启动。普通环境直接使用修正版安装包，缺失运行时需联网安装。不要把这两个沙箱辅助脚本替换为系统级运行时设置。
+
+自动校验和实际 API 探测已通过；修正版安装器的完整向导、安装后启动及真实 UAC 流程仍待人工验收。本次实际恢复的是沙箱中原已安装版本的主窗口，没有替换宿主安装，也没有覆盖用户正在使用的沙箱桌面进程。
+
 ## 依赖审计
 
 2026-09-15：将 `rustls` 更新至 `0.23.45`，修复 RUSTSEC-2026-0285；`chacha20`、`wnaf` 分别更新至 `0.10.2`、`0.14.1`，移除撤回版本。`cargo audit --file src-tauri/Cargo.lock` 返回成功，未新增豁免。Tauri 间接依赖的维护状态和 glib 提示继续显示，未隐藏或改成忽略。
