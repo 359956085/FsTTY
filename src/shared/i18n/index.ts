@@ -40,6 +40,7 @@ void i18n.use(initReactI18next).init({
           states: { stored: "已托管", missing: "缺少凭据", notRequired: "需要导入私钥", migrationRequired: "等待迁移", cleanupPending: "仍有旧副本", serviceUnavailable: "服务不可用" },
         },
         local: {"notDetected":"未检测到终端","detectAgain":"重新检测","startingDirectory":"起始目录","homeDirectory":"留空使用当前用户主目录","browseDirectory":"选择目录","defaultAdmin":"默认以管理员权限运行","admin":"管理员","standard":"普通权限","stopped":"已停止","openNormal":"以普通权限打开","openAdmin":"以管理员权限打开","start":"启动","starting":"正在启动终端…","waitingAdmin":"正在请求管理员权限并启动终端…","stop":"停止","exited":"已退出","restart":"重新启动","manualStart":"终端未运行，点击‘启动’。","running":"运行中","exitCode":"已退出，退出码：{{code}}"},
+        tabStatus: { notRunning: "未运行", stopping: "正在停止终端…", failed: "终端异常" },
         common: {
           loading: "加载中...",
         },
@@ -309,6 +310,7 @@ void i18n.use(initReactI18next).init({
           shortcutCommandHistory: "终端命令历史列表",
           shortcutCommandHistorySearch: "终端命令历史搜索",
           shortcutNewSession: "新建会话", shortcutNextTab: "下一个标签", shortcutPreviousTab: "上一个标签", shortcutUnbound: "未设置", shortcutClear: "清除 {{action}}", shortcutClearLabel: "清除",
+          shortcutClearHint: "清除快捷键",
           shortcutRestoreAll: "全部恢复默认",
           shortcutRestore: "恢复{{action}}默认快捷键",
           shortcutEdit: "修改{{action}}快捷键",
@@ -577,6 +579,7 @@ void i18n.use(initReactI18next).init({
           updateBusy: "An update is downloading or installing",
           retryRestore: "Retry finishing restore",
         },
+        tabStatus: { notRunning: "Not running", stopping: "Stopping terminal…", failed: "Terminal error" },
         sessions: {
           title: "SESSIONS",
           new: "New",
@@ -828,6 +831,7 @@ void i18n.use(initReactI18next).init({
           shortcutCommandHistory: "History list",
           shortcutCommandHistorySearch: "History search",
           shortcutNewSession: "New session", shortcutNextTab: "Next tab", shortcutPreviousTab: "Previous tab", shortcutUnbound: "Not set", shortcutClear: "Clear {{action}}", shortcutClearLabel: "Clear",
+          shortcutClearHint: "Clear shortcut",
           shortcutRestoreAll: "Restore all defaults",
           shortcutRestore: "Restore the default shortcut for {{action}}",
           shortcutEdit: "Change the shortcut for {{action}}",

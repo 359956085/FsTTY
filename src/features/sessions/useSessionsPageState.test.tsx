@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionGroup } from "../../shared/api/types";
 import { useSessionsPageState } from "./useSessionsPageState";
+import { readWorkspacePreferences, updateWorkspacePreferences } from "./workspacePreferences";
 
 const mocks = vi.hoisted(() => ({
   listWorkspaceSessions: vi.fn(),
@@ -60,6 +61,45 @@ beforeEach(() => {
 });
 
 describe("会话列表异步生命周期", () => {
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 标签权限独立于默认值并随重启恢复", async (shell) => {
+    const local = { kind: "local" as const, id: "local", name: "Local", group: "默认", tags: [], shell, startingDirectory: "", runAsAdmin: true };
+    mocks.listWorkspaceSessions.mockResolvedValue([{ name: "默认", sessions: [local] }]);
+    mocks.saveLocalSession.mockResolvedValue({ ...local, runAsAdmin: false });
+    const options = { confirmDeleteText: "delete", errorFallback: "error" };
+    const view = renderHook(() => useSessionsPageState(options));
+    await waitFor(() => expect(view.result.current.sessionsReady).toBe(true));
+    act(() => { view.result.current.openSessionTab(local.id); view.result.current.openSessionTab(local.id, true, false); });
+    await act(async () => { await view.result.current.saveLocalSession({ ...local, runAsAdmin: false }); });
+    act(() => view.result.current.openSessionTab(local.id));
+    expect(view.result.current.openSessionTabs.map(tab => tab.runAsAdmin)).toEqual([true, false, false]);
+    expect(view.result.current.sessions[0]).toMatchObject({ runAsAdmin: false });
+    const stored = readWorkspacePreferences().tabs;
+    view.unmount();
+    mocks.listWorkspaceSessions.mockResolvedValue([{ name: "默认", sessions: [{ ...local, runAsAdmin: false }] }]);
+    const restored = renderHook(() => useSessionsPageState(options));
+    await waitFor(() => expect(restored.result.current.sessionsReady).toBe(true));
+    expect(restored.result.current.openSessionTabs.map(tab => tab.runAsAdmin)).toEqual([true, false, false]);
+    expect(restored.result.current.openSessionTabs.every(tab => !tab.autoConnect)).toBe(true);
+    expect(readWorkspacePreferences().tabs).toEqual(stored);
+  });
+
+  it("旧标签补齐默认权限，实际权限校正只影响对应标签并忽略失效身份", async () => {
+    const local = { kind: "local" as const, id: "local", name: "CMD", group: "默认", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
+    updateWorkspacePreferences({ tabs: { openTabs: [{ id: "a", sessionId: "local" }, { id: "b", sessionId: "local", runAsAdmin: false }, { id: "ssh", sessionId: "ssh", runAsAdmin: true }] } });
+    mocks.listWorkspaceSessions.mockResolvedValue([{ name: "默认", sessions: [local, session("ssh", "默认")] }]);
+    const { result } = renderHook(() => useSessionsPageState({ confirmDeleteText: "delete", errorFallback: "error" }));
+    await waitFor(() => expect(result.current.sessionsReady).toBe(true));
+    expect(result.current.openSessionTabs.map(tab => tab.runAsAdmin)).toEqual([true, false, undefined]);
+    act(() => {
+      result.current.updateLocalTabPermission("b", "local", true);
+      result.current.updateLocalTabPermission("a", "wrong", false);
+      result.current.updateLocalTabPermission("ssh", "ssh", true);
+      result.current.updateLocalTabPermission("missing", "local", true);
+    });
+    expect(result.current.openSessionTabs.map(tab => tab.runAsAdmin)).toEqual([true, true, undefined]);
+    expect(readWorkspacePreferences().tabs.openTabs[1].runAsAdmin).toBe(true);
+  });
+
   it("本地配置保存后新建标签，重复打开独立标签，编辑仅更新配置", async () => {
     const local = { kind: "local" as const, id: "local", name: "CMD", group: "默认", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
     mocks.listWorkspaceSessions.mockResolvedValue(groups("ssh"));
@@ -68,6 +108,7 @@ describe("会话列表异步生命周期", () => {
     await waitFor(() => expect(result.current.sessionsReady).toBe(true));
     await act(async () => { await result.current.saveLocalSession({ name: "CMD", group: "默认", shell: "cmd", startingDirectory: "", runAsAdmin: true }); });
     expect(result.current.openSessionTabs).toHaveLength(1); expect(result.current.openSessionTabs[0].autoConnect).toBe(true);
+    expect(result.current.openSessionTabs[0].runAsAdmin).toBe(true);
     const first = result.current.openSessionTabs[0].id;
     act(() => result.current.openSessionTab(local.id, true, false));
     expect(result.current.openSessionTabs).toHaveLength(2); expect(result.current.openSessionTabs[1].id).not.toBe(first); expect(result.current.openSessionTabs[1].runAsAdmin).toBe(false);

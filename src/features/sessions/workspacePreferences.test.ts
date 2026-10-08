@@ -10,6 +10,24 @@ import {
 
 beforeEach(() => window.localStorage.clear());
 
+describe("标签权限快照兼容", () => {
+  it("保留普通和管理员快照，布局更新不覆盖标签", () => {
+    const openTabs = [{ id: "a", sessionId: "local", runAsAdmin: false }, { id: "b", sessionId: "local", runAsAdmin: true }];
+    updateWorkspacePreferences({ tabs: { openTabs, activeTabId: "b" } });
+    updateWorkspacePreferences({ layout: { leftWidth: 320 } });
+    expect(readWorkspacePreferences().tabs).toEqual({ openTabs, activeTabId: "b" });
+  });
+  it("旧记录及非法快照保留标签但不推断管理员权限", () => {
+    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({ tabs: { openTabs: [
+      { id: "old", sessionId: "local" }, { id: "bad", sessionId: "local", runAsAdmin: "true" },
+      { id: "null", sessionId: "local", runAsAdmin: null },
+    ] } }));
+    expect(readWorkspacePreferences().tabs.openTabs).toEqual([
+      { id: "old", sessionId: "local" }, { id: "bad", sessionId: "local" }, { id: "null", sessionId: "local" },
+    ]);
+  });
+});
+
 describe("normalizeCollapsedGroupNames", () => {
   it("去重并保留合法分组名称的原始顺序", () => {
     expect(

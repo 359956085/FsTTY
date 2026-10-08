@@ -200,8 +200,8 @@ describe("主题样式契约", () => {
     );
     expectRuleUses(
       sessionsCss,
-      ".sessions-page > .resize-handle-vertical",
-      "background: linear-gradient\\(to right, transparent 1px, var\\(--workspace-resize-divider\\) 1px 3px, transparent 3px\\)",
+      ".sessions-page > .session-sidebar-resizer",
+      "background: transparent",
     );
     expectRuleUses(
       sessionsCss,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MouseEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, type MouseEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFormDialog } from "./SessionFormDialog";
@@ -16,7 +16,7 @@ import {
 import { useSessionsPageState } from "./useSessionsPageState";
 import { Workspace } from "./Workspace";
 import { WORKSPACE_LAYOUT_LIMITS } from "./workspacePreferences";
-import type { FileEntry, ShortcutSettings, TerminalColorScheme } from "../../shared/api/types";
+import type { FileEntry, ShortcutSettings, SshConnection, TerminalColorScheme } from "../../shared/api/types";
 import type { ResolvedTheme } from "../../shared/theme";
 import { useLightweightRestore } from "../lightweight/useLightweightRestore";
 
@@ -92,6 +92,13 @@ export function SessionsPage({
   const activeRuntime = sessionsState.activeTabId
     ? connections.runtimes[sessionsState.activeTabId] ?? createRuntime()
     : createRuntime();
+
+  const { handleConnected: applyConnection } = connections;
+  const { updateLocalTabPermission } = sessionsState;
+  const handleConnected = useCallback((tabId: string, connection: SshConnection) => {
+    applyConnection(tabId, connection);
+    if (connection.local) updateLocalTabPermission(tabId, connection.sessionId, connection.local.elevated);
+  }, [applyConnection, updateLocalTabPermission]);
 
   function openCreateSession(event: MouseEvent<HTMLButtonElement>) {
     dialogReturnFocusRef.current = event.currentTarget;
@@ -190,6 +197,7 @@ export function SessionsPage({
       )}
 
       {!layout.leftCollapsed && <ResizeHandle
+        className="session-sidebar-resizer"
         ariaLabel={t("sessions.resizeLeft")}
         onKeyboardResize={(direction) => adjustResize("left", direction)}
         onPointerDown={(event) => beginResize("left", event)}
@@ -209,7 +217,7 @@ export function SessionsPage({
         onRetryRestore={restore.error ? restore.retry : undefined}
         loading={sessionsState.loading}
         onCloseTab={(tabId) => void closeTab(tabId)}
-        onConnected={connections.handleConnected}
+        onConnected={handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}
         onCreateRemoteDirectory={connections.createRemoteDirectory}
         onCreateSession={openCreateSession}

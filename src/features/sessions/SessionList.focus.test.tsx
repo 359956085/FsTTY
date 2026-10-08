@@ -38,6 +38,46 @@ function open(kind: "rename" | "delete") {
 }
 
 describe("会话与分组键盘体验", () => {
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 第二行只显示默认权限，配置编辑更新文案，临时打开不改变默认值", (shell) => {
+    const onOpen = vi.fn();
+    const session = { kind: "local" as const, id: shell, name: "Dev", shell, group: "Local", tags: [], startingDirectory: "C:\\隔离 工作区", runAsAdmin: false };
+    const view = setup({ groups: [{ name: "Local", sessions: [session] }], onOpen });
+    const metadata = () => screen.getByText("Dev").closest("button")!.querySelector(".session-meta")!.textContent;
+    expect(metadata()).toBe("local.standard");
+    fireEvent.contextMenu(screen.getByText("Dev")); fireEvent.click(screen.getByRole("menuitem", { name: "local.openAdmin" }));
+    expect(onOpen).toHaveBeenLastCalledWith(shell, true, true); expect(metadata()).toBe("local.standard");
+    view.update({ groups: [{ name: "Local", sessions: [{ ...session, runAsAdmin: true }] }] });
+    expect(metadata()).toBe("local.admin");
+    fireEvent.contextMenu(screen.getByText("Dev")); fireEvent.click(screen.getByRole("menuitem", { name: "local.openNormal" }));
+    expect(onOpen).toHaveBeenLastCalledWith(shell, true, false); expect(metadata()).toBe("local.admin");
+  });
+  it.each(["PowerShell", "C:\\隔离 工作区"])("本地列表不展示类型与目录，但仍可搜索 %s", (query) => {
+    setup({ query, groups: [{ name: "Local", sessions: [{ kind: "local", id: "local", name: "Dev", shell: "powershell", group: "Local", tags: [],
+      startingDirectory: "C:\\隔离 工作区", runAsAdmin: false }] }] });
+    expect(screen.getByText("Dev").closest("button")!.querySelector(".session-meta")!.textContent).toBe("local.standard");
+    expect(screen.queryByText("sessions.noMatches")).toBeNull();
+  });
+  it("混合会话使用对应装饰图标，收藏与右键入口仍锚定会话行", () => {
+    const favorite = vi.fn(); const onOpen = vi.fn(); const edit = vi.fn();
+    const ssh = group("SSH").sessions[0];
+    const locals = (["cmd", "powershell", "gitBash"] as const).map(shell => ({
+      kind: "local" as const, id: shell, name: `Local-${shell}`, shell, group: "Mixed", tags: [], startingDirectory: "", runAsAdmin: false,
+    }));
+    const entries = [ssh, ...locals];
+    setup({ groups: [{ name: "Mixed", sessions: entries }], onToggleFavorite: favorite, onOpen, onEdit: edit });
+    for (const [index, session] of entries.entries()) {
+      const row = screen.getByText(session.name).closest("button")!;
+      const icon = row.querySelector("svg")!;
+      expect(icon.getAttribute("data-session-type")).toBe(index === 0 ? "ssh" : locals[index - 1].shell);
+      expect(icon.getAttribute("aria-hidden")).toBe("true"); expect(icon.hasAttribute("tabindex")).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: `sessions.filterFavorites ${session.name}` }));
+      expect(favorite).toHaveBeenLastCalledWith(session.id);
+      fireEvent.contextMenu(icon); fireEvent.click(screen.getByRole("menuitem", { name: index === 0 ? "sessions.contextConnect" : "local.start" }));
+      expect(onOpen).toHaveBeenLastCalledWith(session.id);
+      act(() => row.focus()); key("ContextMenu"); fireEvent.click(screen.getByRole("menuitem", { name: "sessions.edit" }));
+      expect(edit).toHaveBeenLastCalledWith(session.id, row);
+    }
+  });
   it("会话支持 Shift+F10，编辑使用会话行作为返回焦点目标", () => {
     const edit = vi.fn(); setup({ onEdit: edit });
     const session = screen.getByRole("button", { name: "Session-Bfocus.invalid" });

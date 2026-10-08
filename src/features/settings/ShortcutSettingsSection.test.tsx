@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "../../shared/api/types";
 import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
@@ -13,12 +14,15 @@ vi.mock("../../shared/api/client", () => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string, options?: { action: string }) =>
+    key === "settings.shortcutClear" ? `${key} ${options?.action}` : key }),
 }));
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
@@ -42,10 +46,73 @@ function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
 }
 
 describe("ShortcutSettingsSection", () => {
+  it.each([
+    ["newSession", "settings.shortcutNewSession"],
+    ["nextTab", "settings.shortcutNextTab"],
+    ["previousTab", "settings.shortcutPreviousTab"],
+  ] as const)("%s 的图标清除按钮保留操作名称、去重及恢复默认", async (action, label) => {
+    let resolve!: (value: AppSettings) => void;
+    mocks.updateShortcutSettings.mockReturnValueOnce(new Promise<AppSettings>((done) => { resolve = done; }));
+    const onChange = vi.fn();
+    const view = render(<ShortcutSettingsSection onChange={onChange} settings={DEFAULT_SHORTCUTS} />);
+    const clear = screen.getByRole("button", { name: `settings.shortcutClear ${label}` }) as HTMLButtonElement;
+    expect(clear.textContent).toBe("");
+    expect(clear.querySelector('svg[aria-hidden="true"]')?.getAttribute("width")).toBe("14");
+    fireEvent.click(clear);
+    fireEvent.click(clear);
+    expect(clear.disabled).toBe(true);
+    expect(screen.getAllByRole("button", { name: /^settings.shortcutClear / }).every(button => (button as HTMLButtonElement).disabled)).toBe(true);
+    expect(mocks.updateShortcutSettings).toHaveBeenCalledExactlyOnceWith({ ...DEFAULT_SHORTCUTS, [action]: null });
+    const cleared = { ...DEFAULT_SHORTCUTS, [action]: null };
+    await act(async () => { resolve(appSettings(cleared)); });
+    expect(onChange).toHaveBeenCalledWith(appSettings(cleared));
+    view.rerender(<ShortcutSettingsSection onChange={onChange} settings={cleared} />);
+    expect(clear.disabled).toBe(true);
+    const row = clear.closest(".settings-shortcut-row")!;
+    expect(row.querySelector(".settings-shortcut-key")?.textContent).toBe("settings.shortcutUnbound");
+    mocks.updateShortcutSettings.mockResolvedValueOnce(appSettings());
+    fireEvent.click(row.querySelector('button[title="settings.shortcutRestore"]')!);
+    await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith(DEFAULT_SHORTCUTS));
+  });
+
+  it("清除保存失败保留绑定和按钮焦点，允许重试", async () => {
+    mocks.updateShortcutSettings.mockRejectedValueOnce(new Error("保存失败"));
+    const onChange = vi.fn();
+    render(<ShortcutSettingsSection onChange={onChange} settings={DEFAULT_SHORTCUTS} />);
+    const clear = screen.getByRole("button", { name: "settings.shortcutClear settings.shortcutNewSession" }) as HTMLButtonElement;
+    clear.focus();
+    fireEvent.click(clear);
+    expect((await screen.findByRole("alert")).textContent).toContain("保存失败");
+    expect(document.activeElement).toBe(clear);
+    expect(clear.disabled).toBe(false);
+    expect(clear.closest(".settings-shortcut-row")?.querySelector(".settings-shortcut-key")?.textContent).toBe("Ctrl+Shift+T");
+    expect(onChange).not.toHaveBeenCalled();
+    mocks.updateShortcutSettings.mockResolvedValueOnce(appSettings({ ...DEFAULT_SHORTCUTS, newSession: null }));
+    fireEvent.click(clear);
+    await waitFor(() => expect(onChange).toHaveBeenCalledOnce());
+  });
+
+  it("键盘焦点显示动作提示，StrictMode 卸载清理延迟提示", () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLElement.prototype, "matches").mockImplementation(function (this: HTMLElement, selector) {
+      return selector === ":focus-visible" || Element.prototype.matches.call(this, selector);
+    });
+    const view = render(<StrictMode><ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} /></StrictMode>);
+    const clear = screen.getByRole("button", { name: "settings.shortcutClear settings.shortcutNextTab" });
+    void act(() => clear.focus());
+    expect(screen.getByRole("tooltip").textContent).toBe("settings.shortcutClearHint");
+    fireEvent.keyDown(clear, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.pointerEnter(clear, { pointerType: "mouse" });
+    view.unmount();
+    void act(() => vi.runAllTimers());
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
   it("工作区绑定可清除和录制 Tab，组合输入不更改绑定", async () => {
     mocks.updateShortcutSettings.mockResolvedValue(appSettings());
     const { rerender } = render(<ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "settings.shortcutClear" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /^settings.shortcutClear / })[0]);
     await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenCalledWith({ ...DEFAULT_SHORTCUTS, newSession: null }));
     rerender(<ShortcutSettingsSection onChange={vi.fn()} settings={{ ...DEFAULT_SHORTCUTS, newSession: null }} />);
     await waitFor(() => expect((screen.getAllByRole("button", { name: "settings.shortcutEdit" })[4] as HTMLButtonElement).disabled).toBe(false));
@@ -55,7 +122,7 @@ describe("ShortcutSettingsSection", () => {
     fireEvent.keyDown(edit, { key: "Tab", code: "Tab", altKey: true });
     await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith({ ...DEFAULT_SHORTCUTS, newSession: { code: "Tab", ctrl: false, alt: true, shift: false } }));
   });
-  it("显示四项默认快捷键并录入新组合键", async () => {
+  it("显示默认快捷键并录入新组合键", async () => {
     const nextShortcuts = {
       ...DEFAULT_SHORTCUTS,
       commandHistory: { code: "KeyJ", ctrl: true, alt: false, shift: true },

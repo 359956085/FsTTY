@@ -26,7 +26,7 @@ export interface WorkspaceLayoutPreferences {
 }
 
 export interface WorkspaceTabsPreferences {
-  openTabs: Array<{ id: string; sessionId: string }>;
+  openTabs: Array<{ id: string; sessionId: string; runAsAdmin?: boolean }>;
   activeTabId: string | null;
 }
 
@@ -188,7 +188,8 @@ function readTabs(value: unknown) {
         return [];
       }
       seen.add(tab.id);
-      return [{ id: tab.id, sessionId: tab.sessionId }];
+      return [{ id: tab.id, sessionId: tab.sessionId,
+        ...(typeof tab.runAsAdmin === "boolean" ? { runAsAdmin: tab.runAsAdmin } : {}) }];
     })
     .slice(0, MAX_STORED_SESSION_IDS);
 }

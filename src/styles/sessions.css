@@ -38,6 +38,17 @@
   background: var(--surface-hover);
 }
 
+.session-tab + .session-tab::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--workspace-divider);
+  pointer-events: none;
+  content: "";
+}
+
 .session-tab::after {
   position: absolute;
   right: 0;
@@ -66,7 +77,8 @@
   text-align: left;
 }
 
-.session-tab > button:first-child span:last-child {
+.session-tab-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -481,9 +493,24 @@
   grid-area: divider;
 }
 
-.sessions-page > .resize-handle-vertical,
 .workspace-grid > .resize-handle-vertical {
   background: linear-gradient(to right, transparent 1px, var(--workspace-resize-divider) 1px 3px, transparent 3px);
+}
+
+.sessions-page > .session-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--workspace-left-width) - 2px);
+  background: transparent;
+}
+
+.sessions-page > .session-sidebar-resizer::before {
+  position: absolute;
+  inset: 0 auto 0 1px;
+  width: 1px;
+  background: var(--workspace-divider);
+  content: "";
 }
 
 .terminal-expand-right {
@@ -1105,13 +1132,14 @@
   color: var(--muted);
 }
 
-.session-type-dialog { max-width: 440px; }
-.session-type-options { display: grid; gap: 12px; padding: 20px; }
-.session-type-option { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 12px; }
-.session-type-option > span { font-size: 12px; overflow-wrap: anywhere; }
-.local-session-fields { padding: 20px; }
-.local-session-fields > label:has(input[type="checkbox"]) { display: flex; flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; }
-.local-session-fields > .form-error { grid-column: 1 / -1; }
-.local-admin-badge { font-size: 10px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 4px; opacity: .85; }
+.session-type-icon { display: block; flex: none; }
+.session-type-icon-ssh { color: #00b894; }
+.session-type-icon-cmd { color: #424d57; }
+.session-type-icon-powershell { color: #2985fa; }
+.session-type-icon-gitBash { color: #ff643e; }
+.local-tab-status { display: block; width: 16px; height: 16px; flex: 0 0 16px; }
+.local-tab-status svg { display: block; }
+.local-tab-status-running { color: var(--success); }
+.local-tab-status-idle { color: var(--text-subtle); }
 .terminal-connect-overlay.local-terminal-overlay { inset: auto 16px 16px; flex-direction: row; flex-wrap: wrap; padding: 12px 16px; gap: 12px; border-radius: 6px; }
 .local-terminal-overlay > svg { display: none; }

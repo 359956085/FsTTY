@@ -369,6 +369,7 @@ export function SessionFormDialog({
           </button>
         </header>
 
+        <div className="session-dialog-body">
         <div className="form-grid">
           <label>
             <span>{t("sessions.host")} *</span>
@@ -607,6 +608,7 @@ export function SessionFormDialog({
           <div className="form-error">{error ?? saveError}</div>
         ) : null}
 
+        </div>
         <footer className="dialog-actions">
           <Button
             disabled={submitting}

@@ -87,7 +87,7 @@ describe("usePaneLayout", () => {
     act(() => {
       for (let index = 0; index < 30; index += 1) result.current.adjustResize("left", 1);
     });
-    expect(result.current.layout.leftWidth).toBe(356);
+    expect(result.current.layout.leftWidth).toBe(360);
     expect(result.current.layout.rightWidth).toBe(460);
   });
 
@@ -108,9 +108,20 @@ describe("usePaneLayout", () => {
     act(() => result.current.toggleLeftCollapsed());
     const layout = result.current.layout;
     expect(layout.leftCollapsed).toBe(false);
-    expect(layout.leftWidth + layout.rightWidth + 8 + 440).toBe(1180);
+    expect(layout.leftWidth + layout.rightWidth + 4 + 440).toBe(1180);
     expect(layout.leftWidth).toBeGreaterThanOrEqual(220);
     expect(layout.rightWidth).toBeGreaterThanOrEqual(360);
+  });
+
+  it("左右面板都展开时仅扣除右侧手柄，保留保存的左侧宽度", () => {
+    mocks.layout.leftWidth = 300;
+    const { result } = renderHook(() => usePaneLayout());
+    installRoot(result, 1180);
+    act(() => {
+      for (let index = 0; index < 50; index += 1) result.current.adjustResize("right", -1);
+    });
+    expect(result.current.layout.leftWidth).toBe(300);
+    expect(result.current.layout.rightWidth).toBe(436);
   });
   it("忽略错误 Pointer，并在正确释放后持久化", () => {
     const { result } = renderHook(() => usePaneLayout());

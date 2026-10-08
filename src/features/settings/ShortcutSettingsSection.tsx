@@ -1,4 +1,4 @@
-import { RotateCcw } from "lucide-react";
+import { Eraser, RotateCcw } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
@@ -15,6 +15,7 @@ import {
   validateShortcut,
 } from "../../shared/shortcuts";
 import { Button } from "../../shared/ui/Button";
+import { TooltipButton } from "../../shared/ui/TooltipButton";
 
 interface ShortcutSettingsSectionProps {
   onChange: (settings: AppSettings) => void;
@@ -154,12 +155,13 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
                 : settings[action] ? formatShortcut(settings[action]) : t("settings.shortcutUnbound")}
             </button>
             {(["newSession", "nextTab", "previousTab"] as string[]).includes(action) && (
-              <button className="settings-shortcut-reset" type="button"
+              <TooltipButton className="settings-shortcut-reset"
                 disabled={busy || !settings[action]}
+                label={t("settings.shortcutClearHint")}
                 aria-label={t("settings.shortcutClear", { action: t(actionLabelKeys[action]) })}
                 onClick={() => void saveShortcuts({ ...settings, [action]: null })}>
-                {t("settings.shortcutClearLabel")}
-              </button>
+                <Eraser aria-hidden="true" size={14} />
+              </TooltipButton>
             )}
             <button
               aria-label={t("settings.shortcutRestore", { action: t(actionLabelKeys[action]) })}

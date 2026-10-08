@@ -648,12 +648,12 @@ describe("终端面板连接", () => {
     expect(runtimeMocks.reset).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
     await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
-    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBeUndefined();
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBe(false);
     view.unmount();
   });
 
 
-  it("本地 shell 在启动响应前退出，重试时仍恢复配置默认权限", async () => {
+  it("本地 shell 在启动响应前退出，重试仍保留标签管理员权限", async () => {
     const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: false };
     const connection = { connectionId: "short-local", sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell: "cmd" as const, elevated: true, label: "CMD" } };
     let events!: TestChannel<TerminalEvent>;
@@ -671,7 +671,7 @@ describe("终端面板连接", () => {
     view.rerenderTerminal({ connectionState: "disconnected" });
     fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
     await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledTimes(2));
-    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBeUndefined();
+    expect(apiMocks.startLocalTerminal.mock.calls[1][6]).toBe(true);
     view.unmount();
   });
 
@@ -762,17 +762,35 @@ describe("终端面板连接", () => {
     admin.unmount();
   });
 
-  it("本地轻量恢复接回原通道，不启动进程或请求 UAC", async () => {
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 默认权限在首次启动前编辑配置后仍保持标签快照", async (shell) => {
+    const local = { kind: "local" as const, id: session.id, name: "Local", group: "", tags: [], shell, startingDirectory: "", runAsAdmin: true };
+    const view = renderPreservedTerminal({ session: local });
+    await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledOnce());
+    view.rerenderTerminal({ session: { ...local, runAsAdmin: false } });
+    fireEvent.click(screen.getByRole("button", { name: "local.start" }));
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledOnce());
+    expect(apiMocks.startLocalTerminal.mock.calls[0][6]).toBe(true);
+    view.unmount();
+  });
+
+  it("本地轻量恢复接回原通道，退出后重启沿用实际管理员权限", async () => {
     const attachment = preserveTerminal();
     attachment.connection = { ...attachment.connection, sftpAvailable: false, homePath: "C:\\Home", local: { shell: "cmd", elevated: true, label: "CMD" } };
     attachment.currentPath = attachment.connection.homePath;
+    let events!: TestChannel<TerminalResumeEvent>;
     apiMocks.attachPreservedTerminal.mockImplementation(async (_id: string, channel: TestChannel<TerminalResumeEvent>) => {
+      events = channel;
       channel.onmessage({ kind: "snapshot", connectionId: attachment.connection.connectionId, data: btoa("local-screen"), chunkIndex: 0, totalChunks: 1, truncated: false });
       channel.onmessage({ kind: "ready", connectionId: attachment.connection.connectionId, truncated: false }); return attachment;
     });
-    const view = renderPreservedTerminal({ session: { kind: "local", id: session.id, name: "CMD", group: "", tags: [], shell: "cmd", startingDirectory: "", runAsAdmin: true } });
+    const view = renderPreservedTerminal({ runAsAdmin: false, session: { kind: "local", id: session.id, name: "CMD", group: "", tags: [], shell: "cmd", startingDirectory: "", runAsAdmin: false } });
     await waitFor(() => expect(view.onConnected).toHaveBeenCalledWith("runtime-preserved", attachment.connection));
     expect(apiMocks.startLocalTerminal).not.toHaveBeenCalled(); expect(apiMocks.connectSession).not.toHaveBeenCalled(); expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+    act(() => events.onmessage({ kind: "disconnected", connectionId: attachment.connection.connectionId, exitCode: 0, message: "exited" }));
+    view.rerenderTerminal({ connectionState: "disconnected" });
+    fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
+    await waitFor(() => expect(apiMocks.startLocalTerminal).toHaveBeenCalledOnce());
+    expect(apiMocks.startLocalTerminal.mock.calls[0][6]).toBe(true);
     view.unmount();
   });
 

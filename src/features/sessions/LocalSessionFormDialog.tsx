@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { FolderOpen, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { LocalSession, LocalSessionPayload, LocalShell } from "../../shared/api/types";
 import { resolveApiError } from "../../shared/api/errors";
@@ -8,7 +9,7 @@ import { TextInput } from "../../shared/ui/TextInput";
 import { useDialogFocus } from "../../shared/ui/useDialogFocus";
 import { LOCAL_SHELL_LABELS } from "./localSession";
 import { SessionGroupField } from "./SessionGroupField";
-import { isComposingKey } from "../../shared/ui/focus";
+import { isComposingKey, isFocusAvailable } from "../../shared/ui/focus";
 import { DEFAULT_SESSION_GROUP } from "./constants";
 
 interface Props {
@@ -31,6 +32,8 @@ export function LocalSessionFormDialog({
   const [admin, setAdmin] = useState(session?.runAsAdmin ?? false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const browseButton = useRef<HTMLButtonElement>(null);
+  const restoreBrowseFocus = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -44,6 +47,18 @@ export function LocalSessionFormDialog({
     returnFocus,
     fallbackFocus,
   });
+
+  useLayoutEffect(() => {
+    if (busy || !restoreBrowseFocus.current) return;
+    restoreBrowseFocus.current = false;
+    const button = browseButton.current;
+    const dialog = button?.closest('[role="dialog"]');
+    const active = document.activeElement;
+    const activeDialog = active?.closest('[role="dialog"][aria-modal="true"]');
+    // The picker owns this handoff; never take focus from another dialog or control outside this form.
+    if (isFocusAvailable(button) && dialog && (!activeDialog || activeDialog === dialog) &&
+      (active === document.body || (active && dialog.contains(active)))) button.focus({ preventScroll: true });
+  }, [busy]);
 
   async function perform(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -61,14 +76,18 @@ export function LocalSessionFormDialog({
   }
 
   async function browseDirectory() {
-    const result = await open({ directory: true, multiple: false });
-    if (result && mounted.current) setDirectory(result);
+    try {
+      const result = await open({ directory: true, multiple: false });
+      if (result && mounted.current) setDirectory(result);
+    } finally {
+      if (mounted.current) restoreBrowseFocus.current = true;
+    }
   }
 
   return (
     <div className="dialog-backdrop">
       <form
-        className="dialog session-form"
+        className="dialog session-dialog local-session-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
@@ -88,6 +107,8 @@ export function LocalSessionFormDialog({
       >
         <header className="dialog-header">
           <h2 id={id}>{t(session ? "sessions.edit" : "sessions.new")} {LOCAL_SHELL_LABELS[shell]}</h2>
+          <button type="button" className="icon-button" aria-label={t("sessions.close")}
+            disabled={busy} onClick={requestClose}><X size={18} aria-hidden="true" /></button>
         </header>
         <div className="form-grid local-session-fields">
           <label>
@@ -96,14 +117,17 @@ export function LocalSessionFormDialog({
               onChange={(event) => setName(event.target.value)} />
           </label>
           <SessionGroupField value={group} onChange={setGroup} options={groupOptions} disabled={busy} />
-          <label>
-            <span>{t("local.startingDirectory")}</span>
-            <TextInput value={directory} readOnly={busy} placeholder={t("local.homeDirectory")}
-              onChange={(event) => setDirectory(event.target.value)} />
-          </label>
-          <Button disabled={busy} onClick={() => void perform(browseDirectory)}>
-            {t("local.browseDirectory")}
-          </Button>
+          <div className="form-field local-directory-field">
+            <label htmlFor={`${id}-directory`}>{t("local.startingDirectory")}</label>
+            <div className="local-directory-control">
+              <TextInput id={`${id}-directory`} value={directory} readOnly={busy} placeholder={t("local.homeDirectory")}
+                onChange={(event) => setDirectory(event.target.value)} />
+              <button type="button" className="local-directory-button" ref={browseButton} disabled={busy}
+                aria-label={t("local.browseDirectory")} onClick={() => void perform(browseDirectory)}>
+                <FolderOpen size={18} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
           <label className="local-admin-option">
             <input type="checkbox" checked={admin} disabled={busy}
               onChange={(event) => setAdmin(event.target.checked)} />
@@ -112,7 +136,7 @@ export function LocalSessionFormDialog({
           {error && <div role="alert" className="form-error">{error}</div>}
         </div>
         <footer className="dialog-actions">
-          <Button disabled={busy} onClick={requestClose}>{t("sessions.cancel")}</Button>
+          <Button variant="ghost" disabled={busy} onClick={requestClose}>{t("sessions.cancel")}</Button>
           <Button type="submit" disabled={busy}>{t("sessions.save")}</Button>
         </footer>
       </form>

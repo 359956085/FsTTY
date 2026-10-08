@@ -11,6 +11,8 @@ import type {
   TerminalColorScheme,
 } from "../../shared/api/types";
 import { DeviceStatusPanel } from "./DeviceStatusPanel";
+import { isLocalSession } from "../../shared/api/types";
+import { LocalTabStatusIcon } from "./LocalTabStatusIcon";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { contextMenuPosition, isComposingKey, isContextMenuKey, isFocusAvailable } from "../../shared/ui/focus";
 import { FilesPane } from "./FilesPane";
@@ -236,7 +238,17 @@ export function Workspace({
       className={rightCollapsed || hideRightPanel ? "workspace-grid right-collapsed" : "workspace-grid"}
     >
       <div className="session-tabs" onContextMenu={(event) => event.preventDefault()}>
-        {openTabs.map((tab) => (
+        {openTabs.map((tab) => {
+          const localSession = isLocalSession(tab.session) ? tab.session : null;
+          const local = localSession !== null;
+          const state = connectionStates[tab.id] ?? "disconnected";
+          const administrator = runtimes[tab.id]?.connection?.local?.elevated ?? tab.runAsAdmin ?? localSession?.runAsAdmin ?? false;
+          const statusKeys: Record<ConnectionState, string> = {
+            disconnected: "tabStatus.notRunning", connecting: administrator ? "local.waitingAdmin" : "local.starting",
+            connected: "local.running", disconnecting: "tabStatus.stopping", error: "tabStatus.failed",
+          };
+          const description = local ? `${t(administrator ? "local.admin" : "local.standard")} · ${t(statusKeys[state])}` : undefined;
+          return (
           <div
             className={
               activeTabId === tab.id
@@ -261,24 +273,19 @@ export function Workspace({
               setTabContextMenu({ ...contextMenuPosition(target), tabId: tab.id });
             }}
           >
-            <button onClick={() => {
+            <button aria-description={description} onClick={() => {
               menuReturnFocusRef.current = null;
               onSelectTab(tab.id);
             }} ref={(node) => {
               if (node) tabRefs.current.set(tab.id, node);
               else tabRefs.current.delete(tab.id);
             }} type="button">
-              <span
+              {local ? <LocalTabStatusIcon administrator={administrator} running={state === "connected"} description={description!} /> : <span
                 className={`status-dot status-${
                   connectionStates[tab.id] === "connected" ? "online" : "offline"
                 }`}
-              />
-              <span>{tab.session.name}</span>
-              {runtimes[tab.id]?.connection?.local && (
-                <span className="local-admin-badge" title={`${runtimes[tab.id]?.connection?.local?.label} · ${t("local.running")}`}>
-                  {t(runtimes[tab.id]?.connection?.local?.elevated ? "local.admin" : "local.standard")}
-                </span>
-              )}
+              />}
+              <span className="session-tab-name">{tab.session.name}</span>
             </button>
             <button
               aria-label={`${t("sessions.closeTab")} ${tab.session.name}`}
@@ -289,7 +296,7 @@ export function Workspace({
               <X size={14} />
             </button>
           </div>
-        ))}
+        ); })}
         <TooltipButton
           label={t("sessions.new")}
           buttonRef={newSessionRef}

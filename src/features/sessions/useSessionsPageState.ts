@@ -111,7 +111,8 @@ export function useSessionsPageState({
       setFavoriteSessionIds(uniqueFavoriteIds);
       updateWorkspacePreferences({
         tabs: {
-          openTabs: uniqueTabs.map(({ id, sessionId }) => ({ id, sessionId })),
+          openTabs: uniqueTabs.map(({ id, sessionId, runAsAdmin }) => ({ id, sessionId,
+            ...(typeof runAsAdmin === "boolean" ? { runAsAdmin } : {}) })),
           activeTabId: nextActiveTabId,
         },
         favoriteSessionIds: uniqueFavoriteIds,
@@ -156,7 +157,11 @@ export function useSessionsPageState({
       const candidateTabs = initialized.current
         ? openTabsRef.current
         : (stored?.tabs.openTabs ?? []).map((tab) => ({ ...tab, autoConnect: false }));
-      const validTabs = candidateTabs.filter((tab) => validIds.has(tab.sessionId));
+      const validTabs = candidateTabs.filter((tab) => validIds.has(tab.sessionId)).map((tab) => {
+        const session = nextSessions.find((item) => item.id === tab.sessionId)!;
+        const { runAsAdmin, ...rest } = tab;
+        return isLocalSession(session) ? { ...rest, runAsAdmin: runAsAdmin ?? session.runAsAdmin } : rest;
+      });
       const candidateActiveTabId = initialized.current
         ? activeTabIdRef.current
         : stored?.tabs.activeTabId ?? null;
@@ -205,7 +210,7 @@ export function useSessionsPageState({
         id: crypto.randomUUID(),
         sessionId,
         autoConnect,
-        runAsAdmin,
+        ...(isLocalSession(session) ? { runAsAdmin: runAsAdmin ?? session.runAsAdmin } : {}),
       };
       applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
     },
@@ -218,6 +223,15 @@ export function useSessionsPageState({
     },
     [applyPreferences],
   );
+
+  const updateLocalTabPermission = useCallback((tabId: string, sessionId: string, runAsAdmin: boolean) => {
+    const current = openTabsRef.current;
+    const tab = current.find((item) => item.id === tabId && item.sessionId === sessionId);
+    const session = groupsRef.current.flatMap((group) => group.sessions).find((item) => item.id === sessionId);
+    if (!tab || !session || !isLocalSession(session) || tab.runAsAdmin === runAsAdmin) return;
+    applyPreferences(current.map((item) => item === tab ? { ...item, runAsAdmin } : item),
+      activeTabIdRef.current, favoriteSessionIdsRef.current);
+  }, [applyPreferences]);
 
   const closeSessionTab = useCallback(
     (tabId: string) => {
@@ -491,7 +505,7 @@ export function useSessionsPageState({
       groupsRef.current = next;
       setGroups(next);
       if (!payload.id) {
-        const tab: SessionTabState = { id: crypto.randomUUID(), sessionId: saved.id, autoConnect: true };
+        const tab: SessionTabState = { id: crypto.randomUUID(), sessionId: saved.id, autoConnect: true, runAsAdmin: saved.runAsAdmin };
         applyPreferences([...openTabsRef.current, tab], tab.id, favoriteSessionIdsRef.current);
       }
       setDialogState(null);
@@ -573,6 +587,7 @@ export function useSessionsPageState({
     saveSession,
     saveLocalSession,
     selectTab,
+    updateLocalTabPermission,
     sessions,
     sessionsReady,
     setDialogState: changeDialogState,

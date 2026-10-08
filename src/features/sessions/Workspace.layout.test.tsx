@@ -58,6 +58,37 @@ function mockFocusVisible(visible: boolean) {
 }
 
 describe("工作区侧栏布局", () => {
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 的权限形状与各阶段颜色分离，名称和控件不变", (shell) => {
+    for (const administrator of [false, true]) {
+      for (const state of ["disconnected", "connecting", "connected", "disconnecting", "error"] as const) {
+        const runtime = { ...createRuntime(), connectionState: state };
+        const view = render(<Preview overrides={{ activeTabId: "tab", activeRuntime: runtime, runtimes: { tab: runtime }, connectionStates: { tab: state },
+          openTabs: [{ id: "tab", sessionId: "local", autoConnect: false, runAsAdmin: administrator,
+            session: { kind: "local", id: "local", name: "Dev", shell, group: "", tags: [], startingDirectory: "", runAsAdmin: !administrator } }] }} />);
+        const icon = view.container.querySelector(".local-tab-status")!;
+        expect(icon.getAttribute("data-permission")).toBe(administrator ? "administrator" : "standard");
+        expect(icon.classList.contains("local-tab-status-running")).toBe(state === "connected");
+        expect(icon.getAttribute("aria-hidden")).toBe("true");
+        expect(icon.querySelectorAll("svg")).toHaveLength(1);
+        expect(icon.querySelector("g")?.getAttribute("fill")).toBe(administrator ? state === "connected" ? "currentColor" : "none" : undefined);
+        expect(view.container.querySelector(".status-dot, .local-admin-badge")).toBeNull();
+        expect(screen.getByRole("button", { name: "Dev" }).getAttribute("aria-description")).toContain(administrator ? "local.admin" : "local.standard");
+        expect(view.container.querySelectorAll(".session-tab button")).toHaveLength(2);
+        view.unmount();
+      }
+    }
+  });
+  it.each([false, true])("本地标签权限标记使用实际 elevated=%s，而非配置默认值", (elevated) => {
+    const runtime = createRuntime();
+    runtime.connection = { connectionId: "local", sessionId: "session", homePath: "C:\\Home", sftpAvailable: false,
+      local: { shell: "cmd", label: "CMD", elevated } };
+    runtime.connectionState = "connected";
+    const { container } = render(<Preview overrides={{ activeTabId: "tab", activeRuntime: runtime, runtimes: { tab: runtime }, connectionStates: { tab: "connected" },
+      openTabs: [{ id: "tab", sessionId: "session", autoConnect: false, runAsAdmin: elevated,
+        session: { kind: "local", id: "session", name: "CMD", shell: "cmd", group: "", tags: [], startingDirectory: "", runAsAdmin: !elevated } }] }} />);
+    expect(container.querySelector(".local-tab-status")!.getAttribute("data-permission")).toBe(elevated ? "administrator" : "standard");
+    expect(container.querySelector(".local-admin-badge")).toBeNull();
+  });
   it("本地标签隐藏整个右栏，切回 SSH 保留展开状态且终端不重建", () => {
     const view = render(<Preview withTerminal />);
     const terminal = screen.getByRole("textbox", { name: "测试终端" });

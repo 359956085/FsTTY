@@ -155,7 +155,7 @@ export const TerminalPane = memo(function TerminalPane({
   const localRef = useRef(local);
   localRef.current = local;
   const localRequestRef = useRef<string | null>(null);
-  const launchOverrideRef = useRef(runAsAdmin);
+  const launchOverrideRef = useRef(runAsAdmin ?? (isLocalSession(session) ? session.runAsAdmin : undefined));
   const [localStartingAdmin, setLocalStartingAdmin] = useState<boolean | null>(null);
   const [localExit, setLocalExit] = useState<{ code: number | null; stopped?: boolean } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1184,9 +1184,6 @@ export const TerminalPane = memo(function TerminalPane({
     const channel = new Channel<TerminalEvent>();
     channel.onmessage = (event) => {
       if (!current() || !lifecycle.acceptsEvent(attempt, channel, event.connectionId)) return;
-      // Events are attached only after the host is ready. A short-lived shell
-      // may exit before its IPC result arrives, but still used this override.
-      launchOverrideRef.current = undefined;
       if (event.kind === "data") {
         if (!consumeLightweightBarrier(event.data)) terminal.write(decodeBase64(event.data));
         return;
@@ -1203,7 +1200,7 @@ export const TerminalPane = memo(function TerminalPane({
         await api.disconnectSession(connection.connectionId).catch(() => undefined);
         return;
       }
-      launchOverrideRef.current = undefined;
+      launchOverrideRef.current = connection.local?.elevated ?? launchOverrideRef.current;
       onConnected(runtimeId, connection);
       flushInput();
       fitAndResize();
@@ -1600,6 +1597,7 @@ export const TerminalPane = memo(function TerminalPane({
           runtime.terminal.reset();
           runtime.terminal.resize(attachment.columns, attachment.rows);
           lifecycle.setConnection(attemptId, attachment.connection);
+          if (attachment.connection.local) launchOverrideRef.current = attachment.connection.local.elevated;
           if (!localRef.current) shellIntegrationRef.current?.restore(attachment.shellIntegrationToken);
           onDirectoryChangeRef.current(runtimeId, attachment.currentPath);
           onConnected(runtimeId, attachment.connection);

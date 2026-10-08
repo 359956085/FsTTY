@@ -43,8 +43,9 @@ interface ActiveDrag {
 }
 
 const KEYBOARD_WIDTH_STEP = 8;
-function visibleHandlesWidth(layout: WorkspaceLayoutPreferences) {
-  return (layout.leftCollapsed ? 0 : 4) + (layout.rightCollapsed ? 0 : 4);
+function layoutHandlesWidth(layout: WorkspaceLayoutPreferences) {
+  // The left handle overlays the boundary; only the right handle occupies a grid column.
+  return layout.rightCollapsed ? 0 : 4;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -94,7 +95,7 @@ function getBoundedValue(
       ? rootWidth -
         otherWidth -
         WORKSPACE_LAYOUT_LIMITS.terminalMinWidth -
-        visibleHandlesWidth(layout)
+        layoutHandlesWidth(layout)
       : limits.max;
 
   return clamp(
@@ -144,7 +145,7 @@ function fitLayoutToRoot(
   let overflow =
     effectiveLeft +
     effectiveRight +
-    visibleHandlesWidth(layout) +
+    layoutHandlesWidth(layout) +
     WORKSPACE_LAYOUT_LIMITS.terminalMinWidth -
     rootWidth;
 

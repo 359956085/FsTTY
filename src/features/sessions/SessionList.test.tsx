@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Session, SessionGroup } from "../../shared/api/types";
+import type { LocalShell, Session, WorkspaceSession, WorkspaceSessionGroup as SessionGroup } from "../../shared/api/types";
 import { SessionList } from "./SessionList";
 
 const mocks = vi.hoisted(() => ({
@@ -40,7 +40,7 @@ function createSession(username: string): Session {
   };
 }
 
-function renderSessionList(session: Session) {
+function renderSessionList(session: WorkspaceSession) {
   const groups: SessionGroup[] = [{ name: "Servers", sessions: [session] }];
   return render(
     <SessionList
@@ -75,6 +75,13 @@ function openCopyMenu() {
 }
 
 describe("SessionList 复制会话信息", () => {
+  it.each<[LocalShell, string]>([["cmd", "CMD"], ["powershell", "PowerShell"], ["gitBash", "Git Bash"]])("%s 权限文案不改变复制的类型与目录信息", (shell, label) => {
+    mocks.writeText.mockResolvedValue();
+    renderSessionList({ kind: "local", id: "local", name: "Production", shell, group: "Servers", tags: [], startingDirectory: "C:\\中文 测试", runAsAdmin: true });
+    expect(screen.getByText("Production").closest("button")!.querySelector(".session-meta")!.textContent).toBe("local.admin");
+    fireEvent.click(openCopyMenu());
+    expect(mocks.writeText).toHaveBeenCalledExactlyOnceWith(`Production ${label} · C:\\中文 测试`);
+  });
   it("只复制会话名、账号和主机地址", () => {
     mocks.writeText.mockResolvedValue();
     renderSessionList(createSession("ubuntu"));

@@ -30,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspaceSessionGroup as SessionGroup } from "../../shared/api/types";
 import { isLocalSession } from "../../shared/api/types";
 import { sessionDescription } from "./localSession";
+import { SessionTypeIcon } from "./SessionTypeIcon";
 import { Button } from "../../shared/ui/Button";
 import { ContextMenu } from "../../shared/ui/ContextMenu";
 import { SelectableOption } from "../../shared/ui/SelectableOption";
@@ -703,11 +704,13 @@ export function SessionList({
                         }
                         type="button"
                       >
+                        <SessionTypeIcon type={isLocalSession(session) ? session.shell : "ssh"} />
                         <span className="session-item-main">
                           <span className="session-name">{session.name}</span>
                           <span className="session-meta">
-                            {sessionDescription(session)}
-                            {isLocalSession(session) && session.runAsAdmin ? ` · ${t("local.admin")}` : ""}
+                            {isLocalSession(session)
+                              ? t(session.runAsAdmin ? "local.admin" : "local.standard")
+                              : sessionDescription(session)}
                           </span>
                         </span>
                       </button>
