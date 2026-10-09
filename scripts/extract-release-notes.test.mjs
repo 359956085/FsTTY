@@ -16,8 +16,8 @@ describe("发布更新说明提取", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain("## [2.0.0] - 2026-10-09");
     const notes = extractVersionReleaseNotes(changelog, "v2.0.0");
-    expect(notes.match(/^- /gm)).toHaveLength(8);
-    for (const expected of ["本地终端", "输出高亮", "焦点恢复", "官方镜像", "local CMD", "output highlighting", "focus restoration", "official mirror"]) {
+    expect(notes.match(/^- /gm)).toHaveLength(6);
+    for (const expected of ["本地终端", "输出高亮", "焦点恢复", "local CMD", "output highlighting", "focus restoration"]) {
       expect(notes).toContain(expected);
     }
     expect(notes).not.toContain("## [1.7.2]");

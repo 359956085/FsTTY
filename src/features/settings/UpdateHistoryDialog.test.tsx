@@ -83,7 +83,6 @@ describe("更新日志弹窗", () => {
         "新增 CMD、PowerShell 和 Git Bash 本地终端，支持普通与管理员权限启动；统一新建表单，并沿用会话分组与多标签交互。",
         "CMD、PowerShell 支持输入命令和明确的错误、警告、目录输出高亮，颜色沿用终端文字配色；修复切换标签和调整尺寸后的历史高亮保留。",
         "优化弹窗、右键菜单、文件与分组操作的键盘导航和焦点恢复，统一会话类型图标、标签状态及侧栏衔接，并增加可配置的工作区快捷键。",
-        "下载与发布统一使用 GitHub，自动更新保留官方镜像；移除旧下载平台入口和发布同步，旧下载源设置兼容迁移为自动模式。",
       ],
     },
     {
@@ -92,7 +91,6 @@ describe("更新日志弹窗", () => {
         "Added local CMD, PowerShell, and Git Bash terminals with standard or administrator launch options, unified creation forms, session groups, and multiple tabs.",
         "Added command input and explicit error, warning, and directory output highlighting for CMD and PowerShell using the selected terminal palette; fixed historical highlights disappearing after tab switches or resizing.",
         "Improved keyboard navigation and focus restoration in dialogs, context menus, file and group operations; unified session icons, tab states, and sidebar alignment, and added configurable workspace shortcuts.",
-        "Downloads and releases now use GitHub, with the official mirror retained for automatic updates. Removed the previous download platform and release synchronization, while migrating its saved preference to automatic mode.",
       ],
     },
   ])("$language 展示 v2.0.0 完整说明并保留旧版本", ({ language, notes }) => {
