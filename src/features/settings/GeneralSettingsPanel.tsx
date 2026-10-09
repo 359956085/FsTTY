@@ -30,6 +30,8 @@ interface GeneralSettingsPanelProps {
   onLanguageChange: (language: Language) => void;
   onThemeChange: (theme: ThemePreference) => void;
   onTerminalColorSchemeChange: (colorScheme: TerminalColorScheme) => void;
+  onLocalHighlightChange?: (enabled: boolean) => void;
+  savingLocalHighlight?: boolean;
   onOpenLogDirectory: () => void;
   onRecordMcpToolInputsChange: (enabled: boolean) => void;
   onShowTooltip: (key: string, text: string, element: HTMLElement) => void;
@@ -58,6 +60,8 @@ export function GeneralSettingsPanel({
   onLanguageChange,
   onThemeChange,
   onTerminalColorSchemeChange,
+  onLocalHighlightChange,
+  savingLocalHighlight = false,
   onOpenLogDirectory,
   onRecordMcpToolInputsChange,
   onShowTooltip,
@@ -133,6 +137,16 @@ export function GeneralSettingsPanel({
             ]}
             value={settings.terminalColorScheme}
           />
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <label className="settings-row-label" htmlFor="local-terminal-highlight">{t("settings.localHighlight")}</label>
+            <small>{t("settings.localHighlightHint")}</small>
+          </div>
+          <input id="local-terminal-highlight" aria-label={t("settings.localHighlight")}
+            className="settings-auto-update-toggle" type="checkbox" role="switch"
+            checked={settings.localTerminalHighlightEnabled ?? true} disabled={savingLocalHighlight}
+            onChange={(event) => onLocalHighlightChange?.(event.target.checked)} />
         </div>
         <div className="settings-row">
           <div className="settings-row-copy">

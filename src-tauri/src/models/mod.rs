@@ -24,8 +24,8 @@ pub use device::{DeviceMetricSample, DeviceMetricsSnapshot, DeviceStatus};
 pub use file::{FileEntry, FileKind};
 pub use lightweight::{
     BeginLightweightModeResult, LightweightModePhase, LightweightModeState,
-    LightweightSnapshotKind, LightweightTerminalRequest, PreservedTerminalAttachment,
-    PreservedTerminalSummary, TerminalResumeEvent,
+    LightweightSnapshotKind, LightweightTerminalRequest, LocalHighlightSnapshot,
+    PreservedTerminalAttachment, PreservedTerminalSummary, TerminalResumeEvent,
 };
 pub use local_session::*;
 pub use session::{

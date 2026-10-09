@@ -3,6 +3,7 @@ import type {
   LightweightModeState,
   LightweightSnapshotKind,
   LightweightTerminalRequest,
+  LocalHighlightSnapshot,
 } from "../../shared/api/types";
 
 const SNAPSHOT_CHUNK_BYTES = 192 * 1024;
@@ -17,7 +18,7 @@ const DEFAULT_STATE: LightweightModeState = {
 
 export interface LightweightTerminalController {
   cancelPreparation(): void;
-  capture(): Promise<{ full: string; viewport: string }>;
+  capture(): Promise<{ full: string; viewport: string; localHighlightState?: LocalHighlightSnapshot }>;
   describe(): LightweightTerminalRequest | null;
   isBlocked(): boolean;
   prepareBarrier(): void;
@@ -119,7 +120,7 @@ export async function enterLightweightMode(suppressConfirmation: boolean) {
     token = result.token;
     for (const { controller, terminal } of active) {
       const snapshot = await controller.capture();
-      await uploadSnapshot(token, terminal.runtimeId, "full", snapshot.full);
+      await uploadSnapshot(token, terminal.runtimeId, "full", snapshot.full, snapshot.localHighlightState);
       await uploadSnapshot(token, terminal.runtimeId, "viewport", snapshot.viewport);
     }
     await api.commitLightweightMode(token);
@@ -142,6 +143,7 @@ async function uploadSnapshot(
   runtimeId: string,
   kind: LightweightSnapshotKind,
   snapshot: string,
+  localHighlightState?: LocalHighlightSnapshot,
 ) {
   const bytes = new TextEncoder().encode(snapshot);
   const totalChunks = Math.max(1, Math.ceil(bytes.byteLength / SNAPSHOT_CHUNK_BYTES));
@@ -155,6 +157,7 @@ async function uploadSnapshot(
       index,
       totalChunks,
       encodeBase64(chunk),
+      index === 0 ? localHighlightState : undefined,
     );
   }
 }

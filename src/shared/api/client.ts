@@ -17,6 +17,7 @@ import type {
   LightweightModeState,
   LightweightSnapshotKind,
   LightweightTerminalRequest,
+  LocalHighlightSnapshot,
   LocalAgentCapability,
   LocalAgentConfigureResult,
   LocalAgentTarget,
@@ -156,6 +157,7 @@ export const api = {
     chunkIndex: number,
     totalChunks: number,
     data: string,
+    localHighlightState?: LocalHighlightSnapshot,
   ) {
     return invoke<void>("append_lightweight_snapshot_chunk", {
       token,
@@ -164,6 +166,7 @@ export const api = {
       chunkIndex,
       totalChunks,
       data,
+      localHighlightState,
     });
   },
   commitLightweightMode(token: string) {
@@ -310,6 +313,9 @@ export const api = {
   },
   setTerminalColorScheme(colorScheme: TerminalColorScheme) {
     return invoke<AppSettings>("set_terminal_color_scheme", { colorScheme });
+  },
+  setLocalTerminalHighlightEnabled(enabled: boolean) {
+    return invoke<AppSettings>("set_local_terminal_highlight_enabled", { enabled });
   },
   setIgnoredUpdateVersion(version: string) {
     return invoke<AppSettings>("set_ignored_update_version", { version });

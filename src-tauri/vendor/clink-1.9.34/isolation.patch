@@ -1,0 +1,98 @@
+--- a/clink/app/src/utils/app_context.cpp
++++ b/clink/app/src/utils/app_context.cpp
+@@ -294,57 +294,10 @@
+ //------------------------------------------------------------------------------
+ void app_context::get_script_path(str_base& out, bool readable) const
+ {
+-    str<280> tmp;
+-
+-    // The --scripts flag happens before anything else.
++    // FsTTY isolated build: never load user/registry extensions.
++    (void)readable;
+     out.clear();
+     out << m_desc.script_path;
+-
+-    // Next load from the clink.path setting, otherwise from the binary
+-    // directory and the profile directory.
+-    const char* setting_clink_path = g_clink_path.get();
+-    if (setting_clink_path && *setting_clink_path)
+-    {
+-        if (out.length())
+-            out << (readable ? " ; " : ";");
+-        out << setting_clink_path;
+-    }
+-    else
+-    {
+-        get_binaries_dir(tmp);
+-        if (tmp.length())
+-        {
+-            if (out.length())
+-                out << (readable ? " ; " : ";");
+-            out << tmp.c_str();
+-        }
+-
+-        get_state_dir(tmp);
+-        if (tmp.length())
+-        {
+-            if (out.length())
+-                out << (readable ? " ; " : ";");
+-            out << tmp.c_str();
+-        }
+-    }
+-
+-    // Next load from the clink_path envvar.
+-    if (os::get_env("clink_path", tmp) && tmp.length())
+-    {
+-        if (out.length())
+-            out << (readable ? " ; " : ";");
+-        out << tmp.c_str();
+-    }
+-
+-    // Finally load from installed script paths.
+-    str<> installed_scripts;
+-    get_installed_scripts(installed_scripts);
+-    if (installed_scripts.length())
+-    {
+-        if (out.length())
+-            out << (readable ? " ; " : ";");
+-        out << installed_scripts;
+-    }
+ }
+ 
+ //------------------------------------------------------------------------------
+--- a/clink/lib/src/intercept.cpp
++++ b/clink/lib/src/intercept.cpp
+@@ -190,6 +190,9 @@
+ //------------------------------------------------------------------------------
+ intercept_result intercept_directory(const char* line, str_base* out, const intercept_mode mode)
+ {
++    str<> fstty_highlight_only;
++    if (os::get_env("FSTTY_HIGHLIGHT_ONLY", fstty_highlight_only))
++        return intercept_result::none;
+     // Check for '-' (etc) to change to previous directory.
+     if (is_cd_dash(line, (mode == intercept_mode::only_cd_chdir)))
+         return intercept_result::prev_dir;
+--- a/premake5.lua
++++ b/premake5.lua
+@@ -11,20 +11,7 @@
+ 
+ --------------------------------------------------------------------------------
+ local function get_git_info()
+-    local git_cmd = "git branch --verbose --no-color 2>nul"
+-    for line in io.popen(git_cmd):lines() do
+-        local _, _, name, commit = line:find("^%*.+%s+([^ )]+)%)%s+([a-f0-9]+)%s")
+-        if name and commit then
+-            return name, commit:sub(1, 6)
+-        end
+-
+-        local _, _, name, commit = line:find("^%*%s+([^ ]+)%s+([a-f0-9]+)%s")
+-        if name and commit then
+-            return name, commit:sub(1, 6)
+-        end
+-    end
+-
+-    return "NAME?", "COMMIT?"
++    return "fstty-isolated", "4e8ae4"
+ end
+ 
+ --------------------------------------------------------------------------------

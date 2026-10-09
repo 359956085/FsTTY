@@ -52,6 +52,15 @@ pub struct LocalTerminalInfo {
     pub shell: LocalShell,
     pub label: String,
     pub elevated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<LocalHighlightInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalHighlightInfo {
+    pub token: String,
+    pub failed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

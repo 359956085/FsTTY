@@ -64,6 +64,12 @@ pub async fn start_local_terminal(
 ) -> Result<SshConnection, AppError> {
     let _activity = state.lightweight_mode_service.try_gui_activity()?;
     let session = state.session_service.lock().await.find_local(&session_id)?;
+    let highlight_enabled = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".into()))?
+        .get()
+        .local_terminal_highlight_enabled;
     state
         .local_terminal_service
         .start(
@@ -74,6 +80,7 @@ pub async fn start_local_terminal(
             rows,
             run_as_admin,
             on_event,
+            highlight_enabled,
         )
         .await
 }

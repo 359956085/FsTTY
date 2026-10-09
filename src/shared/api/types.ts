@@ -19,6 +19,7 @@ export interface AppSettings {
   language: Language;
   theme: ThemePreference;
   terminalColorScheme: TerminalColorScheme;
+  localTerminalHighlightEnabled?: boolean;
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;
   proxyAddress: string;
@@ -290,7 +291,7 @@ export interface SshConnection {
   homePath: string;
   sftpAvailable: boolean;
   shellName?: "bash" | "zsh" | null;
-  local?: { shell: LocalShell; label: string; elevated: boolean };
+  local?: { shell: LocalShell; label: string; elevated: boolean; highlight?: { token: string; failed: boolean } };
 }
 
 export interface HostKeyChallenge {
@@ -339,6 +340,7 @@ export interface LightweightTerminalRequest {
   columns: number;
   rows: number;
   shellIntegrationToken?: string | null;
+  localHighlightState?: LocalHighlightSnapshot;
 }
 
 export interface PreservedTerminalSummary {
@@ -364,6 +366,7 @@ export interface PreservedTerminalAttachment {
   rows: number;
   truncated: boolean;
   shellIntegrationToken?: string | null;
+  localHighlightState?: LocalHighlightSnapshot;
 }
 
 export type TerminalResumeEvent =
@@ -504,3 +507,14 @@ export interface TransferJobSummary {
 export type TransferConflictDecision = "overwrite" | "skip" | "cancel";
 
 export type TransferJobEvent = { kind: "updated"; job: TransferJobSummary };
+
+
+export type LocalHighlightKind = "error" | "warning" | "directory";
+export interface LocalHighlightSnapshot {
+  version: 1;
+  token: string;
+  ready: boolean;
+  phase: "prompt" | "input" | "execute";
+  directory: "cmd" | "powershell" | null;
+  spans: Array<{ line: number; start: number; end: number; kind: LocalHighlightKind }>;
+}

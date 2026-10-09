@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub theme: ThemePreference,
     #[serde(default)]
     pub terminal_color_scheme: TerminalColorScheme,
+    #[serde(default = "default_local_terminal_highlight_enabled")]
+    pub local_terminal_highlight_enabled: bool,
     pub auto_update: bool,
     #[serde(default)]
     pub update_source: UpdateSourcePreference,
@@ -41,6 +43,10 @@ impl std::fmt::Debug for AppSettings {
             .field("language", &self.language)
             .field("theme", &self.theme)
             .field("terminal_color_scheme", &self.terminal_color_scheme)
+            .field(
+                "local_terminal_highlight_enabled",
+                &self.local_terminal_highlight_enabled,
+            )
             .field("auto_update", &self.auto_update)
             .field("update_source", &self.update_source)
             .field("proxy_enabled", &self.proxy_enabled)
@@ -70,6 +76,10 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+}
+
+fn default_local_terminal_highlight_enabled() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

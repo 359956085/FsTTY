@@ -14,6 +14,8 @@ pub struct Startup {
     pub columns: u32,
     pub rows: u32,
     pub elevated: bool,
+    #[serde(default)]
+    pub highlight_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -28,11 +30,24 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum Response {
-    Hello { nonce: String },
-    Ready { elevated: bool, label: String },
-    Data { data: Vec<u8> },
-    Exit { code: Option<u32> },
-    Error { message: String },
+    Hello {
+        nonce: String,
+    },
+    Ready {
+        elevated: bool,
+        label: String,
+        #[serde(default)]
+        highlight: Option<crate::models::LocalHighlightInfo>,
+    },
+    Data {
+        data: Vec<u8>,
+    },
+    Exit {
+        code: Option<u32>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 pub fn dimensions(columns: u32, rows: u32) -> bool {

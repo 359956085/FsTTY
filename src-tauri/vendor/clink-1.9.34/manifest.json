@@ -1,0 +1,16 @@
+{
+  "version": "1.9.34",
+  "upstreamCommit": "4e8ae4",
+  "variant": "FsTTY isolated build",
+  "source": "https://github.com/chrisant996/clink/archive/refs/tags/v1.9.34.zip",
+  "portable": "https://github.com/chrisant996/clink/releases/download/v1.9.34/clink.1.9.34.4e8ae4.zip",
+  "premakeVersion": "5.0.0-beta8",
+  "files": {
+    "bin/clink_x64.exe": "98972133fd6c9f357469ee39ccc85c20a5773d931d575a808c02317b64543be1",
+    "bin/clink_dll_x64.dll": "850af7f5ae83ccf09e17f663d032c060e82a5b968c35df14fdb2c97fe6f35d93",
+    "source.zip": "b3119b100ce685fd895892209f3e1de496b7781dff21b99e2e5e712a1b0383c3",
+    "portable.zip": "50f6ee0474e3bd02b48ce8c8f63ed933a14aee5127fc7072cb976ce10a43ce23",
+    "isolation.patch": "225f90e3a3db7cd4af5f68f03e38db7436e0242ffd9c07a97198fcc1d1ca9725",
+    "LICENSE": "5f631fae467c82b8cd28fd1ec425c816895a35f9d94e36bee0e0164570e8e0f6"
+  }
+}

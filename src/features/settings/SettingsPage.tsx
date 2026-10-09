@@ -41,6 +41,8 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
     changeLanguage: handleLanguageChange,
     changeTheme: handleThemeChange,
     changeTerminalColorScheme: handleTerminalColorSchemeChange,
+    changeLocalHighlight,
+    savingLocalHighlight,
     checkForUpdates: handleCheckForUpdates,
     error,
     logDirectoryError,
@@ -217,6 +219,8 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             onLanguageChange={(language) => void handleLanguageChange(language)}
             onThemeChange={(theme) => void handleThemeChange(theme)}
             onTerminalColorSchemeChange={(colorScheme) => void handleTerminalColorSchemeChange(colorScheme)}
+            onLocalHighlightChange={(enabled) => void changeLocalHighlight(enabled)}
+            savingLocalHighlight={savingLocalHighlight}
             onOpenLogDirectory={() => void openLogDirectory()}
             onRecordMcpToolInputsChange={(enabled) => void saveLogSettings(enabled)}
             onShowTooltip={showMcpPermissionTooltip}

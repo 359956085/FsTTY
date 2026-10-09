@@ -42,9 +42,24 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": false
       }
+    },
+    "resources": {
+      "vendor/clink-1.9.34/build.ps1": "third-party/clink/build.ps1",
+      "vendor/clink-1.9.34/LICENSE": "third-party/clink/LICENSE",
+      "vendor/clink-1.9.34/README.md": "third-party/clink/README.md",
+      "vendor/clink-1.9.34/isolation.patch": "third-party/clink/isolation.patch",
+      "vendor/clink-1.9.34/source.zip": "third-party/clink/source.zip",
+      "vendor/clink-1.9.34/manifest.json": "third-party/clink/manifest.json",
+      "src/services/local_terminal_service/highlight/clink.lua": "third-party/clink/fstty/clink.lua",
+      "src/services/local_terminal_service/highlight/clink_settings": "third-party/clink/fstty/clink_settings",
+      "src/services/local_terminal_service/highlight/inputrc": "third-party/clink/fstty/inputrc",
+      "src/services/local_terminal_service/highlight/powershell.ps1": "third-party/clink/fstty/powershell.ps1"
     }
   },
   "plugins": {

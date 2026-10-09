@@ -1,0 +1,19 @@
+clink.default_bindings = windows
+clink.colorize_input = True
+clink.logo = none
+clink.autostart = nul
+clink.autoupdate = off
+autosuggest.enable = False
+history.save = False
+history.expand_mode = off
+exec.enable = True
+cmd.ctrld_exits = False
+color.cmd = sgr 34
+color.executable = sgr 34
+color.argmatcher = sgr 34
+color.doskey = sgr 34
+color.flag = sgr 36
+color.arginfo = sgr 36
+color.unrecognized = sgr 31
+color.input = default
+

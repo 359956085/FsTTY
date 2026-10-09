@@ -1,8 +1,9 @@
 use crate::gui_lifecycle::GuiLifecycle;
 use crate::models::{
     AppError, BeginLightweightModeResult, LightweightModeState, LightweightSnapshotKind,
-    LightweightTerminalRequest, PreservedTerminalAttachment, StartTransferJobRequest,
-    TerminalResumeEvent, TransferConflictDecision, TransferJobEvent, TransferJobSummary,
+    LightweightTerminalRequest, LocalHighlightSnapshot, PreservedTerminalAttachment,
+    StartTransferJobRequest, TerminalResumeEvent, TransferConflictDecision, TransferJobEvent,
+    TransferJobSummary,
 };
 use crate::services::AppState;
 use tauri::{ipc::Channel, AppHandle, Manager, State};
@@ -60,10 +61,19 @@ pub async fn append_lightweight_snapshot_chunk(
     chunk_index: u32,
     total_chunks: u32,
     data: String,
+    local_highlight_state: Option<LocalHighlightSnapshot>,
 ) -> Result<(), AppError> {
     state
         .lightweight_mode_service
-        .append_snapshot_chunk(&token, &runtime_id, kind, chunk_index, total_chunks, &data)
+        .append_snapshot_chunk(
+            &token,
+            &runtime_id,
+            kind,
+            chunk_index,
+            total_chunks,
+            &data,
+            local_highlight_state,
+        )
         .await
 }
 

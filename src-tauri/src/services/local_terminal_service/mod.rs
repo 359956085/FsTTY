@@ -1,4 +1,6 @@
 mod discovery;
+#[cfg(any(windows, test))]
+mod highlighting;
 #[cfg(windows)]
 mod host;
 #[cfg(windows)]
@@ -206,6 +208,7 @@ impl LocalTerminalService {
         rows: u32,
         elevated: Option<bool>,
         channel: Channel<TerminalEvent>,
+        highlight_enabled: bool,
     ) -> Result<SshConnection, AppError> {
         if uuid::Uuid::parse_str(&runtime_id).is_err()
             || uuid::Uuid::parse_str(&request_id).is_err()
@@ -230,6 +233,9 @@ impl LocalTerminalService {
             columns,
             rows,
             elevated: elevated.unwrap_or(session.run_as_admin),
+            highlight_token: (highlight_enabled
+                && session.shell != crate::models::LocalShell::GitBash)
+                .then(|| request_id.clone()),
         };
         let cancel = CancellationToken::new();
         {
@@ -332,7 +338,8 @@ impl LocalTerminalService {
                 Response::Ready {
                     elevated: actual,
                     label,
-                } if actual == elevated => Ok((directory, shell, label)),
+                    highlight,
+                } if actual == elevated => Ok((directory, shell, label, highlight)),
                 Response::Error { message } => Err(message),
                 _ => Err(startup_errors::security(
                     "startup-response",
@@ -340,7 +347,7 @@ impl LocalTerminalService {
                 )),
             }
         };
-        let (directory, shell, label) = tokio::select! {
+        let (directory, shell, label, highlight) = tokio::select! {
             _ = cancel.cancelled() => return Err(AppError::Connection("本地终端启动已取消".into())),
             result = tokio::time::timeout(Duration::from_secs(30), handshake) => result
                 .map_err(|e| AppError::Connection(startup_errors::report(startup_errors::diagnostic(startup_errors::TIMEOUT, "handshake-timeout", e))))?
@@ -356,6 +363,7 @@ impl LocalTerminalService {
                 shell,
                 label,
                 elevated,
+                highlight,
             }),
         };
         let bridge = LightweightTerminalBridge::new(connection.connection_id.clone(), channel);

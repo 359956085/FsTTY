@@ -142,6 +142,15 @@ impl SettingsService {
         self.replace(next)
     }
 
+    pub fn set_local_terminal_highlight_enabled(
+        &mut self,
+        enabled: bool,
+    ) -> Result<AppSettings, AppError> {
+        let mut next = self.settings.clone();
+        next.local_terminal_highlight_enabled = enabled;
+        self.replace(next)
+    }
+
     pub fn update(
         &mut self,
         auto_update: bool,
@@ -305,6 +314,7 @@ fn default_settings() -> AppSettings {
         language: Language::ZhCn,
         theme: ThemePreference::System,
         terminal_color_scheme: TerminalColorScheme::Default,
+        local_terminal_highlight_enabled: true,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
         proxy_address: String::new(),
@@ -839,6 +849,31 @@ mod tests {
         let restored = SettingsService::load(&directory).get();
         assert_eq!(restored.shortcuts, shortcuts);
         assert!(restored.auto_update);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn local_highlight_defaults_for_legacy_settings_and_persists_toggle() {
+        let directory = test_directory("highlight-legacy");
+        fs::write(
+            directory.join(STORE_FILE),
+            r#"{"version":1,"language":"zh-CN","autoUpdate":true,"proxyAddress":""}"#,
+        )
+        .unwrap();
+        let mut service = SettingsService::load(&directory);
+        assert!(service.get().local_terminal_highlight_enabled);
+        service.set_local_terminal_highlight_enabled(false).unwrap();
+        assert!(
+            !SettingsService::load(&directory)
+                .get()
+                .local_terminal_highlight_enabled
+        );
+        service.set_local_terminal_highlight_enabled(true).unwrap();
+        assert!(
+            SettingsService::load(&directory)
+                .get()
+                .local_terminal_highlight_enabled
+        );
         let _ = fs::remove_dir_all(directory);
     }
 

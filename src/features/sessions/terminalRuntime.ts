@@ -16,6 +16,7 @@ interface InstallTerminalRuntimeOptions {
   onClipboardWriteError: () => void;
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
+  localHighlight?: boolean;
 }
 
 export interface InstalledTerminalRuntime {
@@ -82,6 +83,7 @@ export async function installTerminalRuntime({
   onClipboardWriteError,
   theme,
   terminalColorScheme,
+  localHighlight = false,
 }: InstallTerminalRuntimeOptions): Promise<InstalledTerminalRuntime | null> {
   const [{ Terminal }, { FitAddon }, { ClipboardAddon }, { SerializeAddon }] =
     await Promise.all([
@@ -95,6 +97,7 @@ export async function installTerminalRuntime({
   }
 
   const terminal = new Terminal({
+    allowProposedApi: localHighlight,
     convertEol: false,
     cursorBlink: true,
     fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",

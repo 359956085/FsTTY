@@ -73,6 +73,8 @@ describe("常规设置分组顺序", () => {
     expect(screen.getAllByText("security.title")).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "security.title" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect((screen.getByRole("switch", { name: "settings.localHighlight" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("settings.localHighlightHint")).toBeTruthy();
     const proxy = screen.getByRole("textbox", { name: "settings.proxyAddress" });
     const basic = screen.getByRole("heading", { name: "settings.generalSettings" }).closest("section");
     const group = screen.getByRole("heading", { name: "settings.proxyTitle" }).closest("section");

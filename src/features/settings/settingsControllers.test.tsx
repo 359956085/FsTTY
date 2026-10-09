@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   rotateMcpHttpToken: vi.fn(),
   setTheme: vi.fn(),
+  setLocalTerminalHighlightEnabled: vi.fn(),
   setTerminalColorScheme: vi.fn(),
   setProxySettings: vi.fn(),
   updateAppSettings: vi.fn(),
@@ -82,6 +83,28 @@ describe("设置状态控制器", () => {
     vi.clearAllMocks();
     apiMocks.listSessions.mockResolvedValue([]);
     apiMocks.getMcpPermissionCatalog.mockResolvedValue([]);
+  });
+
+  it("本地高亮保存去重，失败保留设置并可重试，卸载忽略迟到结果", async () => {
+    const pending = deferred<AppSettings>();
+    apiMocks.setLocalTerminalHighlightEnabled.mockReturnValueOnce(pending.promise);
+    const onChange = vi.fn();
+    const { result, unmount } = renderHook(() => useGeneralSettings({ onChange, settings, translate: key => key, updater: {} as AppUpdaterController }), { wrapper: StrictMode });
+    let save!: Promise<void>;
+    act(() => { save = result.current.changeLocalHighlight(false); void result.current.changeLocalHighlight(false); });
+    await act(async () => Promise.resolve());
+    expect(result.current.savingLocalHighlight).toBe(true);
+    expect(apiMocks.setLocalTerminalHighlightEnabled).toHaveBeenCalledOnce();
+    await act(async () => { pending.reject(new Error("save failed")); await save; });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(result.current.savingLocalHighlight).toBe(false);
+    expect(result.current.error).toBe("save failed");
+    const retry = deferred<AppSettings>();
+    apiMocks.setLocalTerminalHighlightEnabled.mockReturnValueOnce(retry.promise);
+    act(() => { save = result.current.changeLocalHighlight(false); });
+    await act(async () => Promise.resolve()); unmount();
+    retry.resolve({ ...settings, localTerminalHighlightEnabled: false }); await save;
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("串行保存更新设置，并按提交顺序应用结果", async () => {

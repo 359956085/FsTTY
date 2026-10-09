@@ -34,6 +34,8 @@ export function useGeneralSettings({
   const [savingLanguage, setSavingLanguage] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
   const [savingTerminalColorScheme, setSavingTerminalColorScheme] = useState(false);
+  const [savingLocalHighlight, setSavingLocalHighlight] = useState(false);
+  const savingLocalHighlightRef = useRef(false);
   const [savingLogSettings, setSavingLogSettings] = useState(false);
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false);
   const mountedRef = useRef(true);
@@ -165,6 +167,26 @@ export function useGeneralSettings({
     [onChange, translate],
   );
 
+  const changeLocalHighlight = useCallback(async (enabled: boolean) => {
+    if (savingLocalHighlightRef.current) return;
+    savingLocalHighlightRef.current = true;
+    setSavingLocalHighlight(true);
+    setError(null);
+    const save = updateSettingsSaveRef.current.then(async () => {
+      try {
+        const next = await api.setLocalTerminalHighlightEnabled(enabled);
+        if (mountedRef.current) onChange(next);
+      } catch (nextError) {
+        if (mountedRef.current) setError(resolveApiError(nextError, translate("errors.unknown")));
+      }
+    });
+    updateSettingsSaveRef.current = save;
+    try { await save; } finally {
+      savingLocalHighlightRef.current = false;
+      if (mountedRef.current) setSavingLocalHighlight(false);
+    }
+  }, [onChange, translate]);
+
   const saveLogSettings = useCallback(
     async (recordMcpToolInputs: boolean) => {
       if (savingLogSettingsRef.current) {
@@ -287,6 +309,8 @@ export function useGeneralSettings({
     changeLanguage,
     changeTheme,
     changeTerminalColorScheme,
+    changeLocalHighlight,
+    savingLocalHighlight,
     checkForUpdates,
     error,
     logDirectoryError,

@@ -32,6 +32,21 @@ function setup() {
 }
 
 describe("保活终端恢复流", () => {
+  it("快照解析屏障先恢复装饰元数据，然后解析增量，不注入任何 shell 输入", async () => {
+    const order: string[] = [];
+    const drains: Array<() => void> = [];
+    const stream = createTerminalResumeStream({
+      connectionId: "connection", isCurrent: () => true,
+      consumeBarrier: () => false, onEnd: vi.fn(),
+      onSnapshot: () => order.push("metadata"),
+      write: (value, callback) => { drains.push(() => { order.push(typeof value === "string" ? value : new TextDecoder().decode(value)); callback?.(); }); },
+    });
+    stream.push(snapshot()); stream.push({ kind: "data", connectionId: "connection", data: btoa("delta") }); stream.push(ready);
+    stream.start(); drains.forEach(drain => drain());
+    await stream.ready;
+    expect(order).toEqual(["screen", "", "metadata", "delta", ""]);
+    stream.dispose();
+  });
   it("尺寸初始化前缓存事件，快照和增量排空后才就绪", async () => {
     const { stream, writes, drains } = setup();
     stream.push(snapshot());

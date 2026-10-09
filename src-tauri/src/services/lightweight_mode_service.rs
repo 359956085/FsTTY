@@ -1023,6 +1023,7 @@ impl LightweightModeService {
         chunk_index: u32,
         total_chunks: u32,
         data: &str,
+        local_highlight_state: Option<crate::models::LocalHighlightSnapshot>,
     ) -> Result<(), AppError> {
         if data.len() > MAX_SNAPSHOT_CHUNK_BYTES.div_ceil(3) * 4 {
             return Err(AppError::Validation("终端快照分块超过 192 KiB".to_owned()));
@@ -1046,6 +1047,15 @@ impl LightweightModeService {
             .terminals
             .get_mut(runtime_id)
             .ok_or_else(|| AppError::Validation("终端不属于当前轻量模式事务".to_owned()))?;
+        if let Some(highlight) = local_highlight_state {
+            if kind != LightweightSnapshotKind::Full
+                || chunk_index != 0
+                || !highlight.valid_for(&terminal.request.connection)
+            {
+                return Err(AppError::Validation("本地高亮快照无效".into()));
+            }
+            terminal.request.local_highlight_state = Some(highlight);
+        }
         match kind {
             LightweightSnapshotKind::Full => {
                 terminal.full.append(chunk_index, total_chunks, &decoded)
@@ -1190,6 +1200,7 @@ impl LightweightModeService {
             rows: request.rows,
             truncated,
             shell_integration_token: request.shell_integration_token,
+            local_highlight_state: request.local_highlight_state,
         })
     }
 
@@ -1281,6 +1292,13 @@ fn validate_terminal_request(request: &LightweightTerminalRequest) -> Result<(),
     {
         return Err(AppError::Validation("保活终端参数无效".to_owned()));
     }
+    if request
+        .local_highlight_state
+        .as_ref()
+        .is_some_and(|value| !value.valid_for(&request.connection))
+    {
+        return Err(AppError::Validation("本地高亮快照无效".into()));
+    }
     screen_cache_bytes(request.columns, request.rows)?;
     Ok(())
 }
@@ -1359,6 +1377,7 @@ mod tests {
                         columns: 80,
                         rows: 24,
                         shell_integration_token: None,
+                        local_highlight_state: None,
                     },
                     bridge: bridge.clone(),
                     full,
@@ -1991,6 +2010,7 @@ mod tests {
                 0,
                 1,
                 &"a".repeat(MAX_SNAPSHOT_CHUNK_BYTES.div_ceil(3) * 4 + 1),
+                None,
             )
             .await
             .is_err());
@@ -2003,6 +2023,7 @@ mod tests {
                 0,
                 1,
                 "eA==",
+                None,
             )
             .await
             .is_err());

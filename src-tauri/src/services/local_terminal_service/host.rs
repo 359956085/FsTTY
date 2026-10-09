@@ -169,6 +169,21 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
         return Err(startup::security("host-rights", "actual rights mismatch"));
     }
     let program = discovery::resolve(startup.shell)?;
+    let highlight = super::highlighting::prepare(
+        startup.shell,
+        &program.args.join(" "),
+        startup.highlight_token.as_deref(),
+        identity.elevated,
+    );
+    // The dedicated host does not load users' Clink paths/inputrc or registry scripts.
+    if startup.highlight_token.is_some() && startup.shell == crate::models::LocalShell::Cmd {
+        std::env::remove_var("CLINK_PATH");
+        std::env::remove_var("CLINK_PROFILE");
+        std::env::remove_var("CLINK_INPUTRC");
+        std::env::set_var("CLINK_NOAUTORUN", "1");
+        std::env::set_var("FSTTY_HIGHLIGHT_ONLY", "1");
+        std::env::set_var("CLINK_NO_REMOTE_COLORING", "1");
+    }
     let (input_read, mut input_write) = anonymous_pipe()?;
     let (mut output_read, output_write) = anonymous_pipe()?;
     let mut raw_console = 0;
@@ -225,7 +240,7 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     let mut command = windows::wide(format!(
         "{} {}",
         windows::quote(&program.path),
-        program.args.join(" ")
+        highlight.arguments
     ));
     let directory = windows::wide(&startup.directory);
     // Git's login profile respects the selected directory when this is set.
@@ -259,12 +274,19 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     }
 
     let (output_tx, output_rx) = mpsc::sync_channel::<Vec<u8>>(8);
+    let mut highlight_stages =
+        super::highlighting::StageObserver::new(startup.highlight_token.as_deref());
     let reader = std::thread::spawn(move || {
         let mut buffer = [0; 16384];
         let mut forwarding = true;
         while let Ok(size) = output_read.read(&mut buffer) {
             if size == 0 {
                 break;
+            }
+            if let Some(stage) = highlight_stages.observe(&buffer[..size]) {
+                crate::logging::record_local_terminal_host_failure(&format!(
+                    "local-highlight stage={stage}: shell initialization unavailable"
+                ));
             }
             if forwarding && output_tx.send(buffer[..size].to_vec()).is_err() {
                 forwarding = false;
@@ -280,6 +302,7 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
         &Response::Ready {
             elevated: identity.elevated,
             label: program.label,
+            highlight: highlight.info.clone(),
         },
     )
     .map_err(|e| startup::failure("host-ready-write", e))?;
@@ -320,6 +343,7 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     });
 
     let mut exit_code = None;
+    let mut dimensions = (startup.columns, startup.rows);
     loop {
         if unsafe { WaitForSingleObject(child.0 .0, 0) } == WAIT_OBJECT_0 {
             let mut code = 0;
@@ -337,13 +361,19 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
                 }
             }
             Ok(Request::Resize { columns, rows }) if protocol::dimensions(columns, rows) => unsafe {
-                ResizePseudoConsole(
+                if dimensions == (columns, rows) {
+                    continue;
+                }
+                let result = ResizePseudoConsole(
                     console.0,
                     COORD {
                         X: columns as i16,
                         Y: rows as i16,
                     },
                 );
+                if result >= 0 {
+                    dimensions = (columns, rows);
+                }
             },
             Ok(Request::Stop {}) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -431,6 +461,7 @@ mod tests {
                     columns: 100,
                     rows: 30,
                     elevated: fstty_broker::windows::current_identity().unwrap().elevated,
+                    highlight_token: None,
                 }),
             )
             .await
@@ -483,6 +514,14 @@ mod tests {
     }
 
     async fn read_until(pipe: &mut NamedPipeServer, marker: &str) -> String {
+        read_until_recorded(pipe, marker, None).await
+    }
+
+    async fn read_until_recorded(
+        pipe: &mut NamedPipeServer,
+        marker: &str,
+        trace: Option<&std::path::Path>,
+    ) -> String {
         let mut bytes = Vec::new();
         loop {
             match protocol::receive::<Response>(pipe).await.unwrap() {
@@ -493,6 +532,9 @@ mod tests {
                     }
                     bytes.extend(data);
                     let output = String::from_utf8_lossy(&bytes);
+                    if let Some(path) = trace {
+                        std::fs::write(path, output.as_bytes()).unwrap();
+                    }
                     if output.contains(marker) {
                         return output.into_owned();
                     }
@@ -503,6 +545,209 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires a dedicated Windows PowerShell fixture directory; no UAC or user commands"]
+    async fn conpty_highlight_powershell_fixture() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("FSTTY_HIGHLIGHT_FIXTURE_ROOT")
+                .expect("explicit fixture root required"),
+        );
+        let directory = root.join(format!("powershell-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir(directory.join("FixtureFolder")).unwrap();
+        let token = "e6b4ea51-2f6b-4449-9550-f4b20082a620";
+        let elevated = fstty_broker::windows::current_identity().unwrap().elevated;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let mut pipe = windows::listener(&nonce).unwrap();
+        let path = directory.display().to_string();
+        let helper = std::thread::spawn(move || {
+            let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
+            serve(
+                &mut client,
+                Startup {
+                    shell: LocalShell::Powershell,
+                    directory: path,
+                    columns: 200,
+                    rows: 30,
+                    elevated,
+                    highlight_token: Some(token.into()),
+                },
+            )
+        });
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            pipe.connect().await.unwrap();
+            match protocol::receive::<Response>(&mut pipe).await.unwrap() {
+                Response::Ready { highlight: Some(_), elevated: actual, label, .. } => {
+                    assert_eq!(actual, elevated);
+                    std::fs::write(root.join("powershell-fixture-info.json"),
+                        serde_json::to_vec_pretty(&serde_json::json!({"shell": label, "elevated": actual, "uacRequested": false})).unwrap()).unwrap();
+                }
+                other => panic!("unexpected startup response: {other:?}"),
+            }
+            let mut trace = read_until_recorded(&mut pipe, &format!("fstty-highlight:{token}:input"), Some(&root.join("powershell-progress.txt"))).await;
+            assert!(trace.contains(&format!("fstty-highlight:{token}:ready")));
+            for command in ["Write-Output ('ERROR: ' + 'fixture')\r", "Get-ChildItem\r"] {
+                send_input(&mut pipe, command).await;
+                trace.push_str(
+                    &read_until(&mut pipe, &format!("fstty-highlight:{token}:input")).await,
+                );
+            }
+            assert!(!trace.contains(&format!("fstty-highlight:{token}:failed:")));
+            let execute = format!("fstty-highlight:{token}:execute");
+            let prompt = format!("fstty-highlight:{token}:prompt");
+            let output = trace
+                .split(&execute)
+                .nth(1)
+                .unwrap()
+                .split(&prompt)
+                .next()
+                .unwrap();
+            assert!(output.contains("ERROR: fixture"));
+            std::fs::write(root.join("powershell-trace.txt"), trace).unwrap();
+            protocol::send(&mut pipe, &Request::Stop {}).await.unwrap();
+        })
+        .await;
+        let _ = protocol::send(&mut pipe, &Request::Stop {}).await;
+        drop(pipe);
+        helper.join().unwrap().unwrap();
+        result.expect("PowerShell highlight fixture timed out");
+    }
+
+    // Run the compiled test executable inside Windows Sandbox. All file writes
+    // are confined to a fresh test directory; this never requests elevation.
+    #[tokio::test]
+    #[ignore = "Requires a dedicated Windows CMD fixture directory; no UAC or user commands"]
+    async fn conpty_highlight_cmd_fixture() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("FSTTY_HIGHLIGHT_FIXTURE_ROOT")
+                .expect("explicit fixture root required"),
+        );
+        let directory = root.join(format!("cmd-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir(directory.join("FixtureFolder")).unwrap();
+        std::fs::create_dir(directory.join("FixtureFolder").join("InnerFolder")).unwrap();
+        let token = "e6b4ea51-2f6b-4449-9550-f4b20082a620";
+        let elevated = fstty_broker::windows::current_identity().unwrap().elevated;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let mut pipe = windows::listener(&nonce).unwrap();
+        let path = directory.display().to_string();
+        let helper = std::thread::spawn(move || {
+            let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
+            serve(
+                &mut client,
+                Startup {
+                    shell: LocalShell::Cmd,
+                    directory: path,
+                    columns: 200,
+                    rows: 12,
+                    elevated,
+                    highlight_token: Some(token.into()),
+                },
+            )
+        });
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            pipe.connect().await.unwrap();
+            assert!(matches!(
+                protocol::receive::<Response>(&mut pipe).await.unwrap(),
+                Response::Ready {
+                    highlight: Some(_),
+                    ..
+                }
+            ));
+            let mut trace = read_until(&mut pipe, &format!("fstty-highlight:{token}:input")).await;
+            for command in [
+                "fstty_missing_fixture_command\r",
+                "dir\r",
+                "cd FixtureFolder\r",
+                "dir\r",
+                "cd ..\r",
+                "dir\r",
+            ] {
+                send_input(&mut pipe, command).await;
+                trace.push_str(
+                    &read_until(&mut pipe, &format!("fstty-highlight:{token}:input")).await,
+                );
+            }
+            if std::env::var_os("FSTTY_TEST_HIGHLIGHT_RESIZE").is_some() {
+                // The input marker may precede the final cursor-visibility data.
+                while let Ok(Ok(Response::Data { data })) = tokio::time::timeout(
+                    Duration::from_millis(300),
+                    protocol::receive::<Response>(&mut pipe),
+                )
+                .await
+                {
+                    trace.push_str(&String::from_utf8_lossy(&data));
+                }
+                protocol::send(
+                    &mut pipe,
+                    &Request::Resize {
+                        columns: 200,
+                        rows: 12,
+                    },
+                )
+                .await
+                .unwrap();
+                let mut redraw = Vec::new();
+                while let Ok(Ok(Response::Data { data })) = tokio::time::timeout(
+                    Duration::from_millis(300),
+                    protocol::receive::<Response>(&mut pipe),
+                )
+                .await
+                {
+                    redraw.extend(data);
+                }
+                std::fs::write(root.join("cmd-resize.txt"), &redraw).unwrap();
+                assert!(
+                    redraw.is_empty(),
+                    "unchanged dimensions must not redraw shell history"
+                );
+                protocol::send(
+                    &mut pipe,
+                    &Request::Resize {
+                        columns: 180,
+                        rows: 12,
+                    },
+                )
+                .await
+                .unwrap();
+                while let Ok(Ok(Response::Data { data })) = tokio::time::timeout(
+                    Duration::from_millis(300),
+                    protocol::receive::<Response>(&mut pipe),
+                )
+                .await
+                {
+                    redraw.extend(data);
+                }
+                std::fs::write(root.join("cmd-size-change.txt"), &redraw).unwrap();
+                trace.push_str(&String::from_utf8_lossy(&redraw));
+            }
+            let execute = format!("fstty-highlight:{token}:execute");
+            let prompt = format!("fstty-highlight:{token}:prompt");
+            let output = trace
+                .split(&execute)
+                .nth(1)
+                .unwrap()
+                .split(&prompt)
+                .next()
+                .unwrap();
+            assert!(output.contains("fstty_missing_fixture_command'"));
+            let output = trace
+                .split(&execute)
+                .nth(2)
+                .unwrap()
+                .split(&prompt)
+                .next()
+                .unwrap();
+            assert!(output.contains("FixtureFolder"));
+            std::fs::write(root.join("cmd-trace.txt"), trace).unwrap();
+            protocol::send(&mut pipe, &Request::Stop {}).await.unwrap();
+        })
+        .await;
+        drop(pipe);
+        helper.join().unwrap().unwrap();
+        result.expect("highlight fixture timed out");
     }
 
     // Run the compiled test executable inside Windows Sandbox. All file writes
@@ -526,7 +771,7 @@ mod tests {
                 let path = directory.display().to_string();
                 let helper = std::thread::spawn(move || {
                     let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
-                    serve(&mut client, Startup { shell, directory: path, columns: 100, rows: 30, elevated })
+                    serve(&mut client, Startup { shell, directory: path, columns: 100, rows: 30, elevated, highlight_token: None })
                 });
                 pipe.connect().await.unwrap();
                 assert!(matches!(protocol::receive::<Response>(&mut pipe).await.unwrap(), Response::Ready { elevated: actual, .. } if actual == elevated));

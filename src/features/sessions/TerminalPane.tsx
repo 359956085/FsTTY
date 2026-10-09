@@ -23,6 +23,7 @@ import type {
   TerminalEvent,
   TerminalColorScheme,
   TerminalResumeEvent,
+  PreservedTerminalAttachment,
 } from "../../shared/api/types";
 import { isLocalSession } from "../../shared/api/types";
 import { isComposingKey } from "../../shared/ui/focus";
@@ -66,6 +67,7 @@ import { matchesShortcut } from "../../shared/shortcuts";
 import type { ResolvedTheme } from "../../shared/theme";
 import { createCommandHistoryInsertion } from "./terminalCommandHistory";
 import { decodeBase64 } from "./terminalProtocol";
+import { createLocalTerminalHighlighter } from "./localTerminalHighlight";
 import {
   createTerminalShellIntegration,
   SHELL_OSC_IDENTIFIERS,
@@ -155,6 +157,13 @@ export const TerminalPane = memo(function TerminalPane({
   const localRef = useRef(local);
   localRef.current = local;
   const localRequestRef = useRef<string | null>(null);
+  const localHighlightRef = useRef<ReturnType<typeof createLocalTerminalHighlighter> | null>(null);
+  const [highlightWarning, setHighlightWarning] = useState(false);
+  useEffect(() => {
+    if (!highlightWarning) return;
+    const timer = window.setTimeout(() => setHighlightWarning(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, [highlightWarning]);
   const launchOverrideRef = useRef(runAsAdmin ?? (isLocalSession(session) ? session.runAsAdmin : undefined));
   const [localStartingAdmin, setLocalStartingAdmin] = useState<boolean | null>(null);
   const [localExit, setLocalExit] = useState<{ code: number | null; stopped?: boolean } | null>(null);
@@ -298,6 +307,7 @@ export const TerminalPane = memo(function TerminalPane({
     if (terminal) {
       terminal.options.theme = getTerminalTheme(theme, terminalColorScheme);
       terminal.options.minimumContrastRatio = terminalColorScheme === "default" ? 1 : 4.5;
+      localHighlightRef.current?.refresh();
     }
   }, [theme, terminalColorScheme]);
 
@@ -436,7 +446,10 @@ export const TerminalPane = memo(function TerminalPane({
   }
 
   function handleShellOsc(identifier: 7 | 133 | 633 | 777, data: string) {
-    if (localRef.current) return true;
+    if (localRef.current) {
+      if (identifier === 777) localHighlightRef.current?.handleOsc(data);
+      return true;
+    }
     return shellIntegrationRef.current?.handleOsc(identifier, data) ?? true;
   }
 
@@ -623,6 +636,7 @@ export const TerminalPane = memo(function TerminalPane({
         onClipboardWriteError: () => reportClipboardErrorRef.current(),
         theme: themeRef.current,
         terminalColorScheme: terminalColorSchemeRef.current,
+        localHighlight: localRef.current,
       });
       if (!runtime) {
         return;
@@ -1012,6 +1026,9 @@ export const TerminalPane = memo(function TerminalPane({
         sendInputRef.current(data);
       });
       terminalRef.current = terminal;
+      if (localRef.current) localHighlightRef.current = createLocalTerminalHighlighter(terminal, () => {
+        if (mountedRef.current) setHighlightWarning(true);
+      });
       fitAddonRef.current = fitAddon;
       unregisterLightweightTerminal = registerLightweightTerminal(runtimeId, {
         cancelPreparation: cancelLightweightPreparation,
@@ -1028,6 +1045,7 @@ export const TerminalPane = memo(function TerminalPane({
             columns: Math.max(1, terminal.cols),
             rows: Math.max(1, terminal.rows),
             shellIntegrationToken: shellIntegrationRef.current?.snapshotToken(),
+            localHighlightState: localHighlightRef.current?.snapshot(),
           };
         },
         isBlocked: () =>
@@ -1103,6 +1121,8 @@ export const TerminalPane = memo(function TerminalPane({
       remoteMouseActivityRef.current?.stop();
       remoteMouseActivityRef.current = null;
       unregisterLightweightTerminal?.();
+      localHighlightRef.current?.dispose();
+      localHighlightRef.current = null;
       unregisterLightweightTerminal = null;
       cancelLightweightPreparation();
       resumeStreamRef.current?.dispose();
@@ -1174,6 +1194,8 @@ export const TerminalPane = memo(function TerminalPane({
     if (attempt === null) return;
     const requestId = crypto.randomUUID();
     localRequestRef.current = requestId;
+    setHighlightWarning(false);
+    localHighlightRef.current?.begin(session.shell === "gitBash" ? null : requestId);
     const launchOverride = launchOverrideRef.current;
     setLocalStartingAdmin(launchOverride ?? session.runAsAdmin);
     clearPendingInput();
@@ -1185,12 +1207,16 @@ export const TerminalPane = memo(function TerminalPane({
     channel.onmessage = (event) => {
       if (!current() || !lifecycle.acceptsEvent(attempt, channel, event.connectionId)) return;
       if (event.kind === "data") {
-        if (!consumeLightweightBarrier(event.data)) terminal.write(decodeBase64(event.data));
+        if (!consumeLightweightBarrier(event.data)) {
+          const bytes = decodeBase64(event.data);
+          if (localHighlightRef.current) localHighlightRef.current.write(bytes); else terminal.write(bytes);
+        }
         return;
       }
       lifecycle.reset();
       clearPendingInput();
       setLocalExit((previous) => ({ code: event.kind === "disconnected" ? event.exitCode ?? null : null, stopped: previous?.stopped }));
+      localHighlightRef.current?.ended();
       reportState(event.kind === "error" ? "error" : "disconnected", event.kind === "error" ? event.message : null);
     };
     lifecycle.attachChannel(attempt, channel);
@@ -1201,6 +1227,9 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       launchOverrideRef.current = connection.local?.elevated ?? launchOverrideRef.current;
+      if (!connection.local?.highlight) localHighlightRef.current?.begin(null);
+      else if (connection.local.highlight.failed) localHighlightRef.current?.unavailable();
+      else localHighlightRef.current?.started();
       onConnected(runtimeId, connection);
       flushInput();
       fitAndResize();
@@ -1512,13 +1541,16 @@ export const TerminalPane = memo(function TerminalPane({
           await barrier.promise;
           if (barrier.cancelled) throw new Error("终端快照已取消");
           // 写队列排空也受同一超时约束，避免失效 WebView 永久卡住切换按钮。
-          await new Promise<void>((resolve) => runtime.terminal.write("", resolve));
+          await new Promise<void>((resolve) => {
+            if (localHighlightRef.current) localHighlightRef.current.write("", resolve); else runtime.terminal.write("", resolve);
+          });
           if (barrier.cancelled || terminalRef.current !== runtime.terminal) {
             throw new Error("终端快照已取消");
           }
           return {
             full: runtime.serializeAddon.serialize({ scrollback: 10_000 }),
             viewport: runtime.serializeAddon.serialize({ scrollback: 0 }),
+            localHighlightState: localHighlightRef.current?.snapshot(),
           };
         })(),
         new Promise<never>((_, reject) => {
@@ -1554,11 +1586,19 @@ export const TerminalPane = memo(function TerminalPane({
     reportStateRef.current("connecting");
     const channel = new Channel<TerminalResumeEvent>();
     lifecycle.attachChannel(attemptId, channel);
+    let highlightAttachment: PreservedTerminalAttachment | null = null;
     const stream = createTerminalResumeStream({
       connectionId: preserved.connectionId,
       isCurrent,
-      write: (data, callback) => runtime.terminal.write(data, callback),
+      write: (data, callback) => {
+        if (localHighlightRef.current) localHighlightRef.current.write(data, callback); else runtime.terminal.write(data, callback);
+      },
       consumeBarrier: consumeLightweightBarrier,
+      onSnapshot: localRef.current ? () => {
+        const attachment = highlightAttachment;
+        if (attachment?.connection.local) localHighlightRef.current?.restore(attachment.localHighlightState,
+          attachment.connection.local.highlight?.token ?? null, attachment.truncated);
+      } : undefined,
       onEnd: (event) => {
         markPreservedTerminalAttached(runtimeId);
         lifecycle.reset();
@@ -1598,6 +1638,8 @@ export const TerminalPane = memo(function TerminalPane({
           runtime.terminal.resize(attachment.columns, attachment.rows);
           lifecycle.setConnection(attemptId, attachment.connection);
           if (attachment.connection.local) launchOverrideRef.current = attachment.connection.local.elevated;
+          highlightAttachment = attachment;
+          localHighlightRef.current?.begin(null);
           if (!localRef.current) shellIntegrationRef.current?.restore(attachment.shellIntegrationToken);
           onDirectoryChangeRef.current(runtimeId, attachment.currentPath);
           onConnected(runtimeId, attachment.connection);
@@ -1807,6 +1849,7 @@ export const TerminalPane = memo(function TerminalPane({
           {t(CLIPBOARD_MESSAGE_KEYS[clipboardError])}
         </div>
       ) : null}
+      {highlightWarning ? <div aria-live="polite" className="terminal-clipboard-error error-banner">{t("settings.localHighlightUnavailable")}</div> : null}
       {connectionState !== "connected" && !terminalLoginPrompt ? (
         <div className={local ? "terminal-connect-overlay local-terminal-overlay" : "terminal-connect-overlay"}>
           <Link2Off size={28} />

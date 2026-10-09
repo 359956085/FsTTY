@@ -9,6 +9,7 @@ interface TerminalResumeStreamOptions {
   write(data: string | Uint8Array, callback?: () => void): void;
   consumeBarrier(data: string): boolean;
   onEnd(event: TerminalEnd): void;
+  onSnapshot?(): void;
 }
 
 const CHUNK_BYTES = 192 * 1024;
@@ -70,6 +71,7 @@ export function createTerminalResumeStream(options: TerminalResumeStreamOptions)
       expectedChunks = event.totalChunks;
       nextChunk += 1;
       options.write(bytes);
+      if (complete() && options.onSnapshot) options.write("", () => { if (isCurrent()) options.onSnapshot?.(); });
     } else if (event.kind === "data") {
       if (end) return;
       if (!complete()) throw new Error("终端恢复快照不完整");
