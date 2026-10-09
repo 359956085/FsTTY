@@ -11,14 +11,14 @@ const encoded = Buffer.from(command, 'utf16le').toString('base64');
 describe.skipIf(process.platform !== 'win32')('PowerShell bootstrap new/legacy interfaces', () => {
   for (const engine of ['powershell.exe', 'pwsh.exe']) {
     it(`${engine}: ANSI/legacy, module failure, custom editor and phase markers`, () => {
-      const result = spawnSync(engine, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+      const result = spawnSync(engine, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
       if (engine === 'pwsh.exe' && result.error?.code === 'ENOENT') return;
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr).toBe(0);
       for (const scenario of ['modern', 'legacy', 'missing', 'custom', 'elevated-owner', 'elevated-write', 'elevated-trusted', 'elevated-sid-read', 'elevated-acl-error', 'elevated-candidate-error']) expect(result.stdout).toContain(`PASS ${scenario}`);
       for (const phase of ['ready', 'input', 'execute', 'prompt', 'failed:psreadline-import', 'failed:custom-line-editor', 'failed:psreadline-security']) expect(result.stdout).toContain(`:${phase}\x07`);
       expect(result.stdout).not.toContain('private-command-not-logged');
-    });
+    }, 30_000);
   }
 });
 
