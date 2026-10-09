@@ -27,7 +27,7 @@ const props: ComponentProps<typeof AboutSettingsPanel> = {
     allowRemoteClipboardWrite: true, recordMcpToolInputs: false, ignoredUpdateVersion: null,
     mcpEnabled: false, mcpHttpEnabled: false, mcpHttpPort: 37653, mcpGroupPermissions: [], shortcuts: DEFAULT_SHORTCUTS,
   },
-  updater: { busy: false, currentVersion: "1.7.2", phase: "idle" } as AppUpdaterController,
+  updater: { busy: false, currentVersion: "2.0.0", phase: "idle" } as AppUpdaterController,
 };
 function deferContent() {
   let finish!: () => void;
@@ -54,7 +54,7 @@ describe("更新日志完整焦点生命周期", () => {
     expect(document.activeElement).toBe(pendingClose);
     const restore = vi.spyOn(trigger, "focus");
     await act(async () => finish());
-    await screen.findByRole("heading", { name: "v1.7.2" });
+    await screen.findByRole("heading", { name: "v2.0.0" });
     expect(restore).not.toHaveBeenCalled();
     const close = screen.getAllByRole("button", { name: "sessions.close" })[0];
     expect(document.activeElement).toBe(close);
@@ -62,7 +62,7 @@ describe("更新日志完整焦点生命周期", () => {
     expect(document.activeElement).toBe(trigger);
     expect(restore).toHaveBeenCalledOnce();
     await openHistory();
-    expect(await screen.findByRole("heading", { name: "v1.7.2" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "v2.0.0" })).toBeTruthy();
   });
 
   it.each(["Escape", "button", "backdrop"])("加载期间 %s 取消后，晚到的内容不重开弹窗", async (method) => {
@@ -87,7 +87,7 @@ describe("更新日志完整焦点生命周期", () => {
   it.each(["top", "footer", "Escape", "backdrop"])("正文 Tab 双向循环，%s 关闭恢复入口", async (method) => {
     const { unmount } = render(<AboutSettingsPanel {...props} />);
     const trigger = await openHistory();
-    await screen.findByRole("heading", { name: "v1.7.2" });
+    await screen.findByRole("heading", { name: "v2.0.0" });
     const dialog = screen.getByRole("dialog");
     const [top, footer] = within(dialog).getAllByRole("button", { name: "sessions.close" });
     expect(document.activeElement).toBe(top);
@@ -102,7 +102,7 @@ describe("更新日志完整焦点生命周期", () => {
     expect(document.activeElement).toBe(footer);
     fireEvent.keyDown(footer, { key: "Tab" });
     expect(document.activeElement).toBe(top);
-    fireEvent.mouseDown(screen.getByRole("heading", { name: "v1.7.2" }));
+    fireEvent.mouseDown(screen.getByRole("heading", { name: "v2.0.0" }));
     expect(screen.getByRole("dialog")).toBe(dialog);
     if (method === "top") fireEvent.click(top);
     else if (method === "footer") fireEvent.click(footer);
@@ -120,7 +120,7 @@ describe("更新日志完整焦点生命周期", () => {
   it("语言及父组件更新保持当前焦点，入口随页面卸载时不残留聚焦", async () => {
     const { rerender, unmount } = render(<AboutSettingsPanel {...props} />);
     const trigger = await openHistory();
-    await screen.findByRole("heading", { name: "v1.7.2" });
+    await screen.findByRole("heading", { name: "v2.0.0" });
     const footer = screen.getAllByRole("button", { name: "sessions.close" })[1];
     footer.focus();
     loading.language = "en-US";

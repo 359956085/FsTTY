@@ -5,14 +5,14 @@
 ## 发布及验证运行
 
 - 推送与仓库版本一致的 `vX.Y.Z` 标签触发 Tauri 更新签名和正式发布。同一标签的运行串行排队，不自动取消正在进行的发布。
-- 从默认分支手动运行且保持 `publish=false` 时进入无签名验证模式，不读取 Tauri 更新私钥。它上传名称带 `UNSIGNED` 的安装包、双语警告和验证清单，保留十四天，不创建更新签名、`latest.json`、GitHub Release 或 CNB Release。
+- 从默认分支手动运行且保持 `publish=false` 时进入无签名验证模式，不读取 Tauri 更新私钥。它上传名称带 `UNSIGNED` 的安装包、双语警告和验证清单，保留十四天，不创建更新签名、`latest.json` 或 GitHub Release。
 - 手动设置 `publish=true` 时必须从与仓库版本一致的标签运行，并进入与标签推送相同的更新签名发布模式。无签名验证从标签或非默认分支启动时会在准备阶段失败。
 - 对同一标签手动运行一次 `cold-cache=true`，再运行一次 `cold-cache=false`。后者需等待该提交在 main 的预热任务成功。对比 Actions 总耗时、缓存命中、恢复体积及步骤摘要；冷缓存模式只查缓存信息，不恢复或保存 Rust 缓存。
 - 正式发布前创建草稿，上传安装包、签名和 `latest.json`，检查数量、大小、SHA-256 及标签提交，再转为正式发布。
 
 正式发布的 Tauri 更新签名使用 `TAURI_SIGNING_PUBLIC_KEY` 仓库 Variable，以及 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。项目不使用 Windows Authenticode 证书，Broker、桌面程序和安装包的 Windows 签名状态均应为 `NotSigned`；正式发布不读取 PFX 或时间戳配置。
 
-无签名验证直接使用仓库配置中的更新公钥；若同时配置 `TAURI_SIGNING_PUBLIC_KEY`，它仍必须与仓库一致。正式发布要求该 Variable 存在并在 Broker 和桌面编译前核对。`CNB_TOKEN` 只传给同步步骤，main 预热和无签名验证不读取任何发布 Secret。正式发布缺少更新私钥、更新签名或清单时会在上传前失败。
+无签名验证直接使用仓库配置中的更新公钥；若同时配置 `TAURI_SIGNING_PUBLIC_KEY`，它仍必须与仓库一致。正式发布要求该 Variable 存在并在 Broker 和桌面编译前核对。main 预热和无签名验证不读取任何发布 Secret。正式发布缺少更新私钥、更新签名或清单时会在上传前失败。
 
 ## 缓存与编译
 
@@ -31,7 +31,6 @@ Tauri 更新签名用于让已安装的 FsTTY 校验更新包未被替换，并�
 ## 失败恢复
 
 - GitHub 附件上传或校验失败：草稿保留，在 Actions 选择 **Re-run failed jobs**，复用该次运行已经构建的 Artifact。
-- CNB 同步失败：同样只重跑失败任务。GitHub 已正式发布且附件完全一致时，跳过附件修改，再用本地产物同步 CNB，不下载 GitHub 附件或重新编译。
 - 不要用 **Re-run all jobs** 代替恢复：重新打包、签名及生成时间可能改变文件，正式 Release 不允许覆盖不同附件。
 - 标签移动、未知附件、Windows PE 意外带有 Authenticode、更新签名缺失、清单哈希错误或更新元数据不匹配均直接失败，不能通过恢复绕过。
 

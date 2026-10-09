@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.7.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -80,7 +80,7 @@ Normal, minimized, maximized, and lightweight modes share one GUI instance per l
 
 ## Quick Start
 
-1. Install FsTTY from [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) or [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
+1. Install FsTTY from [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest).
 2. Create an SSH session and complete the initial host-key verification.
 3. Open **Settings → MCP**.
 4. Enable the required session groups under **Permissions**, then grant only the needed tool categories.
@@ -143,7 +143,7 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 | Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
 | File management | SFTP browse, upload, Shift/Ctrl selection, batch download (up to 5 concurrent files with a waiting queue), batch delete, drag-to-move, create, rename, and copy path |
 | Device status | CPU and memory trends, disk, network traffic, OS, and uptime |
-| Updates | Manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
+| Updates | GitHub checks with official mirror fallback, manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
 
 Selecting a history entry with Enter or the mouse inserts it into the terminal without executing it. The history window supports search, keyboard selection, and persisted drag resizing.
 
@@ -151,7 +151,7 @@ Under Settings → General → Terminal text colors, choose Follow app theme or 
 
 ## Download and Install
 
-Prefer [CNB Releases](https://cnb.cool/359956085/FsTTY/-/releases) in mainland China, or use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
+Use [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest), then download a Windows x64 installer:
 
 - The development branch produces `*-setup.exe` (NSIS) with a custom desktop directory; the required credential service, management tool, and uninstaller remain in Program Files. See the [installation guide](doc/windows-installation.md).
 - `v1.6.2` supports installation and updates from elevated terminals, built-in Administrator, and interactive UAC-disabled sessions. A validated linked token restores standard rights; otherwise the installer clearly enters administrator compatibility mode. Installer logs are under `C:\ProgramData\FsTTY\logs`, and the installation guide documents the read-only diagnostic script.

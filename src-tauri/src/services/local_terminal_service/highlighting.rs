@@ -398,10 +398,15 @@ mod tests {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(args.split_whitespace().last().unwrap())
             .unwrap();
+        let (code_units, remainder) = bytes.as_chunks::<2>();
+        assert!(
+            remainder.is_empty(),
+            "UTF-16 input must contain complete code units"
+        );
         let decoded = String::from_utf16(
-            &bytes
-                .chunks_exact(2)
-                .map(|v| u16::from_le_bytes([v[0], v[1]]))
+            &code_units
+                .iter()
+                .map(|v| u16::from_le_bytes(*v))
                 .collect::<Vec<_>>(),
         )
         .unwrap();

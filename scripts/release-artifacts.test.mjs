@@ -249,6 +249,10 @@ describe("发布产物与恢复", () => {
 
   it("验证与构建并行，正式发布只要求更新签名且预热不访问发布密钥", async () => {
     const workflow = await readFile(new URL("../.github/workflows/release-windows.yml", import.meta.url), "utf8");
+    const publish = workflow.slice(workflow.indexOf("\n  publish:"));
+    expect(publish).toContain("name: GitHub 发布");
+    expect(publish.match(/run: [^\r\n]+/g)).toEqual(["run: node scripts/publish-github-release.mjs"]);
+    expect(publish.match(/secrets\.[A-Z_]+/g)).toEqual(["secrets.GITHUB_TOKEN"]);
     expect(workflow).toContain("needs: [prepare, verify, build]");
     expect(workflow.match(/needs: prepare/g)).toHaveLength(2);
     expect(workflow).toContain("cancel-in-progress: false");

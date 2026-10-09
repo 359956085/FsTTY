@@ -12,6 +12,18 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
+  it("从真实日志提取 v2.0.0 双语说明，不混入历史内容", () => {
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    expect(changelog).toContain("## [2.0.0] - 2026-10-09");
+    const notes = extractVersionReleaseNotes(changelog, "v2.0.0");
+    expect(notes.match(/^- /gm)).toHaveLength(8);
+    for (const expected of ["本地终端", "输出高亮", "焦点恢复", "官方镜像", "local CMD", "output highlighting", "focus restoration", "official mirror"]) {
+      expect(notes).toContain(expected);
+    }
+    expect(notes).not.toContain("## [1.7.2]");
+    expect(notes).not.toContain("Unreleased");
+  });
+
   it("从真实日志提取 v1.6.2 合并后的完整说明", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain("## [1.6.2] - 2026-09-19");

@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-1.7.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.0-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -96,7 +96,7 @@ CPU、内存曲线在轻量期间继续采样，恢复后显示最近 10 分钟�
 
 ## 快速开始
 
-1. 从 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases) 或 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
+1. 从 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 安装 FsTTY。
 2. 创建 SSH 会话并完成首次主机密钥确认。
 3. 打开“设置 → MCP”。
 4. 在“权限”中开启需要暴露的会话分组，并按需授权工具类别。
@@ -157,7 +157,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 | 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
 | 文件管理 | SFTP 浏览、上传、Shift/Ctrl 多选、批量下载（最多 5 个并发，其余排队）、批量删除、拖放移动、新建目录、重命名和复制路径 |
 | 设备状态 | CPU、内存趋势、磁盘、网络上下行、操作系统和运行时间 |
-| 自动更新 | CNB/GitHub 并发检查、版本忽略、Markdown 更新说明和更新代理 |
+| 自动更新 | GitHub 检查与官方镜像回退、版本忽略、Markdown 更新说明和更新代理 |
 
 历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
 
@@ -165,7 +165,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 
 ## 下载与安装
 
-优先前往 [CNB Releases（国内）](https://cnb.cool/359956085/FsTTY/-/releases)，也可使用 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
+前往 [GitHub Releases](https://github.com/359956085/FsTTY/releases/latest) 下载 Windows x64 安装包：
 
 - 当前开发分支生成 `*-setup.exe`（NSIS），桌面支持自选目录；凭据服务、管理工具及卸载入口固定在 Program Files。详见[安装与覆盖升级](doc/windows-installation.md)。
 - `v1.6.2` 支持从已提权终端、内置 Administrator 和关闭 UAC 的交互会话安装或更新；有可验证的关联普通令牌时恢复普通权限，否则明确进入管理员兼容模式。安装日志位于 `C:\ProgramData\FsTTY\logs`，只读诊断脚本见安装文档。

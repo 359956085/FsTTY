@@ -6,6 +6,25 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-09
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 新增 CMD、PowerShell 和 Git Bash 本地终端，支持普通与管理员权限启动；统一新建表单，并沿用会话分组与多标签交互。
+- CMD、PowerShell 支持输入命令和明确的错误、警告、目录输出高亮，颜色沿用终端文字配色；修复切换标签和调整尺寸后的历史高亮保留。
+- 优化弹窗、右键菜单、文件与分组操作的键盘导航和焦点恢复，统一会话类型图标、标签状态及侧栏衔接，并增加可配置的工作区快捷键。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Added local CMD, PowerShell, and Git Bash terminals with standard or administrator launch options, unified creation forms, session groups, and multiple tabs.
+- Added command input and explicit error, warning, and directory output highlighting for CMD and PowerShell using the selected terminal palette; fixed historical highlights disappearing after tab switches or resizing.
+- Improved keyboard navigation and focus restoration in dialogs, context menus, file and group operations; unified session icons, tab states, and sidebar alignment, and added configurable workspace shortcuts.
+
+<!-- release-notes:en-US:end -->
+
 ## [1.7.2] - 2026-09-23
 
 <!-- release-notes:zh-CN:start -->
@@ -67,7 +86,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 #### Windows 发布验证
 
 - 从默认分支手动运行 Windows 发布工作流且 `publish=false` 时，执行完整的前端、Rust、Broker、桌面和 NSIS 无签名验证构建，无需 Windows 代码签名证书或 Tauri 更新私钥。
-- 无签名安装包会以 `UNSIGNED` 文件名和独立验证清单上传，仅用于 Windows Sandbox 或虚拟机验收，不生成更新签名、`latest.json`、GitHub Release 或 CNB Release。
+- 无签名安装包会以 `UNSIGNED` 文件名和独立验证清单上传，仅用于 Windows Sandbox 或虚拟机验收，不生成更新签名、`latest.json`或 GitHub Release。
 - 标签推送或 `publish=true` 继续发布未带 Authenticode 的 Windows 安装包，但强制要求 Tauri 更新私钥、更新签名和 `latest.json`；正式发布不再读取 PFX 或时间戳配置。
 
 #### Windows 管理员兼容
@@ -95,7 +114,7 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 #### Windows Release Validation
 
 - Manually running the Windows release workflow from the default branch with `publish=false` now performs the complete frontend, Rust, broker, desktop, and unsigned NSIS validation build without requiring a Windows code-signing certificate or Tauri updater private key.
-- The unsigned installer is uploaded with an `UNSIGNED` filename and a separate validation manifest for Windows Sandbox or virtual-machine testing only. It does not generate an updater signature, `latest.json`, GitHub Release, or CNB Release.
+- The unsigned installer is uploaded with an `UNSIGNED` filename and a separate validation manifest for Windows Sandbox or virtual-machine testing only. It does not generate an updater signature, `latest.json`, or GitHub Release.
 - Tag pushes and `publish=true` continue to publish Windows installers without Authenticode, while requiring the Tauri updater private key, updater signature, and `latest.json`. Production releases no longer read PFX or timestamp settings.
 
 #### Windows Administrator Compatibility

@@ -160,7 +160,7 @@ jobs:
           "- 未签名验证产物：$([Math]::Round($size / 1MB, 2)) MiB；Artifact 上传 $elapsed 秒；$env:ARTIFACT_URL" >> $env:GITHUB_STEP_SUMMARY
 
   publish:
-    name: GitHub 发布与 CNB 同步
+    name: GitHub 发布
     needs: [prepare, verify, build]
     if: needs.prepare.outputs.mode == 'release'
     runs-on: windows-latest
@@ -184,22 +184,3 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
         run: node scripts/publish-github-release.mjs
-      - name: 同步标签到 CNB
-        shell: pwsh
-        env:
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) { throw "缺少 Actions Secret：CNB_TOKEN" }
-          $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("cnb:$env:CNB_TOKEN"))
-          Write-Output "::add-mask::$auth"
-          git -c "http.extraHeader=Authorization: Basic $auth" push --force https://cnb.cool/359956085/FsTTY.git "$env:RELEASE_COMMIT`:refs/tags/$env:RELEASE_TAG"
-          if ($LASTEXITCODE -ne 0) { throw "CNB 标签同步失败" }
-      - name: 使用本地产物同步 CNB Release
-        shell: pwsh
-        env:
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
-        run: node scripts/sync-cnb-release.mjs 359956085/FsTTY "$env:RELEASE_TAG" "$env:RELEASE_COMMIT" artifacts/release-assets
