@@ -4,14 +4,16 @@ import { appendFile, copyFile, mkdir, readFile, readdir, rm, writeFile } from "n
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { extractVersionReleaseNotes } from "./extract-release-notes.mjs";
+import { releaseChannel } from "./release-version.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 export const sha256 = (data) => createHash("sha256").update(data).digest("hex");
 
 export function validateReleaseRef(ref, version) {
   const tag = `v${version}`;
-  if (!/^\d+\.\d+\.\d+$/.test(version) || ref !== `refs/tags/${tag}`) {
-    throw new Error("必须从与仓库版本一致的 vX.Y.Z 标签运行发布");
+  releaseChannel(version);
+  if (ref !== `refs/tags/${tag}`) {
+    throw new Error("必须从与仓库版本一致的 vX.Y.Z 或 vX.Y.Z-beta.N 标签运行发布");
   }
   return tag;
 }
@@ -43,6 +45,7 @@ export function affectsBuild(paths) {
 export function createUpdateManifest({ repo, tag, version, notes, createdAt, installer, signature }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("仓库名称无效");
   validateReleaseRef(`refs/tags/${tag}`, version);
+  if (releaseChannel(version) !== "stable") throw new Error("Beta 不生成在线更新清单");
   if (installer !== `FsTTY_${version}_x64-setup.exe` || !signature.trim()) {
     throw new Error("安装包名称或签名无效");
   }
@@ -66,11 +69,16 @@ export async function validateArtifacts(directory, { repo, tag, commit }) {
     throw new Error("产物的标签、提交、仓库或签名策略与本次发布不一致");
   }
   validateReleaseRef(`refs/tags/${tag}`, context.version);
+  const channel = releaseChannel(context.version);
+  if (context.channel !== channel) throw new Error("发布产物版本类型不一致");
   if (!/^[a-f\d]{40}$/.test(commit) || !Number.isFinite(Date.parse(context.createdAt))) {
     throw new Error("产物提交或生成时间无效");
   }
   const installer = `FsTTY_${context.version}_x64-setup.exe`;
-  const names = [installer, `${installer}.sig`, "latest.json"];
+  const names = [installer, `${installer}.sig`, ...(channel === "stable" ? ["latest.json"] : [])];
+  if (channel === "beta" && (await readdir(directory)).includes("latest.json")) {
+    throw new Error("Beta 产物不得包含 latest.json");
+  }
   if (!context.files || Object.keys(context.files).sort().join() !== [...names].sort().join()) {
     throw new Error("发布产物清单不完整");
   }
@@ -84,10 +92,13 @@ export async function validateArtifacts(directory, { repo, tag, commit }) {
     assets.push({ name, bytes, size: bytes.length, digest: `sha256:${sha256(bytes)}` });
   }
   const signature = assets[1].bytes.toString("utf8").trim();
-  const manifest = JSON.parse(assets[2].bytes.toString("utf8"));
-  const expected = createUpdateManifest({ ...context, installer, signature });
-  if (JSON.stringify(manifest) !== JSON.stringify(expected)) {
-    throw new Error("更新元数据的版本、平台、地址或签名与安装包不一致");
+  if (!signature) throw new Error("更新签名为空");
+  if (channel === "stable") {
+    const manifest = JSON.parse(assets[2].bytes.toString("utf8"));
+    const expected = createUpdateManifest({ ...context, installer, signature });
+    if (JSON.stringify(manifest) !== JSON.stringify(expected)) {
+      throw new Error("更新元数据的版本、平台、地址或签名与安装包不一致");
+    }
   }
   return { context, assets };
 }
@@ -140,6 +151,7 @@ $item = Get-Item -LiteralPath $env:FSTTY_VERIFY_FILE
 $signature = Get-AuthenticodeSignature -LiteralPath $env:FSTTY_VERIFY_FILE
 [pscustomobject]@{
   ProductVersion = $item.VersionInfo.ProductVersion
+  NumericVersion = "$($item.VersionInfo.FileMajorPart).$($item.VersionInfo.FileMinorPart).$($item.VersionInfo.FileBuildPart).$($item.VersionInfo.FilePrivatePart)"
   SignatureStatus = [string]$signature.Status
 } | ConvertTo-Json -Compress
 `;
@@ -163,7 +175,9 @@ function verifyUnsignedExecutables(version, installer) {
   ];
   for (const file of files) {
     const information = readPeInformation(file);
-    if (![version, `${version}.0`].includes(information.ProductVersion)) {
+    const allowed = releaseChannel(version) === "stable" ? [version, `${version}.0`] : [version];
+    if (!allowed.includes(information.ProductVersion)
+        || information.NumericVersion !== `${version.split("-beta.")[0]}.0`) {
       throw new Error(`Windows 构建程序版本不一致：${file}`);
     }
     if (information.SignatureStatus !== "NotSigned") {
@@ -255,6 +269,7 @@ async function collect() {
     tag,
     commit,
     version,
+    channel: releaseChannel(version),
     notes,
     authenticode: false,
     updaterSignature: true,
@@ -262,9 +277,11 @@ async function collect() {
     files: {},
   };
   const signature = await readFile(join(directory, `${installer}.sig`), "utf8");
-  const manifest = createUpdateManifest({ ...context, installer, signature });
-  await writeFile(join(directory, "latest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  for (const name of [installer, `${installer}.sig`, "latest.json"]) {
+  if (context.channel === "stable") {
+    const manifest = createUpdateManifest({ ...context, installer, signature });
+    await writeFile(join(directory, "latest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  for (const name of [installer, `${installer}.sig`, ...(context.channel === "stable" ? ["latest.json"] : [])]) {
     const bytes = await readFile(join(directory, name));
     context.files[name] = { size: bytes.length, sha256: sha256(bytes) };
   }
@@ -288,7 +305,7 @@ async function run() {
       extractVersionReleaseNotes(await readFile(join(root, "CHANGELOG.md"), "utf8"), tag);
       const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
       if (process.env.GITHUB_SHA !== commit) throw new Error("运行提交与检出提交不同");
-      await appendFile(process.env.GITHUB_OUTPUT, `tag=${tag}\ncommit=${commit}\nmode=${run.mode}\n`);
+      await appendFile(process.env.GITHUB_OUTPUT, `tag=${tag}\ncommit=${commit}\nmode=${run.mode}\nchannel=${releaseChannel(version)}\n`);
       break;
     }
     case "changes": {

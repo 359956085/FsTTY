@@ -12,6 +12,14 @@ const englishBlock = `<!-- release-notes:en-US:start -->
 <!-- release-notes:en-US:end -->`;
 
 describe("发布更新说明提取", () => {
+  it("按完整 beta 标签提取双语区块，不混入正式或其他 beta 内容", () => {
+    const changelog = `## [2.1.0-beta.2] - 2026-10-11\n${chineseBlock}\n${englishBlock}\n## [2.1.0-beta.1] - 2026-10-10\n旧 beta\n## [2.0.0] - 2026-10-09\n正式版`;
+    const notes = extractVersionReleaseNotes(changelog, "v2.1.0-beta.2");
+    expect(notes).toContain("中文说明");
+    expect(notes).toContain("English notes");
+    expect(notes).not.toContain("旧 beta");
+    expect(notes).not.toContain("正式版");
+  });
   it("从真实日志提取 v2.0.0 双语说明，不混入历史内容", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain("## [2.0.0] - 2026-10-09");

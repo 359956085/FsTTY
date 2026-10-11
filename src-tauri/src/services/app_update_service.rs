@@ -608,6 +608,10 @@ fn apply_download_proxy(update: &mut Update, proxy: Option<Url>) {
     update.proxy = proxy;
 }
 
+fn is_stable_update(current: &Version, target: &Version) -> bool {
+    target.pre.is_empty() && target > current
+}
+
 async fn check_source<R: tauri::Runtime>(
     app: &AppHandle<R>,
     source: AppUpdateSource,
@@ -622,6 +626,7 @@ async fn check_source<R: tauri::Runtime>(
         .updater_builder()
         .endpoints(vec![endpoint])
         .map_err(|error| format!("{source:?} 更新器配置失败：{error}"))?
+        .version_comparator(|current, release| is_stable_update(&current, &release.version))
         .timeout(CHECK_TIMEOUT);
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
@@ -760,6 +765,28 @@ mod proxy_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 公共更新筛选只接受更高正式版包括beta升级正式版() {
+        for (current, target, expected) in [
+            ("2.0.0", "2.1.0-beta.1", false),
+            ("2.0.0", "2.1.0-rc.1", false),
+            ("2.0.0", "2.1.0", true),
+            ("2.0.0", "2.0.0", false),
+            ("2.0.0", "1.7.2", false),
+            ("2.1.0-beta.1", "2.1.0", true),
+            ("2.1.0-beta.1", "2.0.0", false),
+            ("2.1.0-beta.1", "2.1.0-beta.2", false),
+        ] {
+            assert_eq!(
+                is_stable_update(
+                    &Version::parse(current).unwrap(),
+                    &Version::parse(target).unwrap()
+                ),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn 暂存占用错误给出等待和重试提示() {

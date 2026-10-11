@@ -92,6 +92,19 @@ class MirrorSyncTests(unittest.TestCase):
     def latest(self):
         return read_json(self.root / "public" / "updater" / "latest.json")
 
+    def test_prerelease_or_beta_tag_never_promotes_or_downloads(self):
+        transport = FakeTransport()
+        sync_once(self.root, transport)
+        previous = self.latest()
+        for flagged in (True, False):
+            transport.set_release("2.1.0-beta.1")
+            transport.release["prerelease"] = flagged
+            calls = len(transport.download_calls)
+            with self.assertRaises(MirrorError):
+                sync_once(self.root, transport)
+            self.assertEqual(len(transport.download_calls), calls)
+            self.assertEqual(self.latest(), previous)
+
     def test_sync_rewrites_both_platforms_and_reuses_same_release(self):
         transport = FakeTransport()
         self.assertEqual(sync_once(self.root, transport), "1.6.3")

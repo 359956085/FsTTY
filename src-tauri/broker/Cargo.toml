@@ -11,6 +11,7 @@ approval-preview = ["windows-sys/Win32_Storage_Xps"]
 fstty-network = { path = "../network" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
 rusqlite = { version = "0.37", features = ["bundled"] }

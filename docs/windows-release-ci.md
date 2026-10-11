@@ -1,18 +1,24 @@
 # Windows 发布与缓存
 
-工作流分为无签名验证和正式发布两种模式。两种模式都执行版本、类型、Lint、前端测试、Rust 格式、Clippy、Rust 测试、依赖审计及完整 Windows 构建；任何检查或构建失败都会令整次运行失败，正式发布不会继续。
+工作流分为无签名验证和发布两种模式。发布模式根据完整版本区分正式版与 beta。两种模式都执行版本、类型、Lint、前端测试、Rust 格式、Clippy、Rust 测试、依赖审计及完整 Windows 构建；任何检查或构建失败都会令整次运行失败，发布不会继续。
 
 ## 发布及验证运行
 
 - 推送与仓库版本一致的 `vX.Y.Z` 标签触发 Tauri 更新签名和正式发布。同一标签的运行串行排队，不自动取消正在进行的发布。
+- Beta 标签使用 `vX.Y.Z-beta.N`，N 为无前导零的正整数，必须与 npm、Tauri、应用/Broker/Network 及锁文件的版本完全一致。双语更新说明使用完整 beta 版本标题；README 的 Shields 版本徽章将后缀中的连字符转义为 `--`，例如 `version-2.1.0--beta.1-2563EB`。
+- Beta 与正式版共用标签推送和 `publish=true` 入口、完整检查、构建及 Tauri 更新签名，不增加发布类型开关。Beta 的草稿和最终 Release 均为预发布，`make_latest=false`，上传安装包与 `.sig`，不生成或上传 `latest.json`。产物上下文记录 `channel=beta`；正式版记录 `channel=stable` 并保持三件套。
+- Beta 仅在对应 GitHub Release 页面手动下载安装。所有安装版本的自动/手动更新检查均只接受更高的正式版，支持 `2.1.0-beta.1 → 2.1.0`，不提示其他预发布或更低正式版；官方镜像仍只同步正式版，不新增 beta 地址。
 - 从默认分支手动运行且保持 `publish=false` 时进入无签名验证模式，不读取 Tauri 更新私钥。它上传名称带 `UNSIGNED` 的安装包、双语警告和验证清单，保留十四天，不创建更新签名、`latest.json` 或 GitHub Release。
 - 手动设置 `publish=true` 时必须从与仓库版本一致的标签运行，并进入与标签推送相同的更新签名发布模式。无签名验证从标签或非默认分支启动时会在准备阶段失败。
 - 对同一标签手动运行一次 `cold-cache=true`，再运行一次 `cold-cache=false`。后者需等待该提交在 main 的预热任务成功。对比 Actions 总耗时、缓存命中、恢复体积及步骤摘要；冷缓存模式只查缓存信息，不恢复或保存 Rust 缓存。
 - 正式发布前创建草稿，上传安装包、签名和 `latest.json`，检查数量、大小、SHA-256 及标签提交，再转为正式发布。
+- Beta 同样先上传草稿并核对附件数量、大小、SHA-256、版本类型和标签提交，再转为预发布。已发布的 beta 与正式版附件均禁止替换；重跑只能复用完全相同的产物，类型不一致直接失败。
 
-正式发布的 Tauri 更新签名使用 `TAURI_SIGNING_PUBLIC_KEY` 仓库 Variable，以及 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。项目不使用 Windows Authenticode 证书，Broker、桌面程序和安装包的 Windows 签名状态均应为 `NotSigned`；正式发布不读取 PFX 或时间戳配置。
+正式版与 beta 的 Tauri 更新签名使用 `TAURI_SIGNING_PUBLIC_KEY` 仓库 Variable，以及 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secrets。项目不使用 Windows Authenticode 证书，Broker、桌面程序和安装包的 Windows 签名状态均应为 `NotSigned`；发布不读取 PFX 或时间戳配置。
 
-无签名验证直接使用仓库配置中的更新公钥；若同时配置 `TAURI_SIGNING_PUBLIC_KEY`，它仍必须与仓库一致。正式发布要求该 Variable 存在并在 Broker 和桌面编译前核对。main 预热和无签名验证不读取任何发布 Secret。正式发布缺少更新私钥、更新签名或清单时会在上传前失败。
+无签名验证直接使用仓库配置中的更新公钥；若同时配置 `TAURI_SIGNING_PUBLIC_KEY`，它仍必须与仓库一致。正式版与 beta 发布均要求该 Variable 存在并在 Broker 和桌面编译前核对。main 预热和无签名验证不读取任何发布 Secret。发布缺少更新私钥或更新签名时会在上传前失败；正式版还必须有更新清单，beta 必须没有更新清单。
+
+GitHub 的 `prerelease` 和 `make_latest` 行为参照[官方 Release API 文档](https://docs.github.com/en/rest/releases/releases?apiVersion=latest)：预发布不能设为 Latest。本轮本地自动测试与隔离 Windows beta 构建结果见[交互验证记录](../doc/optimization-validation.md#beta-release-与正式版更新隔离2026-10-11)；真实安装升级和远程 Actions 尚待验证。
 
 ## 缓存与编译
 
@@ -22,7 +28,7 @@ Broker 使用独立目录和 `crt-static`；桌面使用独立正式编译目录
 
 main 上的前端、Rust、依赖、资源、脚本和工作流变更触发预热，纯文档变更跳过。预热复用完整验证产生的前端产物，只进行 Broker 和桌面正式编译，不打包、不签名、不发布。
 
-发布前端仅构建一次。CI 临时配置关闭 Tauri 前置构建及自动生成更新签名，也不配置 Windows `signCommand`。Broker、桌面程序和 NSIS 安装包构建完成后会逐一校验产品版本及 `NotSigned` 状态。正式发布随后使用 Tauri 私钥签署最终安装包字节，并生成 `.sig` 与 `latest.json`。
+发布前端仅构建一次。CI 临时配置关闭 Tauri 前置构建及自动生成更新签名，也不配置 Windows `signCommand`。Broker、桌面程序和 NSIS 安装包构建完成后会逐一校验完整产品版本、PE 数字版本及 `NotSigned` 状态。随后使用 Tauri 私钥签署最终安装包字节并生成 `.sig`；仅正式版另生成 `latest.json`。
 
 无签名验证使用同一套优化编译和 NSIS 打包路径，但跳过 Tauri 更新签名。验证目录仅允许 `*-UNSIGNED.exe`、`VALIDATION-ONLY.txt` 和 `validation-context.json`，因此不能被正式发布脚本接受。普通本地构建和 `npm run verify:all` 保持原行为；临时配置与产物均在已忽略目录内。
 

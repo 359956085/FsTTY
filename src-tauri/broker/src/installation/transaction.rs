@@ -402,16 +402,8 @@ pub fn uninstall() -> crate::Result<()> {
     Ok(())
 }
 
-fn version_numbers(version: &str) -> crate::Result<Vec<u32>> {
-    let mut parts = version
-        .split('.')
-        .map(|s| s.parse::<u32>().map_err(|_| "程序版本格式无效".to_owned()))
-        .collect::<crate::Result<Vec<_>>>()?;
-    if parts.len() < 3 || parts.len() > 4 {
-        return Err("程序版本格式无效".into());
-    }
-    parts.resize(4, 0);
-    Ok(parts)
+fn version_numbers(version: &str) -> crate::Result<semver::Version> {
+    crate::version::parse_product_version(version)
 }
 fn same_version(a: &str, b: &str) -> bool {
     matches!((version_numbers(a), version_numbers(b)), (Ok(a), Ok(b)) if a == b)

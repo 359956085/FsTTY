@@ -42,6 +42,7 @@ beforeEach(() => {
   fixtureRoot = mkdtempSync(join(tmpdir(), "fstty-version-test-"));
   mkdirSync(join(fixtureRoot, "scripts"));
   copyFileSync(resolve(import.meta.dirname, "check-version.mjs"), join(fixtureRoot, "scripts/check-version.mjs"));
+  copyFileSync(resolve(import.meta.dirname, "release-version.mjs"), join(fixtureRoot, "scripts/release-version.mjs"));
   writeFixture("package.json", JSON.stringify({
     name: "fstty", version: "1.5.0", dependencies: { "third-party": "1.4.0" },
   }));
@@ -99,6 +100,23 @@ afterEach(() => {
 });
 
 describe("版本一致性检查", () => {
+  it("不把 README 的非法 beta 标识截断为正式版", () => {
+    writeFixture("README.md", "![Version](https://img.shields.io/badge/version-1.5.0-beta.0-2563EB)\n");
+    expect(runCheck().status).not.toBe(0);
+  });
+  it("beta 各项目版本与双语日志一致并识别 Shields 转义后缀", () => {
+    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/broker/Cargo.toml", "src-tauri/network/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "CHANGELOG.md"]) {
+      writeFixture(file, readFileSync(join(fixtureRoot, file), "utf8").replaceAll("1.5.0", "1.5.0-beta.2"));
+    }
+    for (const file of ["README.md", "README.en-US.md"]) {
+      writeFixture(file, readFileSync(join(fixtureRoot, file), "utf8").replaceAll("1.5.0", "1.5.0--beta.2"));
+    }
+    const result = runCheck();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("版本一致：1.5.0-beta.2");
+    writeFixture("CHANGELOG.md", readFileSync(join(fixtureRoot, "CHANGELOG.md"), "utf8").replace("1.5.0-beta.2", "1.5.0-beta.1"));
+    expect(runCheck().status).not.toBe(0);
+  });
   it("项目版本一致时通过且忽略第三方及相似包名的版本", () => {
     const result = runCheck();
     expect(result.error).toBeUndefined();

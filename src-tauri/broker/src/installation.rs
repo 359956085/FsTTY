@@ -18,6 +18,7 @@ use windows_sys::Win32::{
 
 pub use diagnostics::classify_failure;
 pub(crate) use diagnostics::{operation_id, record, InstallerEvent};
+pub(crate) use files::product as product_version;
 pub use files::{same_path, validate_desktop_path};
 pub use registry::{cleanup_user_registration, repair_user_autostart, user_previous_directories};
 pub use transaction::close_desktops;

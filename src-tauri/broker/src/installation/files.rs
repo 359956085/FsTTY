@@ -452,6 +452,27 @@ pub fn product(path: &Path) -> crate::Result<(String, String)> {
     if unsafe { GetFileVersionInfoW(path.as_ptr(), 0, size, data.as_mut_ptr().cast()) } == 0 {
         return Err("无法识别程序版本".into());
     }
+    let mut fixed = std::ptr::null_mut();
+    let mut fixed_len = 0;
+    if unsafe {
+        VerQueryValueW(
+            data.as_ptr().cast(),
+            wide("\\").as_ptr(),
+            &mut fixed,
+            &mut fixed_len,
+        )
+    } == 0
+        || (fixed_len as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>()
+    {
+        return Err("程序数字版本信息缺失".into());
+    }
+    let fixed = unsafe { std::ptr::read_unaligned(fixed.cast::<VS_FIXEDFILEINFO>()) };
+    let numeric = [
+        fixed.dwFileVersionMS >> 16,
+        fixed.dwFileVersionMS & 0xffff,
+        fixed.dwFileVersionLS >> 16,
+        fixed.dwFileVersionLS & 0xffff,
+    ];
     let query = |key: &str| -> crate::Result<String> {
         let mut value = std::ptr::null_mut();
         let mut len = 0;
@@ -476,6 +497,11 @@ pub fn product(path: &Path) -> crate::Result<(String, String)> {
             query(&format!("\\StringFileInfo\\{translation}\\ProductName")),
             query(&format!("\\StringFileInfo\\{translation}\\ProductVersion")),
         ) {
+            if fixed.dwSignature != 0xfeef04bd
+                || !crate::version::matches_numeric(&version, numeric)?
+            {
+                return Err("程序数字版本与产品版本不一致".into());
+            }
             return Ok((name, version));
         }
     }

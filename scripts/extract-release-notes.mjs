@@ -3,6 +3,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { EOL } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { releaseChannel } from "./release-version.mjs";
 
 const RELEASE_NOTE_LANGUAGES = ["zh-CN", "en-US"];
 
@@ -30,12 +31,9 @@ function validateLanguageBlock(section, language) {
 }
 
 export function extractVersionReleaseNotes(changelog, tag) {
-  const tagMatch = /^v(\d+\.\d+\.\d+)$/.exec(tag.trim());
-  if (!tagMatch) {
-    throw new Error(`发布标签必须使用 vX.Y.Z 格式，当前值：${tag}`);
-  }
-
-  const version = tagMatch[1];
+  if (!tag.startsWith("v")) throw new Error(`发布标签必须使用 vX.Y.Z 格式或 vX.Y.Z-beta.N，当前值：${tag}`);
+  const version = tag.slice(1);
+  releaseChannel(version);
   const headingPattern = new RegExp(
     `^## \\[${escapeRegExp(version)}\\] - \\d{4}-\\d{2}-\\d{2}[ \\t]*$`,
     "gm",

@@ -12,6 +12,8 @@ pub mod store;
 #[cfg(windows)]
 pub mod update;
 #[cfg(windows)]
+mod version;
+#[cfg(windows)]
 pub mod windows;
 
 pub type Result<T> = std::result::Result<T, String>;

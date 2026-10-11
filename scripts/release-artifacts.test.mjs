@@ -22,23 +22,24 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function fixture() {
+async function fixture(version = "1.5.0") {
   const directory = await mkdtemp(join(tmpdir(), "fstty-release-test-"));
   directories.push(directory);
-  const installer = "FsTTY_1.5.0_x64-setup.exe";
+  const installer = `FsTTY_${version}_x64-setup.exe`;
   const context = {
     repo,
-    tag,
+    tag: `v${version}`,
     commit,
-    version: "1.5.0",
+    version,
+    channel: version.includes("-beta.") ? "beta" : "stable",
     notes: "中文说明\nEnglish notes",
     authenticode: false,
     updaterSignature: true,
     createdAt: "2026-09-18T00:00:00.000Z",
     files: {},
   };
-  const manifest = createUpdateManifest({ ...context, installer, signature: "test-signature" });
-  const files = { [installer]: Buffer.from("生成的测试安装包"), [`${installer}.sig`]: Buffer.from("test-signature\n"), "latest.json": Buffer.from(JSON.stringify(manifest)) };
+  const manifest = context.channel === "stable" ? createUpdateManifest({ ...context, installer, signature: "test-signature" }) : null;
+  const files = { [installer]: Buffer.from("生成的测试安装包"), [`${installer}.sig`]: Buffer.from("test-signature\n"), ...(manifest ? { "latest.json": Buffer.from(JSON.stringify(manifest)) } : {}) };
   async function save() {
     for (const [name, bytes] of Object.entries(files)) {
       await writeFile(join(directory, name), bytes);
@@ -85,10 +86,10 @@ async function validationFixture() {
   return { directory, context, files, installer, ref, save, version };
 }
 
-function github({ failUpload = 0, live = false, moved = false, corrupt = false } = {}) {
+function github({ failUpload = 0, live = false, moved = false, corrupt = false, releaseTag = tag, prerelease = false } = {}) {
   const assets = [];
   const calls = [];
-  let release = live ? { id: 1, tag_name: tag, draft: false, prerelease: false, upload_url: `https://uploads.github.com/repos/${repo}/releases/1/assets{?name,label}` } : null;
+  let release = live ? { id: 1, tag_name: releaseTag, draft: false, prerelease, upload_url: `https://uploads.github.com/repos/${repo}/releases/1/assets{?name,label}` } : null;
   let uploads = 0;
   let resolves = 0;
   const fetchImpl = async (address, options) => {
@@ -120,6 +121,51 @@ function github({ failUpload = 0, live = false, moved = false, corrupt = false }
 }
 
 describe("发布产物与恢复", () => {
+  it("beta 标签保持完整版本且拒绝非法序号、其他预发布及错配", () => {
+    expect(validateReleaseRef("refs/tags/v2.1.0-beta.1", "2.1.0-beta.1")).toBe("v2.1.0-beta.1");
+    for (const version of ["2.1.0-beta", "2.1.0-beta.0", "2.1.0-beta.01", "2.1.0-rc.1", "2.1.0+build", "02.1.0"]) {
+      expect(() => validateReleaseRef(`refs/tags/v${version}`, version)).toThrow();
+    }
+    expect(() => validateReleaseRef("refs/tags/v2.1.0", "2.1.0-beta.1")).toThrow("版本一致");
+    for (const eventName of ["push", "workflow_dispatch"]) {
+      expect(resolveReleaseRun({ eventName, publishRequested: true, ref: "refs/tags/v2.1.0-beta.1", version: "2.1.0-beta.1" }))
+        .toEqual({ mode: "release", tag: "v2.1.0-beta.1" });
+    }
+  });
+
+  it("beta 发布无更新清单，预发布不成为 Latest，失败重跑复用附件", async () => {
+    const data = await fixture("2.1.0-beta.1");
+    const api = github({ failUpload: 2 });
+    const options = { directory: data.directory, repo, tag: data.context.tag, commit, token: "test", fetchImpl: api.fetchImpl };
+    await expect(publishGithubRelease(options)).rejects.toThrow("500");
+    expect(api.release).toMatchObject({ draft: true, prerelease: true, make_latest: "false" });
+    await publishGithubRelease(options);
+    expect(api.release).toMatchObject({ draft: false, prerelease: true, make_latest: "false" });
+    expect(api.assets.map(asset => asset.name)).toEqual(Object.keys(data.files));
+    expect(api.assets.some(asset => asset.name === "latest.json")).toBe(false);
+    const count = api.calls.length;
+    await publishGithubRelease(options);
+    expect(api.calls.slice(count).every(call => call.method === "GET")).toBe(true);
+    expect(() => createUpdateManifest({ ...data.context, installer: Object.keys(data.files)[0], signature: "test" })).toThrow("Beta");
+  });
+
+  it("beta 拒绝残留清单、缺少签名、产物类型及远程类型不一致", async () => {
+    const data = await fixture("2.1.0-beta.1");
+    const options = { directory: data.directory, repo, tag: data.context.tag, commit };
+    await writeFile(join(data.directory, "latest.json"), "{}");
+    await expect(validateArtifacts(data.directory, options)).rejects.toThrow("latest.json");
+    await rm(join(data.directory, "latest.json"));
+    data.context.channel = "stable";
+    await data.save();
+    await expect(validateArtifacts(data.directory, options)).rejects.toThrow("版本类型");
+    data.context.channel = "beta";
+    await data.save();
+    const api = github({ live: true, releaseTag: data.context.tag });
+    await expect(publishGithubRelease({ ...options, token: "test", fetchImpl: api.fetchImpl })).rejects.toThrow("Release 类型");
+    await rm(join(data.directory, `FsTTY_${data.context.version}_x64-setup.exe.sig`));
+    await expect(validateArtifacts(data.directory, options)).rejects.toThrow();
+  });
+
   it("拒绝分支、版本不匹配和非正式版本标签", () => {
     expect(validateReleaseRef("refs/tags/v1.5.0", "1.5.0")).toBe(tag);
     for (const ref of ["refs/heads/main", "refs/tags/v1.4.0", "refs/tags/v1.5.0-beta"]) {
@@ -220,9 +266,11 @@ describe("发布产物与恢复", () => {
     await publishGithubRelease({ directory: data.directory, repo, tag, commit, token: "test", fetchImpl: api.fetchImpl });
     expect(api.assets).toHaveLength(3);
     expect(api.release.draft).toBe(false);
+    expect(api.release).toMatchObject({ prerelease: false, make_latest: "true" });
     expect(api.release.body).toBe(data.context.notes);
     const create = api.calls.find(call => call.method === "POST" && call.path.endsWith("/releases"));
     expect(JSON.parse(create.body).draft).toBe(true);
+    expect(JSON.parse(create.body)).not.toHaveProperty("make_latest");
     expect(api.calls.at(-1).method).toBe("PATCH");
   });
 

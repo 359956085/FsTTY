@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { RELEASE_VERSION_SOURCE, releaseChannel } from "./release-version.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 
@@ -18,7 +19,7 @@ function readVersion(relativePath, pattern) {
 
 function readLatestReleaseNotesVersion() {
   const content = fs.readFileSync(path.join(projectRoot, "CHANGELOG.md"), "utf8");
-  const heading = /^## \[(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/m.exec(content);
+  const heading = new RegExp(`^## \\[(${RELEASE_VERSION_SOURCE})\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").exec(content);
   if (!heading) {
     throw new Error("CHANGELOG.md 缺少已发布版本标题");
   }
@@ -57,8 +58,8 @@ const versions = {
     /\[\[package\]\]\s+name\s*=\s*"fstty-network"\s+version\s*=\s*"([^"]+)"/m,
   ),
   tauri: tauriConfig.version,
-  readme: readVersion("README.md", /badge\/version-([^/-]+)-/),
-  readmeEnglish: readVersion("README.en-US.md", /badge\/version-([^/-]+)-/),
+  readme: readVersion("README.md", /badge\/version-(\d+\.\d+\.\d+(?:(?:--|-|%2D)beta\.[1-9]\d*)?)-[A-Za-z0-9]+(?=[?)/]|$)/).replace(/--|%2D/g, "-"),
+  readmeEnglish: readVersion("README.en-US.md", /badge\/version-(\d+\.\d+\.\d+(?:(?:--|-|%2D)beta\.[1-9]\d*)?)-[A-Za-z0-9]+(?=[?)/]|$)/).replace(/--|%2D/g, "-"),
   changelog: readLatestReleaseNotesVersion(),
 };
 
@@ -84,6 +85,7 @@ function validateUpdaterPublicKey(value) {
 validateUpdaterPublicKey(tauriConfig.plugins?.updater?.pubkey);
 
 const uniqueVersions = new Set(Object.values(versions));
+releaseChannel(versions.packageJson);
 if (uniqueVersions.size !== 1) {
   console.error("版本一致性检查失败：" + JSON.stringify(versions));
   process.exitCode = 1;

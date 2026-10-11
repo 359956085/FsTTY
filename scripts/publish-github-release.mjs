@@ -5,6 +5,7 @@ import { validateArtifacts } from "./release-artifacts.mjs";
 
 export async function publishGithubRelease({ directory, repo, tag, commit, token, fetchImpl = fetch }) {
   const { context, assets } = await validateArtifacts(directory, { repo, tag, commit });
+  const prerelease = context.channel === "beta";
   if (!token) throw new Error("缺少 GitHub 发布令牌");
   const base = `https://api.github.com/repos/${repo}`;
   async function request(url, method = "GET", body, binary = false, allowMissing = false) {
@@ -24,10 +25,10 @@ export async function publishGithubRelease({ directory, repo, tag, commit, token
   if (!release) {
     release = await request(`${base}/releases`, "POST", {
       tag_name: tag, target_commitish: commit, name: `FsTTY ${tag}`, body: context.notes,
-      draft: true, prerelease: false,
+      draft: true, prerelease, ...(prerelease ? { make_latest: "false" } : {}),
     });
   }
-  if (release.tag_name !== tag || release.prerelease) throw new Error("现有 Release 类型或标签不一致");
+  if (release.tag_name !== tag || release.prerelease !== prerelease) throw new Error("现有 Release 类型或标签不一致");
   const uploadBase = new URL(release.upload_url.replace(/\{.*$/, ""));
   if (uploadBase.origin !== "https://uploads.github.com" || uploadBase.pathname !== `/repos/${repo}/releases/${release.id}/assets`) {
     throw new Error("GitHub 返回了非预期上传地址");
@@ -60,7 +61,7 @@ export async function publishGithubRelease({ directory, repo, tag, commit, token
   if ((await request(`${base}/commits/${encodeURIComponent(tag)}`)).sha !== commit) throw new Error("上传期间远程标签发生变化");
   if (release.draft) {
     await request(`${base}/releases/${release.id}`, "PATCH", {
-      name: `FsTTY ${tag}`, body: context.notes, draft: false, prerelease: false, make_latest: "true",
+      name: `FsTTY ${tag}`, body: context.notes, draft: false, prerelease, make_latest: prerelease ? "false" : "true",
     });
   }
   return { context, assets, releaseId: release.id };

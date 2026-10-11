@@ -152,6 +152,7 @@ pub async fn receive(
 }
 
 fn verify_version(path: &Path) -> crate::Result<()> {
+    let (product, target) = crate::installation::product_version(path)?;
     let path = windows::wide(&path.to_string_lossy());
     let size = unsafe { GetFileVersionInfoSizeW(path.as_ptr(), std::ptr::null_mut()) };
     if size == 0 || size > 1024 * 1024 {
@@ -174,17 +175,18 @@ fn verify_version(path: &Path) -> crate::Result<()> {
         return Err("无法验证更新版本".into());
     }
     let value = unsafe { std::ptr::read_unaligned(value.cast::<VS_FIXEDFILEINFO>()) };
-    let version = (
+    let version = [
         value.dwFileVersionMS >> 16,
         value.dwFileVersionMS & 0xffff,
         value.dwFileVersionLS >> 16,
-    );
-    let current = (
-        env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().unwrap(),
-        env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().unwrap(),
-        env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().unwrap(),
-    );
-    if value.dwSignature != 0xfeef04bd || version <= current {
+        value.dwFileVersionLS & 0xffff,
+    ];
+    // Read the full signed installer product version, including any beta suffix.
+    if product != "FsTTY"
+        || value.dwSignature != 0xfeef04bd
+        || !crate::version::matches_numeric(&target, version)?
+        || !crate::version::is_online_upgrade(env!("CARGO_PKG_VERSION"), &target)?
+    {
         return Err("更新版本未高于已安装服务，拒绝降级或重放".into());
     }
     Ok(())

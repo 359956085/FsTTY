@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 正式发布；关闭时从默认分支生成未签名验证包
+        description: 发布正式版或 beta；关闭时从默认分支生成未签名验证包
         type: boolean
         default: false
       cold-cache:
@@ -29,6 +29,7 @@ jobs:
       commit: ${{ steps.prepare.outputs.commit }}
       tag: ${{ steps.prepare.outputs.tag }}
       mode: ${{ steps.prepare.outputs.mode }}
+      channel: ${{ steps.prepare.outputs.channel }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
