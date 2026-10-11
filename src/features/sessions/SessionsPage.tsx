@@ -238,6 +238,7 @@ export function SessionsPage({
         rightResizeHandle={
           <ResizeHandle
             ariaLabel={t("sessions.resizeRight")}
+            className="workspace-right-resizer"
             disabled={layout.rightCollapsed}
             onKeyboardResize={(direction) => adjustResize("right", direction)}
             onPointerDown={(event) => beginResize("right", event)}

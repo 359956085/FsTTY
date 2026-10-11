@@ -91,14 +91,14 @@ describe("usePaneLayout", () => {
     expect(result.current.layout.rightWidth).toBe(460);
   });
 
-  it("收起左侧时右侧拖动按单个手柄计算边界", () => {
+  it("收起左侧时覆盖式右侧手柄不占用可用宽度", () => {
     mocks.layout.leftCollapsed = true;
     const { result } = renderHook(() => usePaneLayout());
     installRoot(result, 1180);
     act(() => {
       for (let index = 0; index < 50; index += 1) result.current.adjustResize("right", -1);
     });
-    expect(result.current.layout.rightWidth).toBe(736);
+    expect(result.current.layout.rightWidth).toBe(740);
   });
 
   it("窄窗口展开时收缩面板，保证终端最小宽度", () => {
@@ -108,12 +108,12 @@ describe("usePaneLayout", () => {
     act(() => result.current.toggleLeftCollapsed());
     const layout = result.current.layout;
     expect(layout.leftCollapsed).toBe(false);
-    expect(layout.leftWidth + layout.rightWidth + 4 + 440).toBe(1180);
+    expect(layout.leftWidth + layout.rightWidth + 440).toBe(1180);
     expect(layout.leftWidth).toBeGreaterThanOrEqual(220);
     expect(layout.rightWidth).toBeGreaterThanOrEqual(360);
   });
 
-  it("左右面板都展开时仅扣除右侧手柄，保留保存的左侧宽度", () => {
+  it("左右手柄均不占用宽度，保留保存的左侧宽度", () => {
     mocks.layout.leftWidth = 300;
     const { result } = renderHook(() => usePaneLayout());
     installRoot(result, 1180);
@@ -121,7 +121,7 @@ describe("usePaneLayout", () => {
       for (let index = 0; index < 50; index += 1) result.current.adjustResize("right", -1);
     });
     expect(result.current.layout.leftWidth).toBe(300);
-    expect(result.current.layout.rightWidth).toBe(436);
+    expect(result.current.layout.rightWidth).toBe(440);
   });
   it("忽略错误 Pointer，并在正确释放后持久化", () => {
     const { result } = renderHook(() => usePaneLayout());

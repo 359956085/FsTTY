@@ -1,12 +1,11 @@
 interface LocalTabStatusIconProps {
   administrator: boolean;
   running: boolean;
-  description: string;
 }
 
-export function LocalTabStatusIcon({ administrator, running, description }: LocalTabStatusIconProps) {
+export function LocalTabStatusIcon({ administrator, running }: LocalTabStatusIconProps) {
   return (
-    <span aria-hidden="true" title={description}
+    <span aria-hidden="true"
       className={`local-tab-status local-tab-status-${running ? "running" : "idle"}`}
       data-permission={administrator ? "administrator" : "standard"}>
       <svg width="16" height="16" viewBox="0 0 16 16" focusable="false">

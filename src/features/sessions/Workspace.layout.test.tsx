@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { useEffect, useState, type ComponentProps, type RefObject } from "react";
+import { StrictMode, useEffect, useState, type ComponentProps, type RefObject } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
@@ -173,6 +173,85 @@ describe("工作区侧栏布局", () => {
     expect(document.activeElement).not.toBe(expand);
     fireEvent.click(expand);
     expect(screen.getByRole("button", { name: "收起右栏" })).not.toBeNull();
+  });
+});
+
+describe("标签完整名称提示", () => {
+  it.each(["CMD", "生产环境中文终端名称".repeat(12)])("悬停 250ms 才显示完整名称：%s", (name) => {
+    vi.useFakeTimers();
+    render(<Preview withTerminal overrides={{ openTabs: [{ id: "tab", sessionId: "local", autoConnect: false,
+      session: { kind: "local", id: "local", name, shell: "cmd", group: "", tags: [], startingDirectory: "", runAsAdmin: true } }] }} />);
+    const button = screen.getByRole("button", { name });
+    expect(button.getAttribute("aria-description")).toContain("local.admin");
+    expect(button.querySelector("[title]")).toBeNull();
+    fireEvent.pointerEnter(button, { pointerType: "mouse" });
+    act(() => { vi.advanceTimersByTime(249); });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(screen.getByRole("tooltip").textContent).toBe(name);
+    expect(button.getAttribute("aria-describedby")).toBe(screen.getByRole("tooltip").id);
+    fireEvent.pointerLeave(button);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("名称更新和同配置多标签保持独立入口，终端与焦点不重建", () => {
+    vi.useFakeTimers();
+    mockFocusVisible(false);
+    const select = vi.fn();
+    const session = { id: "session", name: "同一终端", host: "example.test", port: 22, username: "test", group: "", tags: [],
+      auth: { kind: "password" as const }, credentialState: "stored" as const, loginSavePrompted: true };
+    const tabs = ["tab", "second"].map(id => ({ id, sessionId: session.id, autoConnect: false, session }));
+    const props = { openTabs: tabs, onSelectTab: select };
+    const view = render(<Preview withTerminal overrides={props} />);
+    const [first, second] = screen.getAllByRole("button", { name: session.name });
+    const terminal = screen.getByRole("textbox", { name: "测试终端" });
+    act(() => first.focus());
+    fireEvent.pointerEnter(first);
+    act(() => { vi.advanceTimersByTime(250); });
+    view.rerender(<Preview withTerminal overrides={{ ...props, openTabs: tabs.map(tab => ({ ...tab, session: { ...session, name: "编辑后的完整终端名称" } })) }} />);
+    expect(screen.getByRole("tooltip").textContent).toBe("编辑后的完整终端名称");
+    expect(screen.getAllByRole("button", { name: "编辑后的完整终端名称" })).toEqual([first, second]);
+    expect(document.activeElement).toBe(first);
+    fireEvent.pointerDown(second, { pointerType: "mouse" });
+    fireEvent.click(second);
+    expect(select).toHaveBeenCalledExactlyOnceWith("second");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "测试终端" })).toBe(terminal);
+    expect(mocks.mount).toHaveBeenCalledOnce();
+    expect(mocks.unmount).not.toHaveBeenCalled();
+  });
+
+  it.each(["escape", "scroll", "blur", "click"])("键盘可查看全名，%s 清理提示而不影响终端", (dismiss) => {
+    mockFocusVisible(true);
+    render(<Preview withTerminal />);
+    const button = screen.getByRole("button", { name: "测试会话" });
+    act(() => button.focus());
+    expect(screen.getByRole("tooltip").textContent).toBe("测试会话");
+    if (dismiss === "escape") fireEvent.keyDown(button, { key: "Escape" });
+    if (dismiss === "scroll") fireEvent.scroll(button.closest(".session-tabs")!);
+    if (dismiss === "blur") fireEvent.blur(window);
+    if (dismiss === "click") fireEvent.click(button);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(mocks.unmount).not.toHaveBeenCalled();
+  });
+
+  it("StrictMode 下卸载标签会清理待显示提示和已显示提示", () => {
+    vi.useFakeTimers();
+    const view = render(<StrictMode><Preview withTerminal /></StrictMode>);
+    const button = screen.getByRole("button", { name: "测试会话" });
+    fireEvent.pointerEnter(button);
+    view.rerender(<StrictMode><Preview overrides={{ openTabs: [], activeTabId: null }} /></StrictMode>);
+    act(() => { vi.advanceTimersByTime(250); });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    view.rerender(<StrictMode><Preview withTerminal /></StrictMode>);
+    fireEvent.pointerEnter(screen.getByRole("button", { name: "测试会话" }));
+    act(() => { vi.advanceTimersByTime(250); });
+    expect(screen.getByRole("tooltip").textContent).toBe("测试会话");
+    view.unmount();
+    act(() => { vi.runOnlyPendingTimers(); });
+    fireEvent.scroll(window);
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });
 

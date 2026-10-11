@@ -1,7 +1,7 @@
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import { ChevronLeft, Plus, X } from "lucide-react";
 import type { MouseEventHandler, ReactNode, RefObject } from "react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createRef, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ConnectionState,
@@ -118,7 +118,7 @@ export function Workspace({
   const rightToggleRef = useRef<HTMLButtonElement>(null);
   const localCreateRef = useRef<HTMLButtonElement>(null);
   const newSessionRef = createSessionButtonRef ?? localCreateRef;
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabRefs = useRef(new Map<string, RefObject<HTMLButtonElement | null>>());
   const tabMenuAnchor = useRef<HTMLButtonElement | null>(null);
   const menuReturnFocusRef = useRef<HTMLElement | null>(null);
   const closingTabs = useRef<{ ids: Set<string>; owner: HTMLElement | null } | null>(null);
@@ -132,7 +132,7 @@ export function Workspace({
     }
     if (openTabs.some((tab) => request.ids.has(tab.id))) return;
     closingTabs.current = null;
-    const target = (activeTabId && tabRefs.current.get(activeTabId)) || newSessionRef.current;
+    const target = (activeTabId && tabRefs.current.get(activeTabId)?.current) || newSessionRef.current;
     if (isFocusAvailable(target)) {
       menuReturnFocusRef.current = target;
       target.focus({ preventScroll: true });
@@ -225,6 +225,9 @@ export function Workspace({
 
   useEffect(() => {
     const validIds = new Set(openTabs.map((tab) => tab.id));
+    for (const id of tabRefs.current.keys()) {
+      if (!validIds.has(id)) tabRefs.current.delete(id);
+    }
     setInitializedTerminalIds((current) => {
       if ([...current].every((id) => validIds.has(id))) {
         return current;
@@ -239,6 +242,11 @@ export function Workspace({
     >
       <div className="session-tabs" onContextMenu={(event) => event.preventDefault()}>
         {openTabs.map((tab) => {
+          let buttonRef = tabRefs.current.get(tab.id);
+          if (!buttonRef) {
+            buttonRef = createRef<HTMLButtonElement>();
+            tabRefs.current.set(tab.id, buttonRef);
+          }
           const localSession = isLocalSession(tab.session) ? tab.session : null;
           const local = localSession !== null;
           const state = connectionStates[tab.id] ?? "disconnected";
@@ -258,7 +266,7 @@ export function Workspace({
             key={tab.id}
             onContextMenu={(event) => {
               event.preventDefault();
-              const target = tabRefs.current.get(tab.id);
+              const target = tabRefs.current.get(tab.id)?.current;
               if (!target) return;
               tabMenuAnchor.current = target;
               setTabContextMenu({ ...contextMenuPosition(target, event), tabId: tab.id });
@@ -267,26 +275,23 @@ export function Workspace({
               if (event.defaultPrevented || isComposingKey(event.nativeEvent) || !isContextMenuKey(event)) return;
               event.preventDefault();
               event.stopPropagation();
-              const target = tabRefs.current.get(tab.id);
+              const target = tabRefs.current.get(tab.id)?.current;
               if (!target) return;
               tabMenuAnchor.current = target;
               setTabContextMenu({ ...contextMenuPosition(target), tabId: tab.id });
             }}
           >
-            <button aria-description={description} onClick={() => {
+            <TooltipButton label={tab.session.name} buttonRef={buttonRef} aria-description={description} onClick={() => {
               menuReturnFocusRef.current = null;
               onSelectTab(tab.id);
-            }} ref={(node) => {
-              if (node) tabRefs.current.set(tab.id, node);
-              else tabRefs.current.delete(tab.id);
-            }} type="button">
-              {local ? <LocalTabStatusIcon administrator={administrator} running={state === "connected"} description={description!} /> : <span
+            }}>
+              {local ? <LocalTabStatusIcon administrator={administrator} running={state === "connected"} /> : <span
                 className={`status-dot status-${
                   connectionStates[tab.id] === "connected" ? "online" : "offline"
                 }`}
               />}
               <span className="session-tab-name">{tab.session.name}</span>
-            </button>
+            </TooltipButton>
             <button
               aria-label={`${t("sessions.closeTab")} ${tab.session.name}`}
               className="session-tab-close"
@@ -317,7 +322,7 @@ export function Workspace({
           ]}
           onClose={() => setTabContextMenu(null)}
           returnFocus={() => tabMenuAnchor.current}
-          fallbackFocus={() => (activeTabId && tabRefs.current.get(activeTabId)) || newSessionRef.current}
+          fallbackFocus={() => (activeTabId && tabRefs.current.get(activeTabId)?.current) || newSessionRef.current}
           x={tabContextMenu.x}
           y={tabContextMenu.y}
         />

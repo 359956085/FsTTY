@@ -870,11 +870,12 @@ textarea:focus-visible,
 }
 
 .workspace-grid {
+  position: relative;
   display: grid;
   grid-template-areas:
-    "tabs tabs tabs"
-    "terminal divider side";
-  grid-template-columns: minmax(440px, 1fr) 4px var(--workspace-right-width);
+    "tabs tabs"
+    "terminal side";
+  grid-template-columns: minmax(440px, 1fr) var(--workspace-right-width);
   grid-template-rows: 40px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
