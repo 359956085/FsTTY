@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { RELEASE_VERSION_SOURCE, releaseChannel } from "./release-version.mjs";
+import { releaseChannel } from "./release-version.mjs";
+import { extractVersionReleaseNotes } from "./extract-release-notes.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 
@@ -15,25 +16,6 @@ function readVersion(relativePath, pattern) {
     throw new Error(`未找到 ${relativePath} 中的版本号`);
   }
   return match[1];
-}
-
-function readLatestReleaseNotesVersion() {
-  const content = fs.readFileSync(path.join(projectRoot, "CHANGELOG.md"), "utf8");
-  const heading = new RegExp(`^## \\[(${RELEASE_VERSION_SOURCE})\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").exec(content);
-  if (!heading) {
-    throw new Error("CHANGELOG.md 缺少已发布版本标题");
-  }
-  const start = heading.index + heading[0].length;
-  const next = content.slice(start).search(/^## \[/m);
-  const section = content.slice(start, next < 0 ? undefined : start + next);
-  for (const locale of ["zh-CN", "en-US"]) {
-    const begin = `<!-- release-notes:${locale}:start -->`;
-    const end = `<!-- release-notes:${locale}:end -->`;
-    if (!section.includes(begin) || !section.includes(end)) {
-      throw new Error(`CHANGELOG.md 最新版本缺少 ${locale} 更新说明`);
-    }
-  }
-  return heading[1];
 }
 
 const packageLock = readJson("package-lock.json");
@@ -58,9 +40,6 @@ const versions = {
     /\[\[package\]\]\s+name\s*=\s*"fstty-network"\s+version\s*=\s*"([^"]+)"/m,
   ),
   tauri: tauriConfig.version,
-  readme: readVersion("README.md", /badge\/version-(\d+\.\d+\.\d+(?:(?:--|-|%2D)beta\.[1-9]\d*)?)-[A-Za-z0-9]+(?=[?)/]|$)/).replace(/--|%2D/g, "-"),
-  readmeEnglish: readVersion("README.en-US.md", /badge\/version-(\d+\.\d+\.\d+(?:(?:--|-|%2D)beta\.[1-9]\d*)?)-[A-Za-z0-9]+(?=[?)/]|$)/).replace(/--|%2D/g, "-"),
-  changelog: readLatestReleaseNotesVersion(),
 };
 
 function validateUpdaterPublicKey(value) {
@@ -84,8 +63,14 @@ function validateUpdaterPublicKey(value) {
 
 validateUpdaterPublicKey(tauriConfig.plugins?.updater?.pubkey);
 
-const uniqueVersions = new Set(Object.values(versions));
 releaseChannel(versions.packageJson);
+if (process.argv.includes("--release")) {
+  const badge = /badge\/version-(\d+\.\d+\.\d+(?:(?:--|-|%2D)beta\.[1-9]\d*)?)-[A-Za-z0-9]+(?=[?)/]|$)/;
+  versions.readme = readVersion("README.md", badge).replace(/--|%2D/g, "-");
+  versions.readmeEnglish = readVersion("README.en-US.md", badge).replace(/--|%2D/g, "-");
+  extractVersionReleaseNotes(fs.readFileSync(path.join(projectRoot, "CHANGELOG.md"), "utf8"), `v${versions.packageJson}`);
+}
+const uniqueVersions = new Set(Object.values(versions));
 if (uniqueVersions.size !== 1) {
   console.error("版本一致性检查失败：" + JSON.stringify(versions));
   process.exitCode = 1;

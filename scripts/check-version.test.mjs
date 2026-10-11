@@ -30,8 +30,8 @@ function changeCargoLockVersion(packageName) {
   writeFixture("src-tauri/Cargo.lock", content.replace(pattern, (_, prefix) => `${prefix}1.4.0`));
 }
 
-function runCheck() {
-  return spawnSync(process.execPath, [join(fixtureRoot, "scripts/check-version.mjs")], {
+function runCheck(release = false) {
+  return spawnSync(process.execPath, [join(fixtureRoot, "scripts/check-version.mjs"), ...(release ? ["--release"] : [])], {
     cwd: tmpdir(),
     encoding: "utf8",
     timeout: 10_000,
@@ -43,6 +43,7 @@ beforeEach(() => {
   mkdirSync(join(fixtureRoot, "scripts"));
   copyFileSync(resolve(import.meta.dirname, "check-version.mjs"), join(fixtureRoot, "scripts/check-version.mjs"));
   copyFileSync(resolve(import.meta.dirname, "release-version.mjs"), join(fixtureRoot, "scripts/release-version.mjs"));
+  copyFileSync(resolve(import.meta.dirname, "extract-release-notes.mjs"), join(fixtureRoot, "scripts/extract-release-notes.mjs"));
   writeFixture("package.json", JSON.stringify({
     name: "fstty", version: "1.5.0", dependencies: { "third-party": "1.4.0" },
   }));
@@ -100,9 +101,35 @@ afterEach(() => {
 });
 
 describe("版本一致性检查", () => {
+  it("日常检查不依赖发布文档，发布检查不能缺少文档", () => {
+    for (const file of ["README.md", "README.en-US.md", "CHANGELOG.md"]) rmSync(join(fixtureRoot, file));
+    expect(runCheck().status).toBe(0);
+    expect(runCheck(true).status).not.toBe(0);
+  });
+
+  it.each(["README.md", "README.en-US.md", "CHANGELOG.md"])("%s 滞后不阻断日常检查，但阻断发布", file => {
+    changeVersion(file);
+    expect(runCheck().status).toBe(0);
+    expect(runCheck(true).status).not.toBe(0);
+  });
+
+  it("发布说明允许任意条目数与段落，仍要求对应版本、日期和双语非空内容", () => {
+    writeFixture("CHANGELOG.md", `## [Unreleased]\n未发布\n## [1.5.0] - 2026-09-19\n<!-- release-notes:zh-CN:start -->\n任意中文段落\n- 条目 A\n- 条目 B\n<!-- release-notes:zh-CN:end -->\n<!-- release-notes:en-US:start -->\nEnglish paragraph\n<!-- release-notes:en-US:end -->\n## [1.4.0] - 2026-08-01\n历史内容`);
+    expect(runCheck(true).status).toBe(0);
+    writeFixture("CHANGELOG.md", readFileSync(join(fixtureRoot, "CHANGELOG.md"), "utf8").replace("English paragraph", ""));
+    expect(runCheck(true).status).not.toBe(0);
+  });
+
+  it("程序版本非法时即使全部配置一致也失败", () => {
+    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/broker/Cargo.toml", "src-tauri/network/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"]) {
+      writeFixture(file, readFileSync(join(fixtureRoot, file), "utf8").replaceAll("1.5.0", "1.5.0-beta.0"));
+    }
+    expect(runCheck().status).not.toBe(0);
+  });
+
   it("不把 README 的非法 beta 标识截断为正式版", () => {
     writeFixture("README.md", "![Version](https://img.shields.io/badge/version-1.5.0-beta.0-2563EB)\n");
-    expect(runCheck().status).not.toBe(0);
+    expect(runCheck(true).status).not.toBe(0);
   });
   it("beta 各项目版本与双语日志一致并识别 Shields 转义后缀", () => {
     for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/broker/Cargo.toml", "src-tauri/network/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "CHANGELOG.md"]) {
@@ -111,11 +138,11 @@ describe("版本一致性检查", () => {
     for (const file of ["README.md", "README.en-US.md"]) {
       writeFixture(file, readFileSync(join(fixtureRoot, file), "utf8").replaceAll("1.5.0", "1.5.0--beta.2"));
     }
-    const result = runCheck();
+    const result = runCheck(true);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("版本一致：1.5.0-beta.2");
     writeFixture("CHANGELOG.md", readFileSync(join(fixtureRoot, "CHANGELOG.md"), "utf8").replace("1.5.0-beta.2", "1.5.0-beta.1"));
-    expect(runCheck().status).not.toBe(0);
+    expect(runCheck(true).status).not.toBe(0);
   });
   it("项目版本一致时通过且忽略第三方及相似包名的版本", () => {
     const result = runCheck();
@@ -138,9 +165,6 @@ describe("版本一致性检查", () => {
     ["凭据服务包锁条目", "brokerLock", () => changeCargoLockVersion("fstty-broker")],
     ["共享网络包锁条目", "networkLock", () => changeCargoLockVersion("fstty-network")],
     ["Tauri 配置", "tauri", () => changeVersion("src-tauri/tauri.conf.json")],
-    ["中文徽章", "readme", () => changeVersion("README.md")],
-    ["英文徽章", "readmeEnglish", () => changeVersion("README.en-US.md")],
-    ["更新日志", "changelog", () => changeVersion("CHANGELOG.md")],
   ])("%s 版本错配时失败并指出来源", (_label, key, change) => {
     change();
     const result = runCheck();
@@ -181,14 +205,14 @@ describe("版本一致性检查", () => {
     expect(result.stderr).toContain("Tauri 更新公钥");
   });
 
-  it("最新版本缺少双语更新说明时失败", () => {
+  it("发布版本缺少双语更新说明时失败", () => {
     const content = readFileSync(join(fixtureRoot, "CHANGELOG.md"), "utf8");
     writeFixture(
       "CHANGELOG.md",
       content.replace("<!-- release-notes:en-US:start -->", "<!-- missing -->"),
     );
-    const result = runCheck();
+    const result = runCheck(true);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("缺少 en-US 更新说明");
+    expect(result.stderr).toContain("必须包含且仅包含一个 en-US 区块");
   });
 });

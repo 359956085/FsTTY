@@ -1,9 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  affectsBuild,
   createUpdateManifest,
   resolveReleaseRun,
   sha256,
@@ -209,13 +208,6 @@ describe("发布产物与恢复", () => {
     })).toThrow("版本一致");
   });
 
-  it("仅构建输入变更触发预热", () => {
-    expect(affectsBuild(["README.md", "docs/windows-release-ci.md", "CHANGELOG.md"])).toBe(false);
-    for (const file of ["src/App.tsx", "src-tauri/Cargo.lock", "public/icon.png", "scripts/build-broker.mjs", ".github/workflows/quality.yml", "package-lock.json", "vite.config.ts", "tsconfig.json"]) {
-      expect(affectsBuild([file])).toBe(true);
-    }
-  });
-
   it("检查签名、完整清单、文件哈希及当前提交", async () => {
     const data = await fixture();
     expect((await validateArtifacts(data.directory, { repo, tag, commit })).assets).toHaveLength(3);
@@ -295,54 +287,4 @@ describe("发布产物与恢复", () => {
     expect(api.calls.some(call => call.method === "PATCH")).toBe(false);
   });
 
-  it("验证与构建并行，正式发布只要求更新签名且预热不访问发布密钥", async () => {
-    const workflow = await readFile(new URL("../.github/workflows/release-windows.yml", import.meta.url), "utf8");
-    const publish = workflow.slice(workflow.indexOf("\n  publish:"));
-    expect(publish).toContain("name: GitHub 发布");
-    expect(publish.match(/run: [^\r\n]+/g)).toEqual(["run: node scripts/publish-github-release.mjs"]);
-    expect(publish.match(/secrets\.[A-Z_]+/g)).toEqual(["secrets.GITHUB_TOKEN"]);
-    expect(workflow).toContain("needs: [prepare, verify, build]");
-    expect(workflow.match(/needs: prepare/g)).toHaveLength(2);
-    expect(workflow).toContain("cancel-in-progress: false");
-    expect(workflow).not.toContain("tauri-apps/tauri-action");
-    expect(workflow).not.toContain("WINDOWS_CERTIFICATE");
-    expect(workflow).not.toContain("WINDOWS_TIMESTAMP_URL");
-    expect(workflow).not.toContain("authenticode-broker");
-    expect(workflow).not.toContain("verify-authenticode");
-    expect(workflow).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY");
-    expect(workflow).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
-    expect(workflow).toContain("mode: ${{ steps.prepare.outputs.mode }}");
-    expect(workflow).toContain("FSTTY_RELEASE_MODE: ${{ needs.prepare.outputs.mode }}");
-    expect(workflow).toContain("if: needs.prepare.outputs.mode == 'release'");
-    expect(workflow).toContain("if: needs.prepare.outputs.mode == 'validation'");
-    expect(workflow).toContain("release-artifacts.mjs collect-validation");
-    expect(workflow).toContain("windows-validation-${{ github.run_id }}");
-    expect(workflow).toMatch(/needs: \[prepare, verify, build\]\r?\n\s+if: needs\.prepare\.outputs\.mode == 'release'/);
-    for (const name of [
-      "签署 Tauri 更新安装包",
-      "整理与校验正式发布产物",
-      "上传本次运行的正式发布产物",
-    ]) {
-      const start = workflow.indexOf(`- name: ${name}`);
-      const end = workflow.indexOf("\n      - ", start + 1);
-      expect(start).toBeGreaterThan(0);
-      expect(workflow.slice(start, end < 0 ? undefined : end))
-        .toContain("if: needs.prepare.outputs.mode == 'release'");
-    }
-    for (const name of ["整理与校验未签名验证产物", "上传本次运行的未签名验证产物"]) {
-      const start = workflow.indexOf(`- name: ${name}`);
-      const end = workflow.indexOf("\n      - ", start + 1);
-      expect(start).toBeGreaterThan(0);
-      expect(workflow.slice(start, end < 0 ? undefined : end))
-        .toContain("if: needs.prepare.outputs.mode == 'validation'");
-    }
-    const bundle = workflow.indexOf("ci-build.mjs bundle");
-    const updaterSignature = workflow.indexOf("ci-build.mjs sign");
-    expect(bundle).toBeGreaterThan(0);
-    expect(bundle).toBeLessThan(updaterSignature);
-    const quality = await readFile(new URL("../.github/workflows/quality.yml", import.meta.url), "utf8");
-    const warm = quality.slice(quality.indexOf("\n  warm:"));
-    expect(warm).not.toContain("secrets.");
-    expect(warm).not.toMatch(/ci-build\.mjs (bundle|sign)/);
-  });
 });

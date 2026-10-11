@@ -183,12 +183,16 @@ NSIS 支持简体中文和英文，并跟随 Windows 显示语言。`v1.6.0` 在
 
 ## 本地开发
 
-环境要求：Windows、Node.js 20+、Rust stable 和 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。
+环境要求：Windows、Node.js 20+、Rust 1.97.0 和 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。仓库的 `rust-toolchain.toml` 固定本地与 CI 工具链，包含 rustfmt 和 Clippy；工具链升级单独验证。
 
 ```bash
 npm ci
 npm run verify:all
 ```
+
+日常校验检查程序配置与锁文件版本、类型、严格 Lint、行为测试、构建和 Rust 检查；发布前另运行 `npm run check:release`，核对双语 README 徽章及对应版本的日期和非空双语更新说明。更新日志测试使用独立夹具，不锁定真实正文或条目数。Vitest 仅扫描 `src` 和 `scripts`；样式效果由界面验收覆盖。
+
+单人 Agent 开发的 CI 保留 main 推送与手动检查、依赖审计及检查后的正式编译预热；纯文档或索引元数据推送跳过自动运行，新推送取消同分支旧检查。手动检查和发布独立运行。缓存与发布约束见[Windows 发布与 CI 说明](docs/windows-release-ci.md)。
 
 当前 Windows 开发分支校验有效安装的目录与版本。已有安装记录时，RustRover 的 `cargo run` 和 `npm run tauri dev` 会因生成的程序不在当前安装目录而被拒绝；以管理员身份运行也不会改变这一结果。完整桌面与 SSH 功能通过本地验证安装包测试：
 

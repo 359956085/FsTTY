@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -36,10 +36,6 @@ export function resolveReleaseRun({ eventName, publishRequested, ref, defaultBra
     };
   }
   return { mode: "release", tag: validateReleaseRef(ref, version) };
-}
-
-export function affectsBuild(paths) {
-  return paths.some((path) => /^(src\/|src-tauri\/|public\/|scripts\/|\.github\/|\.cargo\/|package(?:-lock)?\.json$|index\.html$|(?:vite|vitest|eslint|tsconfig|rust-toolchain)[^/]*$)/.test(path));
 }
 
 export function createUpdateManifest({ repo, tag, version, notes, createdAt, installer, signature }) {
@@ -308,16 +304,6 @@ async function run() {
       await appendFile(process.env.GITHUB_OUTPUT, `tag=${tag}\ncommit=${commit}\nmode=${run.mode}\nchannel=${releaseChannel(version)}\n`);
       break;
     }
-    case "changes": {
-      const before = process.env.BEFORE_COMMIT;
-      // 首次推送或旧提交已不可达时无法可靠比较；此时保守预热。
-      const diff = /^[a-f\d]{40}$/.test(before || "")
-        ? spawnSync("git", ["diff", "--name-only", "-z", before, "HEAD"], { cwd: root, encoding: "utf8" })
-        : null;
-      const warm = !diff || diff.status !== 0 || affectsBuild(diff.stdout.split("\0"));
-      await appendFile(process.env.GITHUB_OUTPUT, `warm=${warm}\n`);
-      break;
-    }
     case "collect":
       await collect();
       break;
@@ -325,7 +311,7 @@ async function run() {
       await collectValidation();
       break;
     default:
-      throw new Error("用法：node scripts/release-artifacts.mjs prepare|changes|collect|collect-validation");
+      throw new Error("用法：node scripts/release-artifacts.mjs prepare|collect|collect-validation");
   }
 }
 

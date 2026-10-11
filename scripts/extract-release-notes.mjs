@@ -34,8 +34,9 @@ export function extractVersionReleaseNotes(changelog, tag) {
   if (!tag.startsWith("v")) throw new Error(`发布标签必须使用 vX.Y.Z 格式或 vX.Y.Z-beta.N，当前值：${tag}`);
   const version = tag.slice(1);
   releaseChannel(version);
+  changelog = changelog.replaceAll("\r\n", "\n");
   const headingPattern = new RegExp(
-    `^## \\[${escapeRegExp(version)}\\] - \\d{4}-\\d{2}-\\d{2}[ \\t]*$`,
+    `^## \\[${escapeRegExp(version)}\\] - (\\d{4}-\\d{2}-\\d{2})[ \\t]*$`,
     "gm",
   );
   const headings = [...changelog.matchAll(headingPattern)];
@@ -44,6 +45,10 @@ export function extractVersionReleaseNotes(changelog, tag) {
   }
 
   const heading = headings[0];
+  const date = new Date(`${heading[1]}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== heading[1]) {
+    throw new Error(`${version} 更新说明日期无效`);
+  }
   const contentStart = (heading.index ?? 0) + heading[0].length;
   const remainingContent = changelog.slice(contentStart);
   const nextHeadingIndex = remainingContent.search(/^## /m);

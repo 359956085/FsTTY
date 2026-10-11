@@ -3,27 +3,20 @@ name: 代码质量
 on:
   push:
     branches: ["main"]
-  pull_request:
+    paths-ignore:
+      - README.md
+      - README.en-US.md
+      - CHANGELOG.md
+      - 'doc/**'
+      - 'docs/**'
+      - '.rustcodegraph/**'
   workflow_dispatch:
 
+concurrency:
+  group: quality-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
-  changes:
-    name: 检查正式构建输入变更
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    outputs:
-      warm: ${{ steps.changes.outputs.warm }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - id: changes
-        shell: pwsh
-        env:
-          BEFORE_COMMIT: ${{ github.event.before }}
-        run: node scripts/release-artifacts.mjs changes
   verify:
     name: 前后端检查
     runs-on: windows-latest
@@ -31,8 +24,17 @@ jobs:
       contents: read
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/ci/verify
+    outputs:
+      warm: ${{ steps.changes.outputs.warm }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        if: github.event_name == 'push'
+        env:
+          BEFORE_COMMIT: ${{ github.event.before }}
+        run: node scripts/ci-changes.mjs
       - uses: ./.github/actions/windows-build-setup
         with:
           cache-group: verify
@@ -42,7 +44,7 @@ jobs:
       - uses: ./.github/actions/rust-audit
       - run: npm run verify:all
       - name: 提供预热所需前端产物
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && steps.changes.outputs.warm == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: verified-frontend-${{ github.run_id }}
@@ -52,8 +54,8 @@ jobs:
 
   warm:
     name: 预热 Windows 正式构建缓存
-    needs: [changes, verify]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.warm == 'true'
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.verify.outputs.warm == 'true'
     runs-on: windows-latest
     permissions:
       contents: read

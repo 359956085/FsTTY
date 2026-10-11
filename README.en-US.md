@@ -171,12 +171,16 @@ The NSIS installer supports Simplified Chinese and English and follows the Windo
 
 ## Local Development
 
-Requirements: Windows, Node.js 20+, Rust stable, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/).
+Requirements: Windows, Node.js 20+, Rust 1.97.0, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/). The repository's `rust-toolchain.toml` pins local and CI builds with rustfmt and Clippy; toolchain upgrades are verified separately.
 
 ```bash
 npm ci
 npm run verify:all
 ```
+
+Daily verification checks program and lockfile versions, types, strict linting, behavior tests, builds, and Rust checks. Before release, also run `npm run check:release` to validate both README badges and the matching dated, nonempty bilingual release notes. Changelog tests use independent fixtures without fixing real wording or item counts. Vitest scans only `src` and `scripts`; visual styles are covered by UI acceptance checks.
+
+CI for solo Agent development retains main pushes, manual checks, dependency auditing, and release compilation warmup after verification. Documentation or index metadata only pushes skip automatic runs; a new push cancels an older check on the same branch. Manual checks and releases run independently. See the [Windows release and CI guide](docs/windows-release-ci.md) for cache and release constraints.
 
 The current Windows development branch checks the active installation's directory and version. When an installation record exists, RustRover's `cargo run` and `npm run tauri dev` are rejected because their executable is outside the active installation directory. Running as administrator does not change this check. Test the full desktop and SSH functionality through a local validation installer:
 
