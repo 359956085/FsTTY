@@ -812,3 +812,62 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - `git diff --check` 通过。日志保存在 `artifacts/rustls-security-audit.log` 和 `artifacts/rustls-security-verify.log`。
 
 远程 Actions 需修复推送后再确认，本地通过不等同于远程流水线通过。未构建安装包，未创建标签、暂存、提交、推送或发布；无新增受 Git 跟踪文件。
+
+
+## 2026-10-15：安装确认持续等待、退出检查修复及 beta.2 验收包
+
+现场 ProgramData 安装日志记录 `detail="旧桌面未能退出，安装已停止"`、`rollback="not_required"`，检查到旧桌面／Broker 产品版本仍为 2.0.0，失败早于当前事务的文件替换。旧日志没有具体 PID／系统错误，尚不能断言本次是终止失败、等待超时或哪一个 host 造成。
+
+安装确认框本身不设超时；移除部署 nsExec 的 `/TIMEOUT=300000`，用户未操作时持续等待。实际生成并打包的 `src-tauri/target/debug/nsis/x64/installer.nsi` 已核对部署调用无 timeout，两个 WebView2 检查仍保留原有 30 秒限时。旧进程 10 秒退出总预算从点击确定之后开始。nsExec 的超时是等待输出的空闲期限，普通 MessageBox 不会产生输出；原 5 分钟外层超时可能中断等待用户的工具。实现依据随本机 NSIS 一起提供的 `Docs/nsExec/nsExec.txt`，并核对对应 nsExec 源码默认无 timeout。
+
+关闭流程拆为先请求所有匹配进程终止，再统一等待，避免主界面与 local host 相互等待时尚未处理后者；已自行退出或终止失败但随后已退出都视为成功。匹配限定于候选目录的完整 fstty.exe 路径，持有原进程句柄，避免 PID 复用。统一预算耗尽、等待 API 错误或最后重扫仍存在匹配进程均阻止替换。日志增加关闭阶段代码、PID、程序路径、Windows 错误、终止错误及耗时；不记录命令行或终端内容。用户取消归到确认取消，错误提示指向退出旧 FsTTY／托盘／MCP 和 ProgramData 日志。
+
+项目、Broker、Network、Tauri、npm 和对应锁文件统一为 2.0.1-beta.2；双语 README 徽章与 2026-10-15 更新日志已同步，beta.1 历史保留。上一轮 rustls 0.23.46 保留，未额外升级依赖。安装验收脚本现在接受 beta 与旧 X.Y.Z.0 表示，保留完整版本的更新助手文件名；非法 prerelease 和非零第四段拒绝。
+
+### 本地自动验证：通过
+
+- `npm run verify:all`：98 个前端／脚本文件共 792 项通过；Rust 应用 377、Broker 50、SSH 边界 5、Network 10 项，共 442 项通过；9 项原生环境测试保持 ignored。版本检查、类型、严格 ESLint、构建、Rust fmt 和严格 Clippy 通过。原有 Vite chunk 提示非阻断。
+- 退出策略覆盖空集合、已退出、不重复终止、所有终止先于阻塞等待、终止失败后的退出竞态、真正超时、等待失败、整体剩余预算及精确路径匹配。实际 Windows 句柄测试仅创建并终止测试程序自己的两个子进程，验证已退出句柄和活跃子进程；未操作宿主 FsTTY 或其终端。
+- 错误分类测试覆盖扫描、等待、超时、残留和用户取消。PowerShell 5.1 模拟安装登记测试覆盖旧正式版、X.Y.Z.0、beta、完整 helper 文件名及非法版本，不修改实际登记或服务。原有文件锁、安装记录、身份和路径保护回归继续通过。
+- `npm run check:release` 通过；与 CI 相同的 cargo-audit 0.22.2 审计退出 0，保留既有 RSA 例外和 7 条非阻断警告，未放宽审计规则。
+- `npm run tauri -- build --debug --bundles nsis --config src-tauri/windows/validation.conf.json -- --locked` 构建成功。Broker 使用现有静态 CRT 构建；桌面、Broker 和 NSIS 完整 ProductVersion 均为 2.0.1-beta.2，PE 数字版本均为 2.0.1.0。未生成更新签名或 latest.json，安装包 Authenticode 状态为 NotSigned。
+- 验收包哈希、大小、WSB XML、只读映射和辅助 PowerShell 语法检查通过。新目录的入口仅允许 Windows Sandbox 默认用户名，启动时读取实际安装登记路径；兼容 WebView2 环境只对新进程生效，不修改系统环境。
+
+日志：`artifacts/beta2-verify-all.log`、`beta2-check-release.log`、`beta2-audit.log`、`beta2-acceptance-build.log`、`beta2-install-script-test.log`。早期专项测试因旧调试程序版本或测试夹具问题失败的日志不作为最终结果，最终全量日志为验收依据。
+
+### 验收包与待人工项
+
+新包：`artifacts/acceptance-2.0.1-beta.2-20261015/FsTTY_2.0.1-beta.2_x64-acceptance.exe`，Windows x64 Debug，15,346,159 字节。SHA-256：`0e40187aa4af7fb9850773ef134f16d1f2857cf494784dfadd38990efd3e67d9`。同目录包含 `FsTTY-beta2-acceptance.wsb`、沙盒安装／启动入口、`test-windows-installation.ps1`、README、package-info.json 和 SHA256SUMS.txt。旧验收包及 beta.1 未覆盖。
+
+尚未在隔离 Windows 中实际安装本包：确认框超过 6 分钟未操作后继续／取消、2.0.0 覆盖升级、多 GUI/local host/MCP/轻量组合、真实 UAC、安装后启动、文件占用失败及回滚仍待验收。自动子进程测试、生成的 NSIS 脚本检查和构建成功不能代替这些原生结果。未在宿主安装或结束用户进程，未创建标签、暂存、提交、推送或发布；远程 Actions 待推送后验证。
+
+新增受版本控制范围的文件：
+
+- `src-tauri/broker/src/installation/desktop_shutdown.rs`
+- `scripts/windows-installation.test.mjs`
+
+验收包、入口及构建日志仅保存在忽略的 artifacts 目录。
+
+## 2026-10-15：beta.2 r2 确认后复查与进程身份核实
+
+重新审查发现，首版 beta.2 仍将确认前扫描得到的进程列表用于确认后的终止。人工等待没有上限，因此该列表可能过时；这项竞态与现场失败的根因不能混为一谈。现场日志只能证明旧桌面退出阶段失败，不能证明 GUI 与 host 相互等待。上节的批量终止设计是防止单个等待延迟其他终止请求，并非已复现该次故障的证据。
+
+本次在用户确定后重新扫描并持有新句柄，取消直接返回；未发现旧进程时不弹窗，最后复查发现新进程则中止，不未经确认终止它。确认后持续新起的进程在最后复查仍存活也会中止，不新增无限重试或退出 IPC。最后复查的等待 API 错误独立报告为等待失败。人工确认持续等待，只有进程退出有 10 秒总预算。
+
+识别阶段仅申请查询和等待权限；匹配完整程序路径后才申请终止权限，比较两次句柄的进程创建时间，拒绝实例不一致。扫描中进程已消失可忽略，其他打开失败和无法查询路径不再静默跳过，使用 `desktop_inspect_failed` 记录 PID、查询阶段和 Windows 错误。无法判定路径时保守中止，不按名称杀进程；该策略可能要求用户先关闭无法查询的其他同名进程，错误提示明确说明是状态无法核实。原有文件占用检查、目录锁和事务恢复保持，不能将最后扫描视为阻止新进程启动的全局锁。
+
+### 本地校验：通过
+
+- 13 项退出专项测试通过。新增回归使用测试程序自己创建的真实 Windows 子进程：确认后使用新列表、不终止旧快照、取消不继续扫描或终止、未确认的新进程阻断、确认后查询失败阻断、重新打开的进程实例不一致不终止。未查询或关闭宿主日常 FsTTY 作为测试对象。
+- `npm run verify:all` 退出 0：98 个前端／脚本文件、792 项通过；Rust 应用 377、Broker 55、SSH 边界 5、Network 10，共 447 项通过，原 9 项 ignored 保持。类型、严格 ESLint、构建、fmt、严格 Clippy 通过。现有 Vite chunk 警告非阻断。
+- `npm run check:release` 通过，产品版本保持 2.0.1-beta.2；双语说明同步，历史版本不改写。rustls 0.23.46 和既有审计规则保持，本轮没有依赖变更。
+- Debug x64 NSIS 包构建成功，静态 CRT Broker 由现有构建步骤生成。实际生成的部署命令无外层 nsExec timeout，WebView2 检查仍为 30 秒；桌面、Broker、安装器产品版本为 2.0.1-beta.2，数字版本为 2.0.1.0。产物无 Authenticode／更新签名及 latest.json。
+- r2 安装包、辅助脚本语法、WSB 只读映射、SHA-256 清单验证通过；原 beta.2 安装包哈希未变。构建日志为 `artifacts/beta2-r2-acceptance-build.log`，完整检查为 `artifacts/beta2-r2-verify-all.log`，发布检查为 `artifacts/beta2-r2-check-release.log`。
+
+### r2 候选包与未完成验收
+
+新候选包：`artifacts/acceptance-2.0.1-beta.2-r2-20261015/FsTTY_2.0.1-beta.2_x64-acceptance-r2.exe`，15,337,622 字节。SHA-256：`f9b8d39b5e91e739538f4cda65694b823c3723981186dc0dbaf1149c07e49b0f`。独立 WSB、安装／启动入口、包信息、校验清单和针对本次竞态的人工验收步骤随包提供；旧目录不覆盖。
+
+尚未实际安装 r2：真实确认框停留超过 6 分钟、取消后旧版保持、等待期间新建终端或退出应用、确定后产生新进程、旧 2.0.0 多终端／MCP／轻量覆盖、真实权限不足与 UAC、文件占用失败和旧版恢复仍待隔离 Windows 验收。当前没有“已解决现场安装失败”的原生证据；自动测试与构建成功不替代这些结果。宿主安装和用户进程未改动，未创建标签、暂存、提交、推送或发布；远程 Actions 待推送后确认。
+
+新增源码文件仍为上一轮未跟踪的 `src-tauri/broker/src/installation/desktop_shutdown.rs` 和 `scripts/windows-installation.test.mjs`；本轮在前者扩展实现和回归，新增验收材料仅位于忽略的 artifacts 目录，提交时应包含这两个源文件。

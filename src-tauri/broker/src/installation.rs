@@ -1,4 +1,5 @@
 //! 桌面可迁移，提权程序和安装状态始终留在受保护目录。
+mod desktop_shutdown;
 mod diagnostics;
 mod files;
 mod registry;

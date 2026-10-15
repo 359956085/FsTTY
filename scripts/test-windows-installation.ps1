@@ -19,7 +19,11 @@ if ($Mode -eq 'AssertInstalled') {
     if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ine $record.sha256) { throw '桌面文件与安装记录不匹配。' }
     if (-not $service -or $service.State -ne 'Running' -or $service.StartName -ne 'NT SERVICE\FsTTYBroker') { throw '凭据服务未使用预期身份运行。' }
     if ($service.PathName -notlike ('"' + (Join-Path $protectedDirectory 'fstty-broker.exe') + '" --service')) { throw '服务不在固定受保护目录。' }
-    if ([version]$record.version -ge [version]'1.7.1') {
+    # Windows [version] cannot read SemVer prerelease identifiers. Keep the
+    # full version for helper filenames; compare the validated numeric core.
+    if ($record.version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.[1-9]\d*|\.0)?$') { throw '安装记录版本格式无效。' }
+    $numericVersion = [version](($record.version -split '-beta\.')[0])
+    if ($numericVersion -ge [version]'1.7.1') {
         $helper = Join-Path $protectedDirectory "fstty-update-helper-$($record.version).exe"
         $broker = Join-Path $protectedDirectory 'fstty-broker.exe'
         if (-not (Test-Path -LiteralPath $helper)) { throw '独立更新助手缺失。' }

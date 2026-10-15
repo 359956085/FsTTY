@@ -90,6 +90,30 @@ pub fn classify_failure(command: &str, error: &str) -> FailureReport {
         )
     } else if error.contains("更新已取消") {
         ("confirm", "update_cancelled", "应用更新已取消。")
+    } else if error.contains("用户取消关闭旧桌面") {
+        (
+            "confirm",
+            "desktop_close_cancelled",
+            "已取消关闭旧 FsTTY，安装未继续。",
+        )
+    } else if error.contains("[desktop_") || error.contains("旧桌面未能退出") {
+        let code = if error.contains("[desktop_scan_failed]") {
+            "desktop_scan_failed"
+        } else if error.contains("[desktop_inspect_failed]") {
+            "desktop_inspect_failed"
+        } else if error.contains("[desktop_wait_failed]") {
+            "desktop_wait_failed"
+        } else if error.contains("[desktop_exit_remaining]") {
+            "desktop_exit_remaining"
+        } else {
+            "desktop_exit_timeout"
+        };
+        let message = if matches!(code, "desktop_scan_failed" | "desktop_inspect_failed") {
+            "无法核实旧 FsTTY 进程状态，操作已停止。请退出 FsTTY、托盘及相关 MCP 进程后重试；详细信息见 %ProgramData%\\FsTTY\\logs。"
+        } else {
+            "旧 FsTTY 进程未能完全退出，操作已停止。请退出 FsTTY、托盘及相关 MCP 进程后重试；详细信息见 %ProgramData%\\FsTTY\\logs。"
+        };
+        ("close_desktop", code, message)
     } else if error.contains("超时") {
         (
             "execute",
@@ -380,6 +404,29 @@ mod tests {
         let unknown = classify_failure("--other", "Windows 错误 5");
         assert_eq!(unknown.code, "unexpected");
         assert!(!unknown.message.contains('5'));
+    }
+
+    #[test]
+    fn 关闭旧进程失败保留明确阶段而取消不是部署失败() {
+        for code in [
+            "desktop_scan_failed",
+            "desktop_inspect_failed",
+            "desktop_wait_failed",
+            "desktop_exit_remaining",
+            "desktop_exit_timeout",
+        ] {
+            let failure = classify_failure(
+                "--deploy-desktop",
+                &format!("[{code}] pid=123 windows_error=5"),
+            );
+            assert_eq!(failure.phase, "close_desktop");
+            assert_eq!(failure.code, code);
+            assert!(failure.message.contains("logs"));
+            assert!(!failure.message.contains("123"));
+        }
+        let failure = classify_failure("--deploy-desktop", "用户取消关闭旧桌面，安装未继续");
+        assert_eq!(failure.phase, "confirm");
+        assert_eq!(failure.code, "desktop_close_cancelled");
     }
 
     #[test]

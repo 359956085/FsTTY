@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "fstty"
-version = "2.0.1-beta.1"
+version = "2.0.1-beta.2"
 dependencies = [
  "auto-launch",
  "axum",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "fstty-broker"
-version = "2.0.1-beta.1"
+version = "2.0.1-beta.2"
 dependencies = [
  "base64 0.22.1",
  "embed-resource",
@@ -1863,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "fstty-network"
-version = "2.0.1-beta.1"
+version = "2.0.1-beta.2"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",

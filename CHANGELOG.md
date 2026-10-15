@@ -6,6 +6,25 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.0.1-beta.2] - 2026-10-15
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 安装关闭旧 FsTTY 的确认弹窗不再受外层部署超时限制，未操作时持续等待用户选择。
+- 安装确认后重新核实旧进程，再请求全部结束并等待，避免使用等待期间过时的进程列表；已退出的进程不再误报失败，无法核实或实际未退出仍阻止替换。
+- 细化安装失败阶段、进程与系统错误日志，提示退出旧程序后重试，并兼容 beta 版本安装验收。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Removed the outer deployment timeout while the installer waits for confirmation to close FsTTY; the dialog waits until the user chooses.
+- Recheck old processes after installation confirmation before requesting all terminations and waiting, avoiding a stale process list during the user's decision. Already exited processes are accepted; unverified or still-running processes block replacement.
+- Added clearer installer failure stages and process/system diagnostics, retry guidance, and beta-compatible installation validation.
+
+<!-- release-notes:en-US:end -->
+
 ## [2.0.1-beta.1] - 2026-10-15
 
 <!-- release-notes:zh-CN:start -->

@@ -273,7 +273,9 @@ Section "安装"
       Abort "$(WebViewFailed)"
     ${EndIf}
   ${EndIf}
-  nsExec::ExecToStack /TIMEOUT=300000 '"$Bootstrap\fstty-broker.exe" --deploy-desktop "$INSTDIR" $CallerPid $InstallMode $OperationId'
+  ; The deployment tool owns a human confirmation dialog. Do not impose an
+  ; outer timeout: it must wait until the user confirms or cancels.
+  nsExec::ExecToStack '"$Bootstrap\fstty-broker.exe" --deploy-desktop "$INSTDIR" $CallerPid $InstallMode $OperationId'
   Pop $0
   Pop $1
   ${If} $0 != 0
