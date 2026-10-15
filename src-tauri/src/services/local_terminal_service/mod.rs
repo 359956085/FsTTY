@@ -1,6 +1,9 @@
+mod commands;
 mod discovery;
 #[cfg(any(windows, test))]
 mod highlighting;
+#[cfg(windows)]
+mod history;
 #[cfg(windows)]
 mod host;
 #[cfg(windows)]
@@ -59,6 +62,7 @@ struct Registry {
 #[derive(Clone, Default)]
 pub struct LocalTerminalService {
     registry: Arc<Mutex<Registry>>,
+    recorder: Option<commands::Recorder>,
 }
 
 struct PendingLease {
@@ -81,6 +85,14 @@ impl Drop for PendingLease {
 }
 
 impl LocalTerminalService {
+    pub fn with_command_history(
+        history: Arc<Mutex<crate::services::CommandHistoryService>>,
+    ) -> Self {
+        Self {
+            recorder: Some(commands::Recorder::new(history)),
+            ..Self::default()
+        }
+    }
     pub fn detect(&self) -> Vec<LocalShellAvailability> {
         discovery::detect()
     }
@@ -165,6 +177,11 @@ impl LocalTerminalService {
             pending.cancel.cancel();
         }
     }
+    pub async fn drain_command_history(&self) {
+        if let Some(recorder) = &self.recorder {
+            recorder.drain().await;
+        }
+    }
     pub async fn write(&self, id: &str, data: String) -> Result<(), AppError> {
         if data.len() > protocol::MAX_INPUT {
             return Err(AppError::Validation("本地终端输入过大".into()));
@@ -228,6 +245,9 @@ impl LocalTerminalService {
             return Err(AppError::Validation(startup_errors::DIRECTORY.into()));
         }
         let startup = Startup {
+            session_id: Some(session.id.clone()),
+            history_token: Some(request_id.clone()),
+            command_token: Some(request_id.clone()),
             shell: session.shell,
             directory: directory.to_string_lossy().into(),
             columns,
@@ -339,7 +359,11 @@ impl LocalTerminalService {
                     elevated: actual,
                     label,
                     highlight,
-                } if actual == elevated => Ok((directory, shell, label, highlight)),
+                    history,
+                    commands,
+                } if actual == elevated => {
+                    Ok((directory, shell, label, highlight, history, commands))
+                }
                 Response::Error { message } => Err(message),
                 _ => Err(startup_errors::security(
                     "startup-response",
@@ -347,7 +371,7 @@ impl LocalTerminalService {
                 )),
             }
         };
-        let (directory, shell, label, highlight) = tokio::select! {
+        let (directory, shell, label, highlight, history, commands) = tokio::select! {
             _ = cancel.cancelled() => return Err(AppError::Connection("本地终端启动已取消".into())),
             result = tokio::time::timeout(Duration::from_secs(30), handshake) => result
                 .map_err(|e| AppError::Connection(startup_errors::report(startup_errors::diagnostic(startup_errors::TIMEOUT, "handshake-timeout", e))))?
@@ -364,6 +388,8 @@ impl LocalTerminalService {
                 label,
                 elevated,
                 highlight,
+                history,
+                commands: commands.clone(),
             }),
         };
         let bridge = LightweightTerminalBridge::new(connection.connection_id.clone(), channel);
@@ -387,6 +413,8 @@ impl LocalTerminalService {
         }
         let service = self.clone();
         let id = connection.connection_id.clone();
+        let recorder = self.recorder.clone();
+        let command_token = commands.map(|v| v.token);
         tokio::spawn(async move {
             let (mut reader, mut writer) = tokio::io::split(pipe);
             let write = async {
@@ -396,6 +424,8 @@ impl LocalTerminalService {
                 Ok::<(), std::io::Error>(())
             };
             let read = async {
+                let mut last_sequence = 0;
+                let warned = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 loop {
                     match protocol::receive::<Response>(&mut reader)
                         .await
@@ -406,6 +436,27 @@ impl LocalTerminalService {
                                 .emit_data(&data)
                                 .await
                                 .map_err(|_| "终端界面已关闭".to_owned())?;
+                        }
+                        Response::Command { sequence, command } => {
+                            if sequence <= last_sequence || !commands::valid_command(&command) {
+                                continue;
+                            }
+                            last_sequence = sequence;
+                            if let (Some(recorder), Some(token)) = (&recorder, &command_token) {
+                                let warning =
+                                    format!("\x1b]777;fstty-global:{token}:write-failed\x07")
+                                        .into_bytes();
+                                let bridge = bridge.clone();
+                                let warned = warned.clone();
+                                let runtime = tokio::runtime::Handle::current();
+                                recorder.record(command, move || {
+                                    if !warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                        runtime.spawn(async move {
+                                            let _ = bridge.emit_data(&warning).await;
+                                        });
+                                    }
+                                });
+                            }
                         }
                         Response::Exit { code } => return Ok(code),
                         Response::Error { message } => return Err(startup_errors::report(message)),

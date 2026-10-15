@@ -9,6 +9,12 @@ pub const MAX_INPUT: usize = 64 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Startup {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub history_token: Option<String>,
+    #[serde(default)]
+    pub command_token: Option<String>,
     pub shell: LocalShell,
     pub directory: String,
     pub columns: u32,
@@ -38,9 +44,17 @@ pub enum Response {
         label: String,
         #[serde(default)]
         highlight: Option<crate::models::LocalHighlightInfo>,
+        #[serde(default)]
+        history: Option<crate::models::LocalHistoryInfo>,
+        #[serde(default)]
+        commands: Option<crate::models::LocalCommandInfo>,
     },
     Data {
         data: Vec<u8>,
+    },
+    Command {
+        sequence: u64,
+        command: String,
     },
     Exit {
         code: Option<u32>,
@@ -119,5 +133,28 @@ mod tests {
             panic!()
         };
         assert_eq!(data, "中文\u{3}\r\n".as_bytes());
+    }
+
+    #[test]
+    fn legacy_startup_and_ready_read_without_history_fields() {
+        let startup: Startup = serde_json::from_value(serde_json::json!({
+            "shell":"cmd", "directory":"C:\\", "columns":80,"rows":24,"elevated":false
+        }))
+        .unwrap();
+        assert!(startup.session_id.is_none());
+        assert!(startup.history_token.is_none());
+        assert!(startup.command_token.is_none());
+        let ready: Response = serde_json::from_value(serde_json::json!({
+            "kind":"Ready", "elevated":false,"label":"CMD"
+        }))
+        .unwrap();
+        assert!(matches!(
+            ready,
+            Response::Ready {
+                history: None,
+                commands: None,
+                ..
+            }
+        ));
     }
 }

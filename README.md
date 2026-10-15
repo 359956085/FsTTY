@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.0-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.1--beta.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -154,7 +154,7 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 | 会话管理 | 分组、拖动排序、跨组移动、搜索、收藏和多标签页 |
 | SSH 认证 | 密码及导入的私钥；Windows 由独立服务保存凭据并完成认证 |
 | 远程终端 | xterm.js 6、独立文字配色、复制粘贴、清屏、重连、tmux 鼠标和 OSC 52 剪贴板 |
-| 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 Bash、Zsh 自动采集 |
+| 历史命令 | 所有会话共享、搜索、向上加载、去重、JSON 导入导出和清空；支持 SSH Bash/Zsh 与本地 CMD、PowerShell、Git Bash 的新单行命令采集 |
 | 文件管理 | SFTP 浏览、上传、Shift/Ctrl 多选、批量下载（最多 5 个并发，其余排队）、批量删除、拖放移动、新建目录、重命名和复制路径 |
 | 设备状态 | CPU、内存趋势、磁盘、网络上下行、操作系统和运行时间 |
 | 自动更新 | GitHub 检查与官方镜像回退、版本忽略、Markdown 更新说明和更新代理 |
@@ -162,6 +162,8 @@ MCP 之外，FsTTY 也是完整的 Windows SSH 客户端。
 历史命令的 Enter 或鼠标单击只会把命令放入终端，不会自动执行。历史窗口支持搜索、键盘选择和拖动调整宽高。
 
 在「设置 → 常规 → 终端文字配色」可选择跟随应用主题，或使用 Ayu Mirage、Catppuccin Mocha、Dracula、Everforest Dark、Gruvbox Dark、Kanagawa Wave、Nord、One Half Dark、Rosé Pine、Solarized。切换即时生效并保存；默认背景和普通文字仍使用应用主题。详见[终端文字配色说明](doc/terminal-colors.md)。
+
+CMD、PowerShell、Git Bash 使用独立于高亮开关的原生持久历史，按 Windows 用户、终端配置、Shell 和实际权限隔离，同分区的多个标签共享。PowerShell 跨启动历史通过 PSReadLine 方向键及搜索恢复，`Get-History` 仍仅列本次会话。原生文件不与外部终端共享；新启动进程中新提交的单行命令另外写入 FsTTY 全局库，不导入原生历史文件。全局历史选择只填入、不执行；编辑器无法安全清行时仅复制并提示手动粘贴。详见[本地终端历史说明与开发验证](doc/local-terminal-history.md)。
 
 ## 下载与安装
 

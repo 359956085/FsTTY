@@ -148,6 +148,18 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     if !protocol::dimensions(startup.columns, startup.rows)
         || startup.directory.len() > 4096
         || startup.directory.chars().any(char::is_control)
+        || startup
+            .session_id
+            .as_deref()
+            .is_some_and(|v| uuid::Uuid::parse_str(v).is_err())
+        || startup
+            .history_token
+            .as_deref()
+            .is_some_and(|v| uuid::Uuid::parse_str(v).is_err())
+        || startup
+            .command_token
+            .as_deref()
+            .is_some_and(|v| uuid::Uuid::parse_str(v).is_err())
     {
         return Err(startup::failure(
             "host-startup-validation",
@@ -168,22 +180,25 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
     if identity.elevated != startup.elevated {
         return Err(startup::security("host-rights", "actual rights mismatch"));
     }
+    if startup.shell == crate::models::LocalShell::Cmd {
+        std::env::remove_var("CLINK_PATH");
+        std::env::remove_var("CLINK_PROFILE");
+        std::env::remove_var("CLINK_INPUTRC");
+        std::env::remove_var("CLINK_HISTORY_LABEL");
+        std::env::set_var("CLINK_NOAUTORUN", "1");
+        std::env::set_var("FSTTY_HIGHLIGHT_ONLY", "1");
+        std::env::set_var("CLINK_NO_REMOTE_COLORING", "1");
+    }
     let program = discovery::resolve(startup.shell)?;
     let highlight = super::highlighting::prepare(
         startup.shell,
         &program.args.join(" "),
         startup.highlight_token.as_deref(),
         identity.elevated,
+        startup.session_id.as_deref(),
+        startup.history_token.as_deref(),
+        startup.command_token.as_deref(),
     );
-    // The dedicated host does not load users' Clink paths/inputrc or registry scripts.
-    if startup.highlight_token.is_some() && startup.shell == crate::models::LocalShell::Cmd {
-        std::env::remove_var("CLINK_PATH");
-        std::env::remove_var("CLINK_PROFILE");
-        std::env::remove_var("CLINK_INPUTRC");
-        std::env::set_var("CLINK_NOAUTORUN", "1");
-        std::env::set_var("FSTTY_HIGHLIGHT_ONLY", "1");
-        std::env::set_var("CLINK_NO_REMOTE_COLORING", "1");
-    }
     let (input_read, mut input_write) = anonymous_pipe()?;
     let (mut output_read, output_write) = anonymous_pipe()?;
     let mut raw_console = 0;
@@ -273,9 +288,12 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
         return Err(windows::error("无法保护本地终端子进程"));
     }
 
-    let (output_tx, output_rx) = mpsc::sync_channel::<Vec<u8>>(8);
+    let (output_tx, output_rx) = mpsc::sync_channel::<Response>(8);
+    let mut command_observer = super::commands::Observer::new(startup.command_token.as_deref());
     let mut highlight_stages =
         super::highlighting::StageObserver::new(startup.highlight_token.as_deref());
+    let mut history_stages =
+        super::highlighting::StageObserver::history(startup.history_token.as_deref());
     let reader = std::thread::spawn(move || {
         let mut buffer = [0; 16384];
         let mut forwarding = true;
@@ -288,7 +306,27 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
                     "local-highlight stage={stage}: shell initialization unavailable"
                 ));
             }
-            if forwarding && output_tx.send(buffer[..size].to_vec()).is_err() {
+            if let Some(stage) = history_stages.observe(&buffer[..size]) {
+                crate::logging::record_local_terminal_host_failure(&format!(
+                    "local-history stage={stage}: shell initialization unavailable"
+                ));
+            }
+            for (sequence, command) in command_observer.observe(&buffer[..size]) {
+                if forwarding
+                    && output_tx
+                        .send(Response::Command { sequence, command })
+                        .is_err()
+                {
+                    forwarding = false;
+                }
+            }
+            if forwarding
+                && output_tx
+                    .send(Response::Data {
+                        data: buffer[..size].to_vec(),
+                    })
+                    .is_err()
+            {
                 forwarding = false;
             }
             // Always drain through ClosePseudoConsole, even after the GUI exits.
@@ -303,20 +341,30 @@ fn serve(pipe: &mut DuplexPipe, startup: Startup) -> Result<(), String> {
             elevated: identity.elevated,
             label: program.label,
             highlight: highlight.info.clone(),
+            history: highlight.history.clone(),
+            commands: startup
+                .command_token
+                .clone()
+                .map(|token| crate::models::LocalCommandInfo { token }),
         },
     )
     .map_err(|e| startup::failure("host-ready-write", e))?;
+    if highlight.commands_failed {
+        if let Some(token) = &startup.command_token {
+            protocol::write(
+                pipe,
+                &Response::Data {
+                    data: format!("\x1b]777;fstty-global:{token}:unavailable\x07").into_bytes(),
+                },
+            )
+            .map_err(|e| startup::failure("host-command-status", e))?;
+        }
+    }
     let mut output_pipe = pipe.clone();
     let (exit_tx, exit_rx) = mpsc::sync_channel(1);
     let writer = std::thread::spawn(move || {
-        while let Ok(mut data) = output_rx.recv() {
-            while data.len() < 65536 {
-                match output_rx.try_recv() {
-                    Ok(next) => data.extend(next),
-                    Err(_) => break,
-                }
-            }
-            if protocol::write(&mut output_pipe, &Response::Data { data }).is_err() {
+        while let Ok(response) = output_rx.recv() {
+            if protocol::write(&mut output_pipe, &response).is_err() {
                 return;
             }
         }
@@ -456,6 +504,9 @@ mod tests {
             protocol::send(
                 &mut pipe,
                 &Request::Start(Startup {
+                    session_id: None,
+                    history_token: None,
+                    command_token: None,
                     shell: LocalShell::Powershell,
                     directory: directory.display().to_string(),
                     columns: 100,
@@ -547,6 +598,199 @@ mod tests {
         }
     }
 
+    // Run in a disposable Windows environment, serially: hosts intentionally
+    // set per-process initialization variables. Never requests UAC. Run once
+    // under each existing token and with each installed PowerShell generation.
+    #[tokio::test]
+    #[ignore = "Requires FSTTY_HISTORY_FIXTURE_ROOT in isolated Windows; three native shells"]
+    async fn conpty_history_stop_restart_and_natural_exit() {
+        use crate::models::LocalShell;
+        let root = std::path::PathBuf::from(
+            std::env::var_os("FSTTY_HISTORY_FIXTURE_ROOT").expect("explicit fixture root required"),
+        );
+        assert!(root.is_absolute() && root.is_dir());
+        let elevated = fstty_broker::windows::current_identity().unwrap().elevated;
+        for shell in [LocalShell::Cmd, LocalShell::Powershell, LocalShell::GitBash] {
+            // A required missing shell is a fixture failure, not a silent pass.
+            discovery::resolve(shell).unwrap();
+            let id = uuid::Uuid::new_v4().to_string();
+            let directory = root.join(format!("{shell:?}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&directory).unwrap();
+            for round in 0..3 {
+                let token = uuid::Uuid::new_v4().to_string();
+                let nonce = uuid::Uuid::new_v4().to_string();
+                let mut pipe = windows::listener(&nonce).unwrap();
+                let startup = Startup {
+                    session_id: Some(id.clone()),
+                    history_token: Some(token.clone()),
+                    command_token: None,
+                    shell,
+                    directory: directory.display().to_string(),
+                    columns: 180,
+                    rows: 24,
+                    elevated,
+                    highlight_token: (round == 1 && shell != LocalShell::GitBash)
+                        .then(|| token.clone()),
+                };
+                let fixture_root = directory.clone();
+                let helper = std::thread::spawn(move || {
+                    let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
+                    super::super::history::with_fixture_root(&fixture_root, || {
+                        serve(&mut client, startup)
+                    })
+                });
+                let result = tokio::time::timeout(Duration::from_secs(40), async {
+                    pipe.connect().await.unwrap();
+                    assert!(matches!(protocol::receive::<Response>(&mut pipe).await.unwrap(), Response::Ready { history: Some(crate::models::LocalHistoryInfo { persistent: true, .. }), .. }));
+                    let ready = match shell {
+                        LocalShell::Cmd => "echo FSTTY_^READY\r",
+                        LocalShell::Powershell => "Write-Output ('FSTTY_'+'READY')\r",
+                        LocalShell::GitBash => "printf 'FSTTY_%s\\n' READY\r",
+                    };
+                    send_input(&mut pipe, ready).await;
+                    read_until(&mut pipe, "FSTTY_READY").await;
+                    if round > 0 {
+                        let query = match shell {
+                            LocalShell::Cmd => "history\r",
+                            LocalShell::Powershell => "[Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems() | ForEach-Object CommandLine\r",
+                            LocalShell::GitBash => "history\r",
+                        };
+                        send_input(&mut pipe, query).await;
+                        read_until(&mut pipe, "echo FSTTY_PERSISTED_FIXTURE").await;
+                    }
+                    send_input(&mut pipe, "echo FSTTY_PERSISTED_FIXTURE\r").await;
+                    // The next accepted command confirms return to the prompt,
+                    // which is the Bash persistence boundary even before Stop.
+                    send_input(&mut pipe, ready).await;
+                    read_until(&mut pipe, "FSTTY_READY").await;
+                    if round == 1 {
+                        send_input(&mut pipe, "exit\r").await;
+                        while !matches!(protocol::receive::<Response>(&mut pipe).await.unwrap(), Response::Exit { .. }) {}
+                    } else {
+                        protocol::send(&mut pipe, &Request::Stop {}).await.unwrap();
+                    }
+                }).await;
+                let _ = protocol::send(&mut pipe, &Request::Stop {}).await;
+                drop(pipe);
+                helper.join().unwrap().unwrap();
+                result.expect("native history fixture timed out");
+            }
+        }
+    }
+
+    // Capture uses native accepted-history notifications, not the echo text.
+    // Each round starts with old native history but must produce no replay.
+    #[tokio::test]
+    #[ignore = "Requires isolated Windows, all three shells and FSTTY_HISTORY_FIXTURE_ROOT"]
+    async fn conpty_global_history_and_safe_insertion() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("FSTTY_HISTORY_FIXTURE_ROOT").expect("explicit fixture root required"),
+        );
+        assert!(root.is_absolute() && root.is_dir());
+        let elevated = fstty_broker::windows::current_identity().unwrap().elevated;
+        for shell in [LocalShell::Cmd, LocalShell::Powershell, LocalShell::GitBash] {
+            discovery::resolve(shell).unwrap();
+            let directory = root.join(format!("global-{shell:?}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&directory).unwrap();
+            let session_id = uuid::Uuid::new_v4().to_string();
+            for highlight in [false, true] {
+                let nonce = uuid::Uuid::new_v4().to_string();
+                let token = uuid::Uuid::new_v4().to_string();
+                let mut pipe = windows::listener(&nonce).unwrap();
+                let startup = Startup {
+                    session_id: Some(session_id.clone()),
+                    history_token: Some(token.clone()),
+                    command_token: Some(token.clone()),
+                    shell,
+                    directory: directory.display().to_string(),
+                    columns: 180,
+                    rows: 24,
+                    elevated,
+                    highlight_token: (highlight && shell != LocalShell::GitBash)
+                        .then(|| token.clone()),
+                };
+                let fixture_root = directory.clone();
+                let helper = std::thread::spawn(move || {
+                    let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
+                    super::super::history::with_fixture_root(&fixture_root, || {
+                        serve(&mut client, startup)
+                    })
+                });
+                let result = tokio::time::timeout(Duration::from_secs(40), async {
+                    pipe.connect().await.unwrap();
+                    assert!(matches!(
+                        protocol::receive::<Response>(&mut pipe).await.unwrap(),
+                        Response::Ready {
+                            commands: Some(_),
+                            ..
+                        }
+                    ));
+                    assert!(global_prompt(&mut pipe, &token).await.is_empty());
+                    let command = "echo FSTTY_GLOBAL_FIXTURE";
+                    // Draft with the cursor in its middle must be replaced entirely.
+                    // No Enter is included in the application's insertion prefix.
+                    send_input(&mut pipe, "echo MUST_NOT_RUN\x1b[D\x1b[D").await;
+                    send_input(&mut pipe, &format!("\x1b[24;7~{command}")).await;
+                    send_input(&mut pipe, "\r").await;
+                    let first = global_prompt(&mut pipe, &token).await;
+                    assert_eq!(first, vec![(1, command.into())]);
+                    // Explicit repeat remains a new submission; dedup belongs to the DB.
+                    send_input(&mut pipe, &format!("{command}\r")).await;
+                    assert_eq!(
+                        global_prompt(&mut pipe, &token).await,
+                        vec![(2, command.into())]
+                    );
+                    send_input(&mut pipe, "exit\r").await;
+                    let mut accepted = Vec::new();
+                    loop {
+                        match protocol::receive::<Response>(&mut pipe).await.unwrap() {
+                            Response::Command { sequence, command } => {
+                                accepted.push((sequence, command))
+                            }
+                            Response::Exit { .. } => break,
+                            Response::Data { .. } => {}
+                            other => panic!("unexpected global fixture response: {other:?}"),
+                        }
+                    }
+                    // Clink excludes exit/history before onhistory by default.
+                    let expected = if shell == LocalShell::Cmd {
+                        vec![]
+                    } else {
+                        vec![(3, "exit".into())]
+                    };
+                    assert_eq!(accepted, expected);
+                })
+                .await;
+                let _ = protocol::send(&mut pipe, &Request::Stop {}).await;
+                drop(pipe);
+                helper.join().unwrap().unwrap();
+                result.expect("native global history fixture timed out");
+            }
+        }
+    }
+
+    async fn global_prompt(pipe: &mut NamedPipeServer, token: &str) -> Vec<(u64, String)> {
+        let mut bytes = Vec::new();
+        let mut accepted = Vec::new();
+        loop {
+            match protocol::receive::<Response>(pipe).await.unwrap() {
+                Response::Command { sequence, command } => accepted.push((sequence, command)),
+                Response::Data { data } => {
+                    if data.windows(4).any(|v| v == b"\x1b[6n") {
+                        send_input(pipe, "\x1b[1;1R").await;
+                    }
+                    bytes.extend(data);
+                    let output = String::from_utf8_lossy(&bytes);
+                    assert!(!output.contains(&format!("fstty-global:{token}:unavailable")));
+                    if output.contains(&format!("fstty-global:{token}:input:clear\x07")) {
+                        return accepted;
+                    }
+                }
+                other => panic!("unexpected fixture response: {other:?}"),
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore = "Requires a dedicated Windows PowerShell fixture directory; no UAC or user commands"]
     async fn conpty_highlight_powershell_fixture() {
@@ -567,6 +811,9 @@ mod tests {
             serve(
                 &mut client,
                 Startup {
+                    session_id: None,
+                    history_token: None,
+                    command_token: None,
                     shell: LocalShell::Powershell,
                     directory: path,
                     columns: 200,
@@ -638,6 +885,9 @@ mod tests {
             serve(
                 &mut client,
                 Startup {
+                    session_id: None,
+                    history_token: None,
+                    command_token: None,
                     shell: LocalShell::Cmd,
                     directory: path,
                     columns: 200,
@@ -771,7 +1021,7 @@ mod tests {
                 let path = directory.display().to_string();
                 let helper = std::thread::spawn(move || {
                     let mut client = DuplexPipe::connect(&windows::pipe_name(&nonce)).unwrap();
-                    serve(&mut client, Startup { shell, directory: path, columns: 100, rows: 30, elevated, highlight_token: None })
+                    serve(&mut client, Startup { session_id: None, history_token: None, command_token: None, shell, directory: path, columns: 100, rows: 30, elevated, highlight_token: None })
                 });
                 pipe.connect().await.unwrap();
                 assert!(matches!(protocol::receive::<Response>(&mut pipe).await.unwrap(), Response::Ready { elevated: actual, .. } if actual == elevated));

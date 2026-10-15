@@ -394,6 +394,7 @@ pub fn run() {
                     .transfer_job_service
                     .shutdown(&state.connection_manager)
                     .await;
+                state.local_terminal_service.drain_command_history().await;
                 shutdown_lifecycle.finish_shutdown();
                 app.exit(code.unwrap_or(0));
             });

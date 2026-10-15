@@ -443,6 +443,8 @@
 }
 
 .terminal-connect-overlay strong {
+  max-width: calc(100% - 32px);
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: 16px;
 }
@@ -1149,5 +1151,3 @@
 .local-tab-status svg { display: block; }
 .local-tab-status-running { color: var(--success); }
 .local-tab-status-idle { color: var(--text-subtle); }
-.terminal-connect-overlay.local-terminal-overlay { inset: auto 16px 16px; flex-direction: row; flex-wrap: wrap; padding: 12px 16px; gap: 12px; border-radius: 6px; }
-.local-terminal-overlay > svg { display: none; }

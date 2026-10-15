@@ -291,7 +291,7 @@ export interface SshConnection {
   homePath: string;
   sftpAvailable: boolean;
   shellName?: "bash" | "zsh" | null;
-  local?: { shell: LocalShell; label: string; elevated: boolean; highlight?: { token: string; failed: boolean } };
+  local?: { shell: LocalShell; label: string; elevated: boolean; highlight?: { token: string; failed: boolean }; history?: { token: string; persistent: boolean }; commands?: { token: string } };
 }
 
 export interface HostKeyChallenge {

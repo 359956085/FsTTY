@@ -16,6 +16,7 @@ interface TestChannel<T> { onmessage(event: T): void }
 const translationMocks = vi.hoisted(() => ({ language: null as "zh" | "en" | null }));
 
 const apiMocks = vi.hoisted(() => ({
+  addCommandHistory: vi.fn(),
   connectSession: vi.fn(),
   startLocalTerminal: vi.fn(),
   cancelLocalTerminalStart: vi.fn(),
@@ -30,10 +31,16 @@ const apiMocks = vi.hoisted(() => ({
   commitLightweightMode: vi.fn(),
   abortLightweightMode: vi.fn(),
 }));
+const historyMocks = vi.hoisted(() => ({ toggle: vi.fn(), search: vi.fn() }));
+const clipboardMocks = vi.hoisted(() => ({ write: vi.fn() }));
+vi.mock("./terminalClipboard", async (original) => ({
+  ...await original<typeof import("./terminalClipboard")>(), writeSystemClipboard: clipboardMocks.write,
+}));
 
 const runtimeMocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   focus: vi.fn(),
+  keys: vi.fn(),
   getTheme: vi.fn((theme: string, colorScheme: string) => ({ name: theme, colorScheme })),
   install: vi.fn(),
   options: { theme: undefined as unknown, minimumContrastRatio: 1 },
@@ -64,13 +71,15 @@ vi.mock("react-i18next", async (importOriginal) => ({
 
 vi.mock("../../shared/api/client", () => ({ api: apiMocks }));
 
-vi.mock("./CommandHistoryPopover", () => ({
-  CommandHistoryPopover: ({ onTriggerClose }: { onTriggerClose?: () => void }) => (
-    <button onClick={onTriggerClose} type="button">
-      sessions.commandHistory
-    </button>
-  ),
-}));
+vi.mock("./CommandHistoryPopover", async () => {
+  const { forwardRef, useImperativeHandle } = await import("react");
+  return { CommandHistoryPopover: forwardRef(function MockHistory(
+    { onTriggerClose, onSelect, disabled }: { onTriggerClose?: () => void; onSelect: (command: string) => void; disabled: boolean }, ref,
+  ) {
+    useImperativeHandle(ref, () => ({ toggle: historyMocks.toggle, focusSearch: historyMocks.search }));
+    return <button disabled={disabled} onClick={() => { onSelect("echo selected"); onTriggerClose?.(); }} type="button">sessions.commandHistory</button>;
+  }) };
+});
 
 vi.mock("./terminalRuntime", () => ({
   getTerminalTheme: runtimeMocks.getTheme,
@@ -146,6 +155,8 @@ describe("终端面板连接", () => {
   beforeEach(() => {
     translationMocks.language = null;
     vi.clearAllMocks();
+    clipboardMocks.write.mockResolvedValue(undefined);
+    apiMocks.addCommandHistory.mockResolvedValue(undefined);
     runtimeMocks.focus.mockReset();
     initializeLightweightMode({
       active: false, suppressConfirmation: false, phase: "normal", terminals: [], transferJobs: [],
@@ -182,7 +193,7 @@ describe("终端面板连接", () => {
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
 
     const terminal = {
-      attachCustomKeyEventHandler: vi.fn(),
+      attachCustomKeyEventHandler: runtimeMocks.keys,
       blur: vi.fn(),
       cols: 80,
       element: null,
@@ -263,6 +274,31 @@ describe("终端面板连接", () => {
       kind: "data", connectionId: attachment.connection.connectionId, data: btoa("late"),
     }));
     expect(runtimeMocks.write).toHaveBeenCalledTimes(writes);
+  });
+
+  it("本地轻量恢复沿用命令通道，不重新启动、注入或回放入库", async () => {
+    const attachment = preserveTerminal();
+    const token = "e6b4ea51-2f6b-4449-9550-f4b20082a620";
+    const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: false };
+    attachment.connection = { ...attachment.connection, sftpAvailable: false, local: { shell: "cmd", label: "CMD", elevated: false, commands: { token } } };
+    apiMocks.attachPreservedTerminal.mockImplementation(async (_id: string, channel: TestChannel<TerminalResumeEvent>) => {
+      channel.onmessage({ kind: "snapshot", connectionId: attachment.connection.connectionId, data: btoa("saved"), chunkIndex: 0, totalChunks: 1, truncated: false });
+      channel.onmessage({ kind: "ready", connectionId: attachment.connection.connectionId, truncated: false });
+      return attachment;
+    });
+    const view = renderPreservedTerminal({ session: local });
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledOnce());
+    view.rerenderTerminal({ connectionState: "connected" });
+    expect(apiMocks.startLocalTerminal).not.toHaveBeenCalled();
+    expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+    act(() => {
+      runtimeMocks.oscHandlers.get(777)?.(`fstty-global:${token}:command:1:ZWNobw==`);
+      runtimeMocks.oscHandlers.get(777)?.(`fstty-global:${token}:input:clear`);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sessions.commandHistory" }));
+    await waitFor(() => expect(apiMocks.writeTerminal).toHaveBeenCalledWith(attachment.connection.connectionId, "\x1b[24;7~echo selected"));
+    expect(apiMocks.addCommandHistory).not.toHaveBeenCalled();
+    expect(apiMocks.disconnectSession).not.toHaveBeenCalled();
   });
 
   it("恢复请求未完成就卸载时忽略迟到快照并清理返回连接", async () => {
@@ -376,7 +412,7 @@ describe("终端面板连接", () => {
   });
 
   it("本地右键菜单聚焦可用项，Esc 返回终端输入，外部点击保留目标焦点", async () => {
-    const view = renderPreservedTerminal();
+    const view = renderPreservedTerminal({ connectionState: "connected" });
     await act(async () => { await runtimeMocks.install.mock.results[0].value; });
     const body = view.container.querySelector<HTMLElement>(".terminal-body")!;
     const input = document.createElement("textarea");
@@ -626,6 +662,70 @@ describe("终端面板连接", () => {
 
     expect(apiMocks.connectSession).toHaveBeenCalledTimes(1);
   });
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 全局历史只填入、不执行，未知编辑器复制降级，通知不重复入库", async (shell) => {
+    const local = { kind: "local" as const, id: session.id, name: "Local", group: "", tags: [], shell, startingDirectory: "", runAsAdmin: true };
+    apiMocks.startLocalTerminal.mockImplementation(async (_id: string, _runtime: string, _cols: number, _rows: number, _channel: TestChannel<TerminalEvent>, token: string) => ({ connectionId: token, sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell, elevated: true, label: "Local", commands: { token } } }));
+    const view = renderPreservedTerminal({ session: local, autoConnect: true, shortcuts: {
+      ...shortcuts,
+      commandHistory: { code: "KeyH", ctrl: true, shift: true, alt: false },
+      commandHistorySearch: { code: "KeyF", ctrl: true, shift: false, alt: false },
+    } });
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledOnce());
+    view.rerenderTerminal({ connectionState: "connected" });
+    const keyHandler = runtimeMocks.keys.mock.calls[0][0] as (event: KeyboardEvent) => boolean;
+    const listKey = new KeyboardEvent("keydown", { code: "KeyH", ctrlKey: true, shiftKey: true, cancelable: true });
+    const searchKey = new KeyboardEvent("keydown", { code: "KeyF", ctrlKey: true, cancelable: true });
+    expect(keyHandler(listKey)).toBe(false);
+    expect(keyHandler(searchKey)).toBe(false);
+    expect(historyMocks.toggle).toHaveBeenCalledOnce();
+    expect(historyMocks.search).toHaveBeenCalledOnce();
+    expect(listKey.defaultPrevented && searchKey.defaultPrevented).toBe(true);
+    const token = apiMocks.startLocalTerminal.mock.calls[0][5] as string;
+    const notify = (message: string) => act(() => { runtimeMocks.oscHandlers.get(777)?.(`fstty-global:${token}:${message}`); });
+    notify("input:clear");
+    fireEvent.click(screen.getByRole("button", { name: "sessions.commandHistory" }));
+    await waitFor(() => expect(apiMocks.writeTerminal).toHaveBeenCalledWith(token, "\x1b[24;7~echo selected"));
+    notify("execute");
+    fireEvent.click(screen.getByRole("button", { name: "sessions.commandHistory" }));
+    await waitFor(() => expect(clipboardMocks.write).toHaveBeenCalledWith("echo selected"));
+    expect(screen.getByText("sessions.localHistoryCopied")).toBeTruthy();
+    notify("command:1:ZWNobyBzZWxlY3RlZA==");
+    expect(apiMocks.addCommandHistory).not.toHaveBeenCalled();
+    notify("write-failed"); notify("unavailable");
+    expect(screen.getAllByText("sessions.localGlobalHistoryUnavailable")).toHaveLength(1);
+    expect(apiMocks.disconnectSession).not.toHaveBeenCalled();
+    expect(runtimeMocks.dispose).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it.each(["cmd", "powershell", "gitBash"] as const)("%s 历史降级仅提示一次，拒绝旧启动通知，失败不阻止运行或重试", async (shell) => {
+    const local = { kind: "local" as const, id: session.id, name: "Local", group: "", tags: [], shell, startingDirectory: "", runAsAdmin: false };
+    let events!: TestChannel<TerminalEvent>;
+    apiMocks.startLocalTerminal.mockImplementation(async (_id: string, _runtime: string, _cols: number, _rows: number, channel: TestChannel<TerminalEvent>, token: string) => {
+      events = channel;
+      return { connectionId: token, sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell, elevated: false, label: "Local", history: { token, persistent: false } } };
+    });
+    const view = renderPreservedTerminal({ session: local, autoConnect: true });
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledOnce());
+    expect(screen.getAllByText("settings.localHistoryUnavailable")).toHaveLength(1);
+    const token = apiMocks.startLocalTerminal.mock.calls[0][5] as string;
+    act(() => { runtimeMocks.oscHandlers.get(777)?.(`fstty-history:${token}:failed`); });
+    expect(screen.getAllByText("settings.localHistoryUnavailable")).toHaveLength(1);
+    act(() => events.onmessage({ kind: "disconnected", connectionId: token, message: "exited", exitCode: 0 }));
+    view.rerenderTerminal({ connectionState: "disconnected" });
+    fireEvent.click(screen.getByRole("button", { name: "local.restart" }));
+    await waitFor(() => expect(view.onConnected).toHaveBeenCalledTimes(2));
+    // A new, healthy startup must ignore a delayed failure from the previous one.
+    view.unmount();
+    apiMocks.startLocalTerminal.mockImplementation(async (_id: string, _runtime: string, _cols: number, _rows: number, _channel: TestChannel<TerminalEvent>, next: string) => ({ connectionId: next, sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell, elevated: false, label: "Local", history: { token: next, persistent: true } } }));
+    const healthy = renderPreservedTerminal({ session: local, autoConnect: true });
+    await waitFor(() => expect(healthy.onConnected).toHaveBeenCalledOnce());
+    act(() => { runtimeMocks.oscHandlers.get(777)?.(`fstty-history:${token}:failed`); });
+    expect(screen.queryByText("settings.localHistoryUnavailable")).toBeNull();
+    expect(apiMocks.disconnectSession).not.toHaveBeenCalledWith(apiMocks.startLocalTerminal.mock.calls[apiMocks.startLocalTerminal.mock.calls.length - 1]?.[5]);
+    healthy.unmount();
+  });
+
   it("本地启动独立于 SSH，收到输出后退出保留输出和重启入口", async () => {
     const local = { kind: "local" as const, id: session.id, name: "CMD", group: "", tags: [], shell: "cmd" as const, startingDirectory: "", runAsAdmin: true };
     const connection = { connectionId: "local-1", sessionId: local.id, homePath: "C:\\Home", sftpAvailable: false, local: { shell: "cmd" as const, elevated: false, label: "CMD" } };
@@ -635,7 +735,7 @@ describe("终端面板连接", () => {
     await waitFor(() => expect(view.onConnected).toHaveBeenCalledWith("runtime-preserved", connection));
     expect(apiMocks.connectSession).not.toHaveBeenCalled();
     expect(apiMocks.startLocalTerminal.mock.calls[0][6]).toBe(false);
-    expect(screen.queryByRole("button", { name: "sessions.commandHistory" })).toBeNull();
+    expect(screen.getByRole("button", { name: "sessions.commandHistory" })).toBeTruthy();
     view.rerenderTerminal({ connectionState: "connected" });
     act(() => events.onmessage({ kind: "data", connectionId: "local-1", data: btoa("output") }));
     expect(new TextDecoder().decode(runtimeMocks.write.mock.calls[runtimeMocks.write.mock.calls.length - 1]![0] as Uint8Array)).toBe("output");

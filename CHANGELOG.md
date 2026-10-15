@@ -6,6 +6,25 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.0.1-beta.1] - 2026-10-15
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- CMD、PowerShell、Git Bash 新增按终端配置和实际权限隔离的原生历史持久保存，停止终端或重启应用后可继续查询。
+- 三种本地终端接入全局命令历史，共享搜索、去重和手动填入功能，保留原生历史过滤；仅采集新提交的单行命令，不导入旧历史。
+- 统一本地终端与 SSH 的未运行提示和启动入口，使用居中布局并保留状态、输出及焦点行为。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Added persistent native CMD, PowerShell, and Git Bash history, isolated by terminal configuration and verified privilege, across terminal stops and app restarts.
+- Connected local terminals to global command history with shared search, deduplication, and manual insertion while preserving native filters. Only newly submitted single-line commands are collected; existing history is not imported.
+- Aligned local terminal idle messages and launch controls with the centered SSH layout while preserving state, output, and focus behavior.
+
+<!-- release-notes:en-US:end -->
+
 ## [2.0.0] - 2026-10-09
 
 <!-- release-notes:zh-CN:start -->

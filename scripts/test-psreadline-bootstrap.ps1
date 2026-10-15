@@ -1,6 +1,6 @@
 param([string]$Bootstrap)
 $ErrorActionPreference='Stop'
-$script:source=[IO.File]::ReadAllText($Bootstrap).Replace('__TOKEN__','e6b4ea51-2f6b-4449-9550-f4b20082a620')
+$script:source=[IO.File]::ReadAllText($Bootstrap).Replace('__COMMAND_TOKEN__','').Replace('__TOKEN__','e6b4ea51-2f6b-4449-9550-f4b20082a620').Replace('__HISTORY_TOKEN__','').Replace('__HISTORY_PATH__','')
 foreach($scenario in @('modern','legacy','missing','custom','elevated-owner','elevated-write','elevated-trusted','elevated-sid-read','elevated-acl-error','elevated-candidate-error')) {
     $script:scenario=$scenario
     $script:colors=@{}

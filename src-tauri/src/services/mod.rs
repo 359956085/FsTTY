@@ -69,6 +69,8 @@ impl AppState {
             }
         }
         let settings_service = Arc::new(StdMutex::new(settings_service));
+        let command_history_service =
+            Arc::new(StdMutex::new(CommandHistoryService::load(&app_data_dir)));
         let session_service = SessionService::load(&app_data_dir);
         #[cfg(all(windows, not(test)))]
         let session_service = session_service.with_settings(settings_service.clone());
@@ -77,9 +79,7 @@ impl AppState {
             autostart_service: AutostartService::default(),
             app_data_directory: app_data_dir.clone(),
             log_directory: log_directory.clone(),
-            command_history_service: Arc::new(StdMutex::new(CommandHistoryService::load(
-                &app_data_dir,
-            ))),
+            command_history_service: command_history_service.clone(),
             session_service: Arc::new(Mutex::new(session_service)),
             credential_service: CredentialService::new(),
             connection_manager: ConnectionManager::new_with_settings(
@@ -87,7 +87,9 @@ impl AppState {
                 settings_service.clone(),
             ),
             device_service: DeviceService,
-            local_terminal_service: LocalTerminalService::default(),
+            local_terminal_service: LocalTerminalService::with_command_history(
+                command_history_service,
+            ),
             lightweight_mode_service: LightweightModeService::load(&app_data_dir),
             settings_service,
             transfer_job_service: TransferJobService::default(),

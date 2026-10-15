@@ -24,6 +24,14 @@ pub(super) struct StageObserver {
     warned: bool,
 }
 impl StageObserver {
+    pub(super) fn history(token: Option<&str>) -> Self {
+        let mut observer = Self::new(None);
+        observer.prefix = token
+            .filter(|v| valid_token(v))
+            .map(|v| format!("\x1b]777;fstty-history:{v}:").into_bytes())
+            .unwrap_or_default();
+        observer
+    }
     pub(super) fn new(token: Option<&str>) -> Self {
         Self {
             prefix: token
@@ -70,6 +78,7 @@ impl StageObserver {
     }
     fn failure_stage(&self) -> Option<&'static str> {
         match self.stage.as_slice() {
+            b"failed" => Some("history-initialization"),
             b"clink-inject" => Some("clink-inject"),
             b"custom-line-editor" => Some("custom-line-editor"),
             b"psreadline-import" => Some("psreadline-import"),
@@ -81,13 +90,33 @@ impl StageObserver {
     }
 }
 
-pub(super) fn powershell_arguments(token: &str, elevated: bool) -> Result<String, String> {
+pub(super) fn powershell_arguments(
+    token: Option<&str>,
+    elevated: bool,
+    history: Option<&std::path::Path>,
+    history_token: Option<&str>,
+    command_token: Option<&str>,
+) -> Result<String, String> {
     use base64::Engine;
-    if !valid_token(token) {
+    if token.is_some_and(|v| !valid_token(v))
+        || history_token.is_some_and(|v| !valid_token(v))
+        || command_token.is_some_and(|v| !valid_token(v))
+    {
         return Err("invalid highlight token".into());
     }
     let script = POWERSHELL
-        .replace("__TOKEN__", token)
+        .replace("__TOKEN__", token.unwrap_or_default())
+        .replace("__HISTORY_TOKEN__", history_token.unwrap_or_default())
+        .replace("__COMMAND_TOKEN__", command_token.unwrap_or_default())
+        .replace(
+            "__HISTORY_PATH__",
+            &base64::engine::general_purpose::STANDARD.encode(
+                history
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+                    .as_bytes(),
+            ),
+        )
         .replace("__ELEVATED__", if elevated { "$true" } else { "$false" });
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     Ok(format!(
@@ -102,7 +131,8 @@ pub(super) use platform::prepare;
 #[cfg(windows)]
 mod platform {
     use super::*;
-    use crate::models::LocalHighlightInfo;
+    use crate::models::{LocalHighlightInfo, LocalHistoryInfo};
+    use crate::services::local_terminal_service::history::Profile;
     use crate::services::local_terminal_service::windows::{wide, Handle};
     use std::{
         fs::{self, File, OpenOptions},
@@ -122,7 +152,10 @@ mod platform {
     pub(crate) struct Prepared {
         pub arguments: String,
         pub info: Option<LocalHighlightInfo>,
+        pub history: Option<LocalHistoryInfo>,
+        pub commands_failed: bool,
         _lease: Option<Lease>,
+        _profile: Option<Profile>,
     }
     struct Lease {
         directory: PathBuf,
@@ -295,7 +328,7 @@ mod platform {
         lease.files.push(file);
         Ok(())
     }
-    fn clink(token: &str, elevated: bool) -> Result<Lease, String> {
+    fn lease(elevated: bool) -> Result<Lease, String> {
         let (parent, root) = if elevated {
             let (path, handle) = protected_root()?;
             (path, Some(handle))
@@ -304,29 +337,58 @@ mod platform {
         };
         let directory = parent.join(format!("fstty-clink-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&directory).map_err(|e| e.to_string())?;
-        let mut lease = Lease {
+        Ok(Lease {
             directory,
             files: Vec::new(),
             root,
-        };
+        })
+    }
+    fn clink(
+        token: Option<&str>,
+        history_token: Option<&str>,
+        elevated: bool,
+        profile: Option<&Profile>,
+        command_token: Option<&str>,
+    ) -> Result<Lease, String> {
+        let mut lease = lease(elevated)?;
         write_locked(&mut lease, "clink_x64.exe", CLINK_EXE)?;
         write_locked(&mut lease, "clink_dll_x64.dll", CLINK_DLL)?;
-        let settings = format!(
-            "{CLINK_SETTINGS}\nclink.path = {}\n",
-            lease.directory.display()
-        );
+        let settings = CLINK_SETTINGS.replace("history.save = True", "history.save = False");
         write_locked(&mut lease, "clink_settings", settings.as_bytes())?;
         write_locked(&mut lease, ".inputrc", INPUTRC.as_bytes())?;
         write_locked(
             &mut lease,
             "fstty.lua",
-            CLINK_LUA.replace("__TOKEN__", token).as_bytes(),
+            CLINK_LUA
+                .replace("__TOKEN__", token.unwrap_or_default())
+                .replace("__HISTORY_TOKEN__", history_token.unwrap_or_default())
+                .replace("__COMMAND_TOKEN__", command_token.unwrap_or_default())
+                .as_bytes(),
         )?;
         // ASCII batch contents plus Unicode environment expansion preserve non-ASCII paths.
         std::env::set_var("FSTTY_CLINK_EXE", lease.directory.join("clink_x64.exe"));
         std::env::set_var("FSTTY_CLINK_DIR", &lease.directory);
+        std::env::set_var(
+            "FSTTY_CLINK_PROFILE",
+            profile
+                .map(|v| v.path.as_path())
+                .unwrap_or(&lease.directory),
+        );
+        std::env::set_var("CLINK_INPUTRC", lease.directory.join(".inputrc"));
         std::env::set_var("FSTTY_CLINK_INIT", lease.directory.join("init.cmd"));
-        let bootstrap = format!("@echo off\r\n\"%FSTTY_CLINK_EXE%\" inject --quiet --nolog --profile \"%FSTTY_CLINK_DIR%\" --scripts \"%FSTTY_CLINK_DIR%\"\r\nif errorlevel 2 echo \x1b]777;fstty-highlight:{token}:failed:clink-inject\x07\r\n@echo on\r\n");
+        let warning = format!(
+            "{}{}{}",
+            command_token
+                .map(|t| format!("\x1b]777;fstty-global:{t}:unavailable\x07"))
+                .unwrap_or_default(),
+            token
+                .map(|t| format!("\x1b]777;fstty-highlight:{t}:failed:clink-inject\x07"))
+                .unwrap_or_default(),
+            history_token
+                .map(|t| format!("\x1b]777;fstty-history:{t}:failed\x07"))
+                .unwrap_or_default()
+        );
+        let bootstrap = format!("@echo off\r\n\"%FSTTY_CLINK_EXE%\" inject --quiet --nolog --profile \"%FSTTY_CLINK_PROFILE%\" --scripts \"%FSTTY_CLINK_DIR%\"\r\nif errorlevel 2 echo {warning}\r\n@echo on\r\n");
         write_locked(&mut lease, "init.cmd", bootstrap.as_bytes())?;
         Ok(lease)
     }
@@ -335,52 +397,126 @@ mod platform {
         native: &str,
         token: Option<&str>,
         elevated: bool,
+        session: Option<&str>,
+        history_token: Option<&str>,
+        command_token: Option<&str>,
     ) -> Prepared {
-        let Some(token) = token else {
-            return Prepared {
-                arguments: native.into(),
-                info: None,
-                _lease: None,
-            };
-        };
-        let result = if !valid_token(token) {
+        let mut profile = session.and_then(|id| {
+            match Profile::prepare(id, shell, elevated).and_then(|mut profile| {
+                if shell == LocalShell::Cmd {
+                    profile.install("clink_settings", CLINK_SETTINGS.as_bytes())?;
+                    profile.install(".inputrc", INPUTRC.as_bytes())?;
+                }
+                profile.data_file(match shell {
+                    LocalShell::Cmd => "clink_history",
+                    LocalShell::Powershell => "powershell_history.txt",
+                    LocalShell::GitBash => "bash_history",
+                })?;
+                Ok(profile)
+            }) {
+                Ok(profile) => Some(profile),
+                Err(error) => {
+                    crate::logging::record_local_terminal_host_failure(&format!(
+                        "local-history prepare shell={shell:?}: {error}"
+                    ));
+                    None
+                }
+            }
+        });
+        let history_path = profile.as_ref().map(|v| {
+            v.path.join(match shell {
+                LocalShell::Cmd => "clink_history",
+                LocalShell::Powershell => "powershell_history.txt",
+                LocalShell::GitBash => "bash_history",
+            })
+        });
+        let mut history = history_token.map(|t| LocalHistoryInfo {
+            token: t.into(),
+            persistent: profile.is_some(),
+        });
+        let result = if token.is_some_and(|v| !valid_token(v))
+            || history_token.is_some_and(|v| !valid_token(v))
+            || command_token.is_some_and(|v| !valid_token(v))
+        {
             Err("invalid highlight token".into())
         } else {
             match shell {
-                LocalShell::Powershell => {
-                    powershell_arguments(token, elevated).map(|arguments| (arguments, None))
-                }
-                LocalShell::Cmd => clink(token, elevated)
-                    .map(|lease| ("/d /k \"%FSTTY_CLINK_INIT%\"".into(), Some(lease))),
+                LocalShell::Powershell => powershell_arguments(
+                    token,
+                    elevated,
+                    history_path.as_deref(),
+                    history_token,
+                    command_token,
+                )
+                .map(|arguments| (arguments, None)),
+                LocalShell::Cmd => clink(
+                    token,
+                    history_token,
+                    elevated,
+                    profile.as_ref(),
+                    command_token,
+                )
+                .map(|lease| ("/d /k \"%FSTTY_CLINK_INIT%\"".into(), Some(lease))),
                 LocalShell::GitBash => {
-                    return Prepared {
-                        arguments: native.into(),
-                        info: None,
-                        _lease: None,
-                    }
+                    lease(elevated).and_then(|mut lease| {
+                        // Encode paths as data, never as user command text.
+                        let path = history_path
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_default();
+                        let quoted = format!("'{}'", path.replace('\'', "'\\''"));
+                        let script = include_str!("highlight/bash.sh")
+                            .replace("__HISTORY_TOKEN__", history_token.unwrap_or_default())
+                            .replace("__COMMAND_TOKEN__", command_token.unwrap_or_default())
+                            .replace("__HISTORY_PATH__", &quoted);
+                        write_locked(&mut lease, "history.sh", script.as_bytes())?;
+                        let arguments = format!(
+                            "--noprofile --rcfile {} -i",
+                            super::super::windows::quote(&lease.directory.join("history.sh"))
+                        );
+                        Ok((arguments, Some(lease)))
+                    })
                 }
             }
         };
         match result {
             Ok((arguments, lease)) => Prepared {
                 arguments,
-                info: Some(LocalHighlightInfo {
+                commands_failed: false,
+                info: token.map(|token| LocalHighlightInfo {
                     token: token.into(),
                     failed: false,
                 }),
+                history,
                 _lease: lease,
+                _profile: profile,
             },
             Err(error) => {
                 crate::logging::record_local_terminal_host_failure(&format!(
-                    "local-highlight prepare shell={shell:?}: {error}"
+                    "local-shell initialization shell={shell:?}: {error}"
                 ));
+                if let Some(history) = &mut history {
+                    history.persistent = false;
+                }
+                profile.take();
+                let arguments = if shell == LocalShell::GitBash {
+                    // If the controlled rc file cannot be created, do not let
+                    // Bash open or overwrite the external terminal's history.
+                    std::env::set_var("HISTFILE", "");
+                    "--noprofile --norc -i".into()
+                } else {
+                    native.into()
+                };
                 Prepared {
-                    arguments: native.into(),
-                    info: Some(LocalHighlightInfo {
+                    arguments,
+                    commands_failed: command_token.is_some(),
+                    info: token.map(|token| LocalHighlightInfo {
                         token: token.into(),
                         failed: true,
                     }),
+                    history,
                     _lease: None,
+                    _profile: None,
                 }
             }
         }
@@ -394,7 +530,7 @@ mod tests {
     #[test]
     fn initialization_is_unicode_structured_and_does_not_change_policy_or_profiles() {
         let token = uuid::Uuid::new_v4().to_string();
-        let args = powershell_arguments(&token, false).unwrap();
+        let args = powershell_arguments(Some(&token), false, None, None, None).unwrap();
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(args.split_whitespace().last().unwrap())
             .unwrap();
@@ -417,7 +553,7 @@ mod tests {
         assert!(decoded.contains("-TokenKind"));
         assert!(decoded.contains("custom-line-editor"));
         assert!(!decoded.contains("Write-Output $line"));
-        assert!(powershell_arguments("x'; Remove-Item", false).is_err());
+        assert!(powershell_arguments(Some("x'; Remove-Item"), false, None, None, None).is_err());
     }
     #[test]
     fn startup_diagnostics_accept_only_nonce_and_known_stage_and_remain_bounded() {
@@ -440,6 +576,32 @@ mod tests {
     }
 
     #[test]
+    fn history_diagnostics_are_independent_bounded_nonce_checked_and_once_only() {
+        let token = uuid::Uuid::new_v4().to_string();
+        let mut observer = StageObserver::history(Some(&token));
+        assert_eq!(
+            observer.observe(
+                format!("\x1b]777;fstty-history:{token}:{}\x07", "x".repeat(100000)).as_bytes()
+            ),
+            None
+        );
+        assert_eq!(
+            observer.observe(
+                format!("\x1b]777;fstty-history:{}:failed\x07", uuid::Uuid::new_v4()).as_bytes()
+            ),
+            None
+        );
+        let message = format!("\x1b]777;fstty-history:{token}:failed\x07");
+        let found: Vec<_> = message
+            .bytes()
+            .filter_map(|byte| observer.observe(&[byte]))
+            .collect();
+        assert_eq!(found, ["history-initialization"]);
+        assert_eq!(observer.observe(message.as_bytes()), None);
+        assert!(observer.stage.is_empty());
+    }
+
+    #[test]
     fn bundled_clink_hashes_and_isolation_defaults_are_pinned() {
         use sha2::{Digest, Sha256};
         assert_eq!(
@@ -451,7 +613,8 @@ mod tests {
             "850af7f5ae83ccf09e17f663d032c060e82a5b968c35df14fdb2c97fe6f35d93"
         );
         assert!(CLINK_SETTINGS.contains("clink.autoupdate = off"));
-        assert!(CLINK_SETTINGS.contains("history.save = False"));
+        assert!(CLINK_SETTINGS.contains("history.save = True"));
+        assert!(CLINK_SETTINGS.contains("history.shared = True"));
         assert!(!CLINK_LUA.contains("onfilterinput"));
     }
 }

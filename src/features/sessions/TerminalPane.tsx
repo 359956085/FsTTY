@@ -66,6 +66,7 @@ import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
 import { matchesShortcut } from "../../shared/shortcuts";
 import type { ResolvedTheme } from "../../shared/theme";
 import { createCommandHistoryInsertion } from "./terminalCommandHistory";
+import { createLocalHistoryInsertion, parseLocalHistoryNotification, type LocalHistoryInsertion } from "./localCommandHistory";
 import { decodeBase64 } from "./terminalProtocol";
 import { createLocalTerminalHighlighter } from "./localTerminalHighlight";
 import {
@@ -159,6 +160,23 @@ export const TerminalPane = memo(function TerminalPane({
   const localRequestRef = useRef<string | null>(null);
   const localHighlightRef = useRef<ReturnType<typeof createLocalTerminalHighlighter> | null>(null);
   const [highlightWarning, setHighlightWarning] = useState(false);
+  const historyTokenRef = useRef<string | null>(null);
+  const globalTokenRef = useRef<string | null>(null);
+  const localInsertionRef = useRef<LocalHistoryInsertion>("copy");
+  const globalWarnedRef = useRef(false);
+  const [globalHistoryMessage, setGlobalHistoryMessage] = useState<"unavailable" | "write-failed" | "copied" | null>(null);
+  useEffect(() => {
+    if (!globalHistoryMessage) return;
+    const timer = window.setTimeout(() => setGlobalHistoryMessage(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [globalHistoryMessage]);
+  const historyWarnedRef = useRef(false);
+  const [historyWarning, setHistoryWarning] = useState(false);
+  useEffect(() => {
+    if (!historyWarning) return;
+    const timer = window.setTimeout(() => setHistoryWarning(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, [historyWarning]);
   useEffect(() => {
     if (!highlightWarning) return;
     const timer = window.setTimeout(() => setHighlightWarning(false), 6000);
@@ -447,6 +465,17 @@ export const TerminalPane = memo(function TerminalPane({
 
   function handleShellOsc(identifier: 7 | 133 | 633 | 777, data: string) {
     if (localRef.current) {
+      const notification = identifier === 777 ? parseLocalHistoryNotification(data, globalTokenRef.current) : null;
+      if (notification?.kind === "input") localInsertionRef.current = notification.binding;
+      if (notification?.kind === "execute") localInsertionRef.current = "copy";
+      if (notification?.kind === "warning" && !globalWarnedRef.current) {
+        globalWarnedRef.current = true;
+        setGlobalHistoryMessage(notification.value);
+      }
+      if (identifier === 777 && historyTokenRef.current && data === `fstty-history:${historyTokenRef.current}:failed` && !historyWarnedRef.current) {
+        historyWarnedRef.current = true;
+        setHistoryWarning(true);
+      }
       if (identifier === 777) localHighlightRef.current?.handleOsc(data);
       return true;
     }
@@ -609,7 +638,10 @@ export const TerminalPane = memo(function TerminalPane({
     interactionCoordinatorRef.current = interactionCoordinator;
     const inputController = createInputController();
     inputControllerRef.current = inputController;
-    sendInputRef.current = inputController.enqueue;
+    sendInputRef.current = (data) => {
+      if (localRef.current && /[\r\n]/.test(data)) localInsertionRef.current = "copy";
+      inputController.enqueue(data);
+    };
     let observer: ResizeObserver | null = null;
     let oscHandlers: { dispose(): void }[] = [];
     let runtimeInstance: InstalledTerminalRuntime | null = null;
@@ -983,13 +1015,13 @@ export const TerminalPane = memo(function TerminalPane({
           return true;
         }
         const currentShortcuts = shortcutsRef.current;
-        if (!localRef.current && matchesShortcut(event, currentShortcuts.commandHistory)) {
+        if (matchesShortcut(event, currentShortcuts.commandHistory)) {
           event.preventDefault();
           event.stopPropagation();
           commandHistoryRef.current?.toggle();
           return false;
         }
-        if (!localRef.current && matchesShortcut(event, currentShortcuts.commandHistorySearch)) {
+        if (matchesShortcut(event, currentShortcuts.commandHistorySearch)) {
           event.preventDefault();
           event.stopPropagation();
           commandHistoryRef.current?.focusSearch();
@@ -1194,6 +1226,13 @@ export const TerminalPane = memo(function TerminalPane({
     if (attempt === null) return;
     const requestId = crypto.randomUUID();
     localRequestRef.current = requestId;
+    historyTokenRef.current = requestId;
+    globalTokenRef.current = requestId;
+    localInsertionRef.current = "copy";
+    globalWarnedRef.current = false;
+    setGlobalHistoryMessage(null);
+    historyWarnedRef.current = false;
+    setHistoryWarning(false);
     setHighlightWarning(false);
     localHighlightRef.current?.begin(session.shell === "gitBash" ? null : requestId);
     const launchOverride = launchOverrideRef.current;
@@ -1214,6 +1253,9 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       lifecycle.reset();
+      historyTokenRef.current = null;
+      globalTokenRef.current = null;
+      localInsertionRef.current = "copy";
       clearPendingInput();
       setLocalExit((previous) => ({ code: event.kind === "disconnected" ? event.exitCode ?? null : null, stopped: previous?.stopped }));
       localHighlightRef.current?.ended();
@@ -1227,6 +1269,10 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       launchOverrideRef.current = connection.local?.elevated ?? launchOverrideRef.current;
+      if (connection.local?.history?.persistent === false && !historyWarnedRef.current) {
+        historyWarnedRef.current = true;
+        setHistoryWarning(true);
+      }
       if (!connection.local?.highlight) localHighlightRef.current?.begin(null);
       else if (connection.local.highlight.failed) localHighlightRef.current?.unavailable();
       else localHighlightRef.current?.started();
@@ -1236,6 +1282,9 @@ export const TerminalPane = memo(function TerminalPane({
     } catch (error) {
       if (current()) {
         lifecycle.reset();
+        historyTokenRef.current = null;
+        globalTokenRef.current = null;
+        localInsertionRef.current = "copy";
         clearPendingInput();
         reportState("error", resolveApiError(error, t("errors.unknown")));
       }
@@ -1602,6 +1651,9 @@ export const TerminalPane = memo(function TerminalPane({
       onEnd: (event) => {
         markPreservedTerminalAttached(runtimeId);
         lifecycle.reset();
+        historyTokenRef.current = null;
+        globalTokenRef.current = null;
+        localInsertionRef.current = "copy";
         restoringRef.current = false;
         clearPendingInput();
         resetShellIntegration();
@@ -1637,6 +1689,9 @@ export const TerminalPane = memo(function TerminalPane({
           runtime.terminal.reset();
           runtime.terminal.resize(attachment.columns, attachment.rows);
           lifecycle.setConnection(attemptId, attachment.connection);
+          historyTokenRef.current = attachment.connection.local?.history?.token ?? null;
+          globalTokenRef.current = attachment.connection.local?.commands?.token ?? null;
+          localInsertionRef.current = "copy";
           if (attachment.connection.local) launchOverrideRef.current = attachment.connection.local.elevated;
           highlightAttachment = attachment;
           localHighlightRef.current?.begin(null);
@@ -1751,6 +1806,9 @@ export const TerminalPane = memo(function TerminalPane({
       if (connectionLifecycleRef.current.isConnecting()) {
         // 连接尚未返回 ID 时先使前端尝试失效，再用会话 ID 取消后端尝试，避免迟到注册。
         connectionLifecycleRef.current.cancel();
+        historyTokenRef.current = null;
+        globalTokenRef.current = null;
+        localInsertionRef.current = "copy";
         await cancelPendingStart().catch(() => undefined);
       }
       reportState("disconnected");
@@ -1771,6 +1829,9 @@ export const TerminalPane = memo(function TerminalPane({
         return;
       }
       connectionLifecycleRef.current.reset();
+      historyTokenRef.current = null;
+      globalTokenRef.current = null;
+      localInsertionRef.current = "copy";
       clearPendingInput();
       resetShellIntegration();
       clearTemporaryLogin();
@@ -1832,14 +1893,19 @@ export const TerminalPane = memo(function TerminalPane({
         onPointerDown={focusTerminal}
         ref={containerRef}
       />
-      {!local && <div className="terminal-toolbar">
+      {<div className="terminal-toolbar">
         <CommandHistoryPopover
           disabled={connectionState !== "connected"}
           onTriggerClose={restoreTerminalFocus}
           ref={commandHistoryRef}
           shortcuts={shortcuts}
           onSelect={(command) => {
-            sendImmediateInput(createCommandHistoryInsertion(command));
+            if (!connectionLifecycleRef.current.connection()) return;
+            if (localRef.current) {
+              const insertion = createLocalHistoryInsertion(command, localInsertionRef.current);
+              if (insertion) sendImmediateInput(insertion);
+              else void writeSystemClipboard(command).then(() => setGlobalHistoryMessage("copied")).catch(() => reportClipboardError("write"));
+            } else sendImmediateInput(createCommandHistoryInsertion(command));
             window.requestAnimationFrame(focusTerminal);
           }}
         />
@@ -1850,8 +1916,10 @@ export const TerminalPane = memo(function TerminalPane({
         </div>
       ) : null}
       {highlightWarning ? <div aria-live="polite" className="terminal-clipboard-error error-banner">{t("settings.localHighlightUnavailable")}</div> : null}
+      {historyWarning ? <div aria-live="polite" className="terminal-clipboard-error error-banner">{t("settings.localHistoryUnavailable")}</div> : null}
+      {globalHistoryMessage ? <div aria-live="polite" className="terminal-clipboard-error error-banner">{t(globalHistoryMessage === "copied" ? "sessions.localHistoryCopied" : "sessions.localGlobalHistoryUnavailable")}</div> : null}
       {connectionState !== "connected" && !terminalLoginPrompt ? (
-        <div className={local ? "terminal-connect-overlay local-terminal-overlay" : "terminal-connect-overlay"}>
+        <div className="terminal-connect-overlay">
           <Link2Off size={28} />
           <strong>{session.name}</strong>
           <span>

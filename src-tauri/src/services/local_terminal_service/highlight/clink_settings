@@ -1,10 +1,11 @@
 clink.default_bindings = windows
-clink.colorize_input = True
+clink.colorize_input = False
 clink.logo = none
 clink.autostart = nul
 clink.autoupdate = off
 autosuggest.enable = False
-history.save = False
+history.save = True
+history.shared = True
 history.expand_mode = off
 exec.enable = True
 cmd.ctrld_exits = False

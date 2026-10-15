@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.0-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.1--beta.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -140,7 +140,7 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 | Session management | Groups, drag ordering, cross-group moves, search, favorites, and multiple tabs |
 | SSH authentication | Passwords and imported private keys; on Windows, an independent service stores credentials and performs authentication |
 | Remote terminal | xterm.js 6, independent text color presets, copy and paste, clear, reconnect, tmux mouse mode, and OSC 52 clipboard support |
-| Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and Bash/Zsh capture |
+| Command history | Shared across sessions with search, upward loading, deduplication, JSON import/export, clear, and new single-line command capture from SSH Bash/Zsh and local CMD, PowerShell and Git Bash |
 | File management | SFTP browse, upload, Shift/Ctrl selection, batch download (up to 5 concurrent files with a waiting queue), batch delete, drag-to-move, create, rename, and copy path |
 | Device status | CPU and memory trends, disk, network traffic, OS, and uptime |
 | Updates | GitHub checks with official mirror fallback, manual or startup checks, ignored versions, Markdown release notes, and an update proxy |
@@ -148,6 +148,8 @@ Beyond MCP, FsTTY is a complete Windows SSH client.
 Selecting a history entry with Enter or the mouse inserts it into the terminal without executing it. The history window supports search, keyboard selection, and persisted drag resizing.
 
 Under Settings → General → Terminal text colors, choose Follow app theme or Ayu Mirage, Catppuccin Mocha, Dracula, Everforest Dark, Gruvbox Dark, Kanagawa Wave, Nord, One Half Dark, Rosé Pine, or Solarized. Changes apply immediately and persist across restarts. The default background and plain text continue to use the app theme. See [terminal color details and licenses](doc/terminal-colors.md).
+
+CMD, PowerShell and Git Bash retain native history independently of highlighting. History is partitioned by Windows user, terminal configuration, shell and verified privilege; tabs in the same partition share it. PowerShell restores PSReadLine navigation/search history; `Get-History` still lists only the current process. Native files are not shared with external terminals. Newly accepted single-line commands from newly started processes are also written to the global library; native files are never imported. Selecting global history fills without executing; unsupported editors copy the command for manual pasting. See [local history implementation and verification](doc/local-terminal-history.md).
 
 ## Download and Install
 

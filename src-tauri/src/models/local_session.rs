@@ -54,6 +54,23 @@ pub struct LocalTerminalInfo {
     pub elevated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<LocalHighlightInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<LocalHistoryInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<LocalCommandInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCommandInfo {
+    pub token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalHistoryInfo {
+    pub token: String,
+    pub persistent: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

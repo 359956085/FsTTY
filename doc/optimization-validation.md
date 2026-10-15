@@ -711,3 +711,88 @@ Release 工作流只保留 GitHub 草稿上传、附件验证及正式发布，�
 Windows 原生 DPI 100%/125%/150%、浏览器原生缩放，以及真实 SSH/本地进程在缩放和切换后的连接、历史高亮保留，仍需隔离 Windows 环境验收。本机假数据页面及自动实例/高亮回归不替代原生运行结论。
 
 当前版本 2.0.0，未修改 IPC、配置/数据库、滚动条宽度或滚轮处理；未构建安装包、提交、推送或发布。本轮无新增受 Git 跟踪的源码文件，验收页和截图仅保存在忽略的 artifacts 目录。
+
+## 2026-10-15：三种本地终端历史持久保存与恢复
+
+本轮将历史从每次启动的临时目录迁至受控稳定分区。分区按 Windows SID 摘要、配置 UUID、Shell 和已验证的实际权限组成；普通历史位于 LocalAppData，管理员历史位于 ProgramData 的受保护目录。配置改名和起始目录变化不改变归属，同配置同权限标签共享，普通／管理员以及不同用户／配置／Shell 隔离。目录验证身份、DACL、重解析点并保留不可删除句柄，拒绝多硬链接文件。临时脚本和二进制继续在 host 退出时清理，历史文件不清理、不导入外部历史。
+
+CMD 使用固定受控 Clink profile，启用 save/shared；高亮开关与通知令牌放在每进程 Lua/环境中，避免共享设置相互覆盖。Clink 每次编辑会重载静态设置，因此启动和 onbeginedit 都恢复本进程的配色快照。PowerShell 在加载用户 profile 后配置 PSReadLine 专用文件和 SaveIncrementally，保留现有按键、过滤和自定义编辑器边界；Get-History 继续仅表示本次进程。Git Bash 使用私有 rc，按登录配置顺序加载文件并保留提示符钩子，提示符阶段先追加再重载原生历史。测试发现单用 history -n 会跳过其他标签新增记录，已改为原生 history -c/-r，验证无重复和漏读。Bash 强制停止时，仅保证已经返回提示符的命令保存。
+
+初始化或运行中的文件访问失败使用内存历史并单次提示；CMD/PowerShell 交互前检查专用文件访问，Bash 检查追加／读取结果。前端按 nonce 匹配、每次启动去重，拒绝旧启动的迟到通知。日志仅保留阶段及可取得的系统错误，不记录命令。初始化源码和内部连接元信息增加可选历史状态；公共启动 IPC 请求、SSH/MCP、会话配置、数据库及全局历史不变。轻量恢复使用已有进程和连接状态，不重新注入。
+
+### 自动验证（本机通过）
+
+- `npm run verify:all`：版本、类型、严格 ESLint、781 项前端/脚本测试、生产前端构建、Rust fmt、严格 Clippy 和工作区测试通过。Rust 共 428 项通过，8 项隔离原生测试保持 ignored。构建仍有已有的 Vite 大 chunk 提示，不阻断构建。
+- Rust 文件测试使用新建临时根和测试进程的实际令牌，不访问真实历史分区：验证稳定归属、用户/配置/Shell/权限键隔离，两个 profile 同时持有设置文件、Clink 独占活跃文件、Drop 后重开原数据、错误设置内容不覆盖、异常 ACL/硬链接拒绝且原数据保留，以及旧协议缺失字段和分块/过期/重复历史失败标记。
+- PowerShell 5.1 与本机 PowerShell 7 执行模拟 PSReadLine 引导夹具：覆盖新旧参数、高亮关闭、初始化写入失败、运行期文件消失、其他标签短暂持锁、缺模块、自定义编辑器及既有过滤不被替换。暂时的共享锁不会触发错误降级或阻塞输入；初始化预检允许有限重试。模拟测试不等同于真实 ConPTY 内的 PSReadLine 落盘/方向键验证。
+- Git Bash 使用真实交互进程、独立临时 HOME 和历史文件，通过标准管道运行：验证停止前及时写入、强制结束后重开、同分区双进程共享、中文/多行/特殊字符、空格过滤/HISTIGNORE、字符串/数组提示符保留、不可修改提示符、只读 HISTFILE 和缺失路径的降级。只读外部 HISTFILE 无法重定向时提示并进入干净的内存历史 Shell。确认不导入、不改写外部哨兵历史，历史不重复。此测试未使用 ConPTY。
+- 三种 Shell 的前端回归覆盖历史降级提示去重、失败仍保留连接、重试及旧 nonce 拒绝；已有终端生命周期、轻量恢复、输入、快捷键、切换和高亮回归继续通过。
+
+日志保存在忽略的 `artifacts/local-history-verify-all.log`、`local-history-bootstrap-final.log` 和 `local-history-targeted-final.log`。开发说明、查询语义和隔离测试命令见 [local-terminal-history.md](local-terminal-history.md)。
+
+### 待隔离 Windows 人工验收
+
+新增 ignored ConPTY 夹具 `conpty_history_stop_restart_and_natural_exit`，已编译，未在隔离系统执行。通过显式 FSTTY_HISTORY_FIXTURE_ROOT 将历史写到测试根，要求三类 Shell 可用，串行运行停止重开、自然退出重开和高亮快照变更；不请求 UAC。普通/管理员、PowerShell 7/5.1 的真实 history/F7/方向键、进程并发、实际容量及损坏原生文件处理仍待验收。
+
+完整应用关闭重启、关闭标签后恢复、真实 UAC 取消重试、轻量接回、中文输入法、补全、粘贴、Ctrl+C、交互程序及用户复杂 profile 的人工验证未完成。不能用模拟模块、普通管道或本机 ACL 测试代替以上结论。历史功能对更新后新启动的进程生效；旧版本未落盘的命令无法恢复。
+
+新增文件（交付时一并纳入后续提交）：
+
+- `doc/local-terminal-history.md`
+- `scripts/local-history-bootstrap.test.mjs`
+- `scripts/test-local-history-bootstrap.ps1`
+- `src-tauri/src/services/local_terminal_service/history.rs`
+- `src-tauri/src/services/local_terminal_service/highlight/bash.sh`
+
+当前版本保持 2.0.0；没有生成安装包，没有提交、推送、发布或接入全局历史。
+
+
+## 2026-10-15：本地终端全局命令历史与 2.0.1-beta.1
+
+保留上一轮未提交的原生历史分区、持久化和降级改动。本轮将 CMD、PowerShell、Git Bash 新启动进程中新接受的单行命令接入现有全局库，普通／管理员与 SSH 共用搜索、去重、导入导出和清空。原生历史仍按用户／配置／Shell／权限分区，文件不导入全局库。公共历史 IPC、数据库结构、SSH 采集和 MCP 接口保持原样。
+
+采集由受控 Shell 接受路径通知：Clink onhistory、PSReadLine 原过滤器代理，以及 Git Bash PS0 的原生新增记录观察。PowerShell 保留过滤器单次调用及原返回值，MemoryOnly／SkipAdding／false 不入库；默认敏感过滤接口不可保留或自定义编辑器不兼容时明确降级。CMD 排除未完成物理行，Git Bash 通过 PS2 标记排除被 cmdhist 折叠的续行。空白、取消、旧文件重载、多行、控制字符、交互程序输入均不采集。
+
+host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析，通过内部事件提交给共享的 128 条异步队列。PTY 原始字节照常转发，数据库等待不阻塞输入；满队列或写入失败单次提示，日志不记录命令。正常退出最多等待已提交队列 2 秒，超时只记录阶段；强制终止／持久存储长期阻塞不保证待写记录落盘。轻量期间后端继续工作，接回不重启、不注入、不在前端重复写库。
+
+本地标签显示原有历史按钮并接入两个历史快捷键，未运行禁用。选择只填入、不执行：在未被用户占用的本进程私有 Ctrl+Alt+F12 绑定上调用原生整行删除，再写入文本。Clink 的自定义宏／前缀按键、PSReadLine 冲突键、Vi 模式或未知能力不会被覆盖，改为复制和手动粘贴提示。该临时绑定不写入用户配置。轻量恢复先按未知能力处理，接收到新提示符能力通知后才启用安全填入。
+
+未启动、停止、退出和失败共用 SSH 的居中纵向覆盖层，完整名称在面板内换行；保留启动中权限提示和取消按钮。只删除本地底部横排覆盖，保留终端 key、实例和既有输出。
+
+### 自动校验：本机通过
+
+- 专项 Shell／前端测试通过：Clink 使用内置 Lua 运行时及模拟接受回调；PowerShell 5.1／7 使用模拟模块和原过滤器，覆盖允许、内存、跳过、false、多行、取消、自定义编辑器和按键冲突；Git Bash 使用真实交互进程、独立 HOME 和历史文件，验证执行前通知、exit、中文、续行、原生过滤、重复提交、旧历史不导入及原提示符保留。Clink API 名称和按键返回语义对照仓库内 1.9.34 对应源码核验。本机 PowerShell 7 另核验公开默认过滤方法和私有按键的实际 Function 返回值，这不是 ConPTY 验收结论。
+- 前端覆盖三种本地 Shell 的两个快捷键、清行填入无回车、执行阶段复制降级、失败通知去重及原生历史降级；轻量恢复沿用原 token，不启动或注入，不在前端写全局库。原有终端实例、高亮、主题、焦点和生命周期回归继续通过。
+- Rust 覆盖字节分块、中文及特殊字符、错误／过期 nonce、重放序号、超限、多行／折叠续行排除；队列容量、应用共享、全局去重、数据库失败、后续健康写入和正常退出排空通过。旧内部启动及 Ready 缺失字段继续可读。
+- `npm run verify:all`：97 个前端／脚本文件、791 项测试通过；类型、严格 ESLint、生产构建、Rust fmt、严格 Clippy 和工作区测试通过。Rust 应用 377、Broker 41、SSH 边界 5、Network 10 项，共 433 项通过，9 项原生环境测试忽略。原有 Vite 大 chunk 提示保持非阻断。
+- `npm run check:release` 通过。项目、Broker、Network、Tauri、npm 和对应锁文件统一为 `2.0.1-beta.1`，双语 README 徽章及日期为 2026-10-15 的双语日志一致；第三方依赖版本未改变。正式／beta 解析、版本比较、发布产物隔离及更新候选筛选随全量测试通过，未改变现有 beta 发布规则。
+- 为清理本机旧 2.0.0 调试产物造成的 Broker 版本断言失败，执行了 `cargo build --workspace --bins --locked`（使用 src-tauri manifest）；只编译调试程序，没有打包、签名或安装。读取桌面／Broker PE 产品和文件版本均为 `2.0.1-beta.1`，未执行这两个程序。
+
+日志：`artifacts/global-history-verify-final.log`、`global-history-check-release.log`、`global-history-rust-final.log`、`global-history-targeted-final.log`、`global-history-debug-build.log`。
+
+### 实际组件页面检查：通过（隔离 API 假数据）
+
+使用 `artifacts/global-history/preview.html` 的真实 App、SessionsPage、布局 hook 和 xterm，未连接实际 SSH 或启动本地进程。1280×720 亮色中文 CMD、SSH 对照；1600×900 暗色英文 Git Bash，CSS 渲染缩放 125%；1920×1080 暗色中文 PowerShell，CSS 缩放 150%；1180×650 窄窗口检查本地长名及 123 字符无空格名称。图标、名称、状态和按钮保持纵向居中，完整名称可换行且不越界，启动按钮有焦点反馈，未运行历史按钮禁用。标签分隔线、活动下划线和左右衔接在截图中保持。没有增加 CSS 源码或固定颜色断言。
+
+截图保留于 `artifacts/global-history/`：`local-idle-light.png`、`ssh-idle-light.png`、`local-idle-dark-125.png`、`local-idle-dark-150.png`、`local-idle-narrow.png`、`local-idle-unbroken-name.png`。CSS 渲染缩放与模拟 API 页面不作为 Windows 原生 DPI／真实终端运行验收。
+
+### 待人工／远程验收
+
+新增 ignored 夹具 `conpty_global_history_and_safe_insertion` 已编译，未在隔离 Windows 执行。要求三类 Shell，覆盖普通／管理员现有令牌、高亮开关、重开不回放、重复提交、行中光标整行替换及退出（CMD 原生默认排除 exit）。继续保留原生持久化夹具。运行方法及边界见 [本地历史开发说明](local-terminal-history.md)。
+
+真实 Windows ConPTY、UAC、PSReadLine 7／5.1、Clink F7／历史召回、Bash／PS Vi 模式、复杂自定义编辑绑定、IME、补全、粘贴、Ctrl+C、交互程序、多标签并发、完整应用重启、轻量模式实机往返和全局清空／导入导出与实时采集的原生组合操作待验收。Windows 100%／125%／150% DPI、原生浏览器缩放、真实安装升级和远程发布 Actions 未执行。本机模拟、普通管道或 PE 资源读取不替代这些结论。
+
+### 新增文件（包括上一轮保留文件）
+
+- `src-tauri/src/services/local_terminal_service/commands.rs`
+- `src/features/sessions/localCommandHistory.ts`
+- `src/features/sessions/localCommandHistory.test.ts`
+- `scripts/local-global-history.test.mjs`
+- `scripts/test-local-global-history.ps1`
+- `src-tauri/src/services/local_terminal_service/history.rs`（上一轮）
+- `src-tauri/src/services/local_terminal_service/highlight/bash.sh`（上一轮，本轮扩展）
+- `scripts/local-history-bootstrap.test.mjs`（上一轮）
+- `scripts/test-local-history-bootstrap.ps1`（上一轮）
+- `doc/local-terminal-history.md`（上一轮，本轮扩展）
+
+未构建安装包，未创建标签，未暂存、提交、推送或发布，旧验收包保留。
