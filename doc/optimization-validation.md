@@ -796,3 +796,19 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - `doc/local-terminal-history.md`（上一轮，本轮扩展）
 
 未构建安装包，未创建标签，未暂存、提交、推送或发布，旧验收包保留。
+
+
+## 2026-10-15：修复 rustls 安全审计阻断
+
+远程 CI 的 Rust 审计报告 `rustls 0.23.45` 命中 RUSTSEC-2026-0346、0347、0348、0349，四项公告均要求至少 0.23.46。对 `src-tauri/Cargo.lock` 执行精确补丁升级，只更新 rustls 版本及校验和为 0.23.46，其他依赖版本、manifest、应用 2.0.1-beta.1 版本、审计规则与忽略清单不变。
+
+依赖链覆盖 reqwest／更新器的 HTTPS，以及 fstty-network 的 tokio-rustls 隧道。保留现有严格审计，没有增加漏洞忽略或将审计改为非阻断。
+
+### 本地校验：通过
+
+- 使用与 CI 一致的 `cargo-audit 0.22.2`，从 RustSec 官方 GitHub Release 下载到忽略的 artifacts 目录，按 GitHub 资产公布的 SHA-256 校验后运行；没有全局安装工具。压缩包 SHA-256：`0a7316540862c13d954f648917ceacca593747baed6eec180fafa590be2710ab`。
+- 按工作流命令审计 `src-tauri/Cargo.lock`，拉取最新 RustSec 数据库后退出 0；这四条 rustls 漏洞不再出现。仍报告 7 条现有非阻断 warning（proc-macro-error、unic 系列维护状态，以及 glib 的 unsound warning），未隐藏或新增豁免。现有 RUSTSEC-2023-0071 例外保持原样。
+- `npm run verify:all` 退出 0：791 项前端／脚本测试、433 项 Rust 测试通过，9 项原生环境测试保持 ignored；版本检查、类型、严格 ESLint、前端构建、Rust fmt 和严格 Clippy 通过。HTTPS 代理证书校验、错误证书拒绝及代理隔离测试通过。现有 Vite 大 chunk 提示仍非阻断。
+- `git diff --check` 通过。日志保存在 `artifacts/rustls-security-audit.log` 和 `artifacts/rustls-security-verify.log`。
+
+远程 Actions 需修复推送后再确认，本地通过不等同于远程流水线通过。未构建安装包，未创建标签、暂存、提交、推送或发布；无新增受 Git 跟踪文件。
