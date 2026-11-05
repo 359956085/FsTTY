@@ -885,3 +885,9 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - `npm run check:release` 通过，确认应用、Broker、Network、Tauri、npm、锁文件及双语 README 徽章均为 2.0.1。发布脚本成功提取 `v2.0.1` 的双语更新说明，两条 beta 记录保留。
 - `npm run verify:all` 退出 0。前端及脚本 792 项、Rust 448 项通过，9 项忽略。包含 STDIO 和 HTTP 的 MCP 握手、工具发现及调用回归，以及 beta 版本排序和在线更新只接受更高正式版的回归。
 - DSH 和 ZCode 的实际新会话注册及调用待人工验收。正式版安装包、签名与远程发布待标签触发现有 Windows 工作流后验证。
+
+## 2026-11-05 · Rust 依赖审计修复
+
+- 使用 CI 同版本的 `cargo-audit 0.22.2` 复现 8 项漏洞。锁文件更新至 `crypto-bigint 0.7.10`、`ctutils 0.4.8`、`rustls-webpki 0.103.16` 和 `webpki-root-certs 1.0.10`。升级 Tauri 更新插件至 2.14.1，采用 `zip 9.3.0`，并将 npm API 和 CLI 与 Rust 核心对齐到 2.12 系列。
+- 最终锁文件审计退出 0，漏洞数为 0，仍有 8 条非阻断警告。审计规则保持原有设置。
+- `npm ci`、`npm run check:release` 和 `npm run verify:all` 通过。前端及脚本 792 项、Rust 448 项通过，9 项忽略。CI 的 Windows 桌面正式编译步骤通过，PE 产品版本为 2.0.1，数字版本为 2.0.1.0。远程 Actions 和正式安装包验收待验证。
