@@ -16,7 +16,6 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-#[cfg(test)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(test)]
@@ -34,6 +33,8 @@ const MAX_COMMAND_TIMEOUT_SECONDS: u64 = 1800;
 mod access;
 mod audit;
 mod catalog;
+#[cfg(test)]
+mod compatibility_tests;
 mod connection_cache;
 mod http;
 mod result;
@@ -97,7 +98,6 @@ pub struct McpService {
     connections: ConnectionCache,
     transport: McpTransport,
     transfer_runtime: Option<McpTransferRuntime>,
-    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
 
@@ -121,6 +121,7 @@ struct ReadFileArgs {
     path: String,
     #[serde(default)]
     offset: u64,
+    /// 单次读取字节数，范围为 1–1048576，默认 1048576。
     #[serde(default = "default_read_limit")]
     limit: usize,
 }
@@ -130,6 +131,7 @@ struct ReadFileArgs {
 struct CommandArgs {
     session_id: String,
     command: String,
+    /// 命令超时秒数，默认 60，执行时限制在 1–1800 秒。
     #[serde(default = "default_timeout")]
     timeout_seconds: u64,
 }
@@ -200,6 +202,7 @@ struct UploadLinkArgs {
 #[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct PermissionGuideArgs {
+    /// 要查询的工具名称，省略时返回权限指南总览。
     #[serde(default)]
     tool_name: Option<String>,
 }
@@ -234,10 +237,30 @@ fn default_read_limit() -> usize {
     1024 * 1024
 }
 
+fn simplify_input_schema(schema: &mut JsonObject) {
+    // Some MCP clients accept only a subset of JSON Schema. Deserialization and
+    // tool handlers still enforce the original constraints.
+    for key in [
+        "$schema",
+        "format",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+    ] {
+        schema.remove(key);
+    }
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for property in properties.values_mut().filter_map(Value::as_object_mut) {
+            simplify_input_schema(property);
+        }
+    }
+}
+
 #[tool_router]
 impl McpService {
     pub(crate) fn new(state: AppState, transport: McpTransport) -> Self {
-        let mut tool_router = Self::tool_router();
+        let mut tool_router = Self::compatible_tool_router();
         tool_router.remove_route("create_remote_file_download_link");
         tool_router.remove_route("create_remote_file_upload_link");
         Self {
@@ -250,7 +273,7 @@ impl McpService {
     }
 
     fn new_http(state: AppState, transfer_runtime: McpTransferRuntime) -> Self {
-        let mut tool_router = Self::tool_router();
+        let mut tool_router = Self::compatible_tool_router();
         tool_router.remove_route("upload_local_file");
         tool_router.remove_route("download_remote_file");
         Self {
@@ -260,6 +283,27 @@ impl McpService {
             transfer_runtime: Some(transfer_runtime),
             tool_router,
         }
+    }
+
+    fn compatible_tool_router() -> ToolRouter<Self> {
+        let mut router = Self::tool_router();
+        for route in router.map.values_mut() {
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            simplify_input_schema(schema);
+            if route.attr.name == "get_permission_guide" {
+                if let Some(tool_name) = schema
+                    .get_mut("properties")
+                    .and_then(|properties| properties.get_mut("toolName"))
+                    .and_then(Value::as_object_mut)
+                {
+                    tool_name.insert("type".to_owned(), json!("string"));
+                    if tool_name.get("default") == Some(&Value::Null) {
+                        tool_name.remove("default");
+                    }
+                }
+            }
+        }
+        router
     }
 
     fn audit<T: Serialize>(
@@ -1043,7 +1087,7 @@ fn rooted_candidate(root_path: &Path, requested: &Path, must_exist: bool) -> Opt
     Some(candidate)
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpService {
     fn get_info(&self) -> ServerInfo {
         let language = self
@@ -1069,9 +1113,15 @@ impl ServerHandler for McpService {
                 "仅操作设置页已授权的会话分组；分组权限保存后对新请求立即生效；不会返回或修改凭据。权限不足时调用 get_permission_guide 获取设置步骤。{transfer_note}"
             )
         };
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::from_build_env())
-            .with_instructions(instructions)
+        let mut tools = ToolsCapability::default();
+        tools.list_changed = Some(false);
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools_with(tools)
+                .build(),
+        )
+        .with_server_info(Implementation::from_build_env())
+        .with_instructions(instructions)
     }
 }
 

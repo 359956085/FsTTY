@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.1--beta.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -65,6 +65,8 @@ New session groups are not exposed to MCP. Enabling group access allows session 
 Local stdio configurations point to the fixed `mcp-runtime/fstty-mcp.cmd` launcher. It starts the current FsTTY MCP runtime through an atomically updated version pointer, so reconnecting the agent is enough after an app update.
 
 HTTP one-click local setup writes `http://127.0.0.1:<saved port>/mcp` without preparing or starting a separate stdio runtime. FsTTY must stay running; lightweight mode is supported.
+
+Both transports advertise simplified tool input schemas and declare a fixed tool list during initialization (`capabilities.tools.listChanged = false`). After a successful connection test, call `list_sessions` from a new agent session to confirm the tool is available. If the client still shows zero tools, capture the client version, the first startup error, and whether it sent `tools/list`.
 
 Never expose the HTTP service to the public internet. `/mcp` targets native MCP clients, rejects requests containing `Origin`, and does not support browser MCP clients or CORS.
 

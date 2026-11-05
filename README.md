@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.1--beta.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.0.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -69,6 +69,8 @@ stdio 与 HTTP 开关独立生效，关闭其中一种不会停止另一种。�
 stdio 本地配置固定指向 `mcp-runtime/fstty-mcp.cmd`；脚本会从原子更新的版本指针启动当前 FsTTY MCP 运行时，因此应用更新后只需重新连接 Agent。
 
 HTTP 的“一键本地配置”写入 `http://127.0.0.1:<已保存端口>/mcp`，不准备或启动独立 stdio 运行时。FsTTY 必须保持运行，轻量模式同样可用。
+
+两种传输均提供简化的工具参数 schema，并在握手时声明工具列表固定（`capabilities.tools.listChanged = false`）。测试连接成功后，请在 Agent 的新会话中调用 `list_sessions` 确认工具可用。如果客户端仍显示 0 个工具，请保留客户端版本、启动日志中的首条错误，以及是否发出了 `tools/list`。
 
 HTTP 禁止暴露到公网。`/mcp` 面向原生 MCP 客户端，拒绝带 `Origin` 的请求，不支持浏览器 MCP 客户端或 CORS。
 

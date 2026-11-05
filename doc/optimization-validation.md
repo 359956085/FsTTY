@@ -871,3 +871,17 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 尚未实际安装 r2：真实确认框停留超过 6 分钟、取消后旧版保持、等待期间新建终端或退出应用、确定后产生新进程、旧 2.0.0 多终端／MCP／轻量覆盖、真实权限不足与 UAC、文件占用失败和旧版恢复仍待隔离 Windows 验收。当前没有“已解决现场安装失败”的原生证据；自动测试与构建成功不替代这些结果。宿主安装和用户进程未改动，未创建标签、暂存、提交、推送或发布；远程 Actions 待推送后确认。
 
 新增源码文件仍为上一轮未跟踪的 `src-tauri/broker/src/installation/desktop_shutdown.rs` 和 `scripts/windows-installation.test.mjs`；本轮在前者扩展实现和回归，新增验收材料仅位于忽略的 artifacts 目录，提交时应包含这两个源文件。
+
+## 2026-11-05 · MCP 工具兼容性
+
+- STDIO 和 Streamable HTTP 共用从 Rust 类型生成的兼容工具描述。握手显式声明 `capabilities.tools.listChanged = false`。协议测试发现 rmcp 默认处理器会重新生成工具路由，导致实际列举绕过传输筛选。处理器现已绑定实例路由，发现和调用使用各自传输的工具集合。
+- Windows 专项测试通过。通过实际 STDIO 消息流和本机 HTTP 完成握手、`tools/list` 和 `list_sessions` 调用。两种传输当前各返回 15 个工具，其全部输入 schema 均通过 `@deepseek-ai/dsh-tools` 0.1.1-rc.2 的 `assertSupportedJsonSchema`。STDIO 列举 Roots 文件传输工具，HTTP 列举传输链接工具。权限指南接受省略、`null` 和字符串，搜索越界返回无效参数。
+- `npm run verify:all` 退出 0。前端及脚本 792 项、Rust 448 项通过。现有命令超时、Roots 和文件传输权限回归通过。
+- Windows STDIO 启动器的独立 Sandbox 协议验收通过。首次沙盒初始化失败，重试时仅为 `wsb` 进程绕过代理后启动成功。将 Debug 程序依赖的 VC++ 运行库放在沙盒临时运行目录，使用真实 `fstty-mcp.cmd` 和隔离设置完成握手、列举和 `list_sessions` 调用。握手返回 `listChanged: false`，列出的 15 个工具输入 schema 均通过同一 DSH 校验器，空工作区正确返回 `[]`。探针记录了协议结果，进程退出状态未确认。
+- DSH 客户端及 ZCode 新会话注册和调用待人工验收。当前完成了 DSH 校验器级验证，缺少可运行的对应客户端环境。若 ZCode 仍显示 0 个工具，验收时记录客户端版本、首条启动错误及是否发出 `tools/list`，单独跟踪注册故障。
+
+## 2026-11-05 · v2.0.1 正式版准备
+
+- `npm run check:release` 通过，确认应用、Broker、Network、Tauri、npm、锁文件及双语 README 徽章均为 2.0.1。发布脚本成功提取 `v2.0.1` 的双语更新说明，两条 beta 记录保留。
+- `npm run verify:all` 退出 0。前端及脚本 792 项、Rust 448 项通过，9 项忽略。包含 STDIO 和 HTTP 的 MCP 握手、工具发现及调用回归，以及 beta 版本排序和在线更新只接受更高正式版的回归。
+- DSH 和 ZCode 的实际新会话注册及调用待人工验收。正式版安装包、签名与远程发布待标签触发现有 Windows 工作流后验证。
