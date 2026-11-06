@@ -1804,6 +1804,9 @@
   align-items: center;
   gap: 12px;
   padding: 0 16px 14px;
+}
+
+.dialog-secondary-action > span {
   color: var(--muted);
   font-size: 12px;
 }

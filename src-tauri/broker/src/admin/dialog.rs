@@ -385,15 +385,12 @@ impl Dialog {
                     && !review.fingerprint.is_empty()
                     && review.old_fingerprint != review.fingerprint;
                 if changed {
-                    y = self.text(
-                        dc,
-                        "指纹已变化，请核对服务器身份后再确认。",
-                        self.px(40),
-                        y,
-                        inner,
-                        0,
-                        Tone::Warning,
-                    ) + self.px(8);
+                    let hint = if matches!(review.change, Change::Trust { .. }) {
+                        "请通过服务器控制台或管理员核实新指纹。一致时点击『信任此主机』，无法核实或不一致时请取消。"
+                    } else {
+                        "指纹已变化，请核对服务器身份后再确认。"
+                    };
+                    y = self.text(dc, hint, self.px(40), y, inner, 0, Tone::Warning) + self.px(8);
                     y = self.field(dc, "原指纹", &review.old_fingerprint, y, inner, Tone::Muted);
                 }
                 let fingerprint = if review.fingerprint.is_empty() {

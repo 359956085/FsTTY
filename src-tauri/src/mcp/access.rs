@@ -1,4 +1,4 @@
-use super::MAX_COMMAND_BYTES;
+use super::{result::business_error, MAX_COMMAND_BYTES};
 use crate::models::{AppError, AppSettings, Language, McpGroupPermission, StoredSession};
 use crate::services::AppState;
 use rmcp::ErrorData as McpError;
@@ -276,21 +276,29 @@ pub(super) fn localized_unsupported_syntax_error(
 }
 
 pub(super) fn mcp_error(error: AppError) -> McpError {
-    McpError::internal_error(error.to_string(), None)
+    let internal = matches!(error, AppError::Internal(_) | AppError::Persistence(_));
+    let error = McpError::internal_error(error.to_string(), None);
+    if internal {
+        error
+    } else {
+        business_error(error)
+    }
 }
 
 pub(super) fn mcp_access_error(error: McpAccessError) -> McpError {
     match error {
         McpAccessError::Internal(message) => McpError::internal_error(message, None),
         McpAccessError::NotFound(message) | McpAccessError::Forbidden(message) => {
-            McpError::invalid_request(message, None)
+            business_error(McpError::invalid_request(message, None))
         }
-        McpAccessError::UnsupportedSyntax { message, kind } => McpError::invalid_request(
-            message,
-            Some(crate::mcp_command_policy::unsupported_shell_syntax_data(
-                kind,
-            )),
-        ),
+        McpAccessError::UnsupportedSyntax { message, kind } => {
+            business_error(McpError::invalid_request(
+                message,
+                Some(crate::mcp_command_policy::unsupported_shell_syntax_data(
+                    kind,
+                )),
+            ))
+        }
     }
 }
 

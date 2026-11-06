@@ -208,7 +208,8 @@ void i18n.use(initReactI18next).init({
           hostKeyChanged: "服务器主机密钥已变化",
           oldFingerprint: "旧指纹",
           newFingerprint: "新指纹",
-          hostKeyChangedHint: "连接已阻止。请先核实原因，再在“编辑 SSH”中忘记旧主机密钥。",
+          hostKeyChangedHint:
+            "连接已阻止。请先通过服务器控制台或管理员核实新指纹，再在“编辑 SSH”中点击“忘记主机密钥”。重新连接时核对显示的指纹，一致后点击“信任并连接”。",
           credentialRequired: "需要认证凭据",
           credentialPassphrasePrompt: "请输入私钥口令",
           rememberCredential: "保存到系统凭据库",
@@ -729,7 +730,7 @@ void i18n.use(initReactI18next).init({
           oldFingerprint: "Old fingerprint",
           newFingerprint: "New fingerprint",
           hostKeyChangedHint:
-            "Connection blocked. Verify the change, then forget the old host key from Edit SSH.",
+            "Connection blocked. Verify the new fingerprint through the server console or with your administrator, then select ‘Forget host key’ in ‘Edit SSH’. Reconnect, compare the displayed fingerprint with the verified one, and select ‘Trust and connect’ only if they match.",
           credentialRequired: "Credential required",
           credentialPassphrasePrompt: "Enter private key passphrase",
           rememberCredential: "Save to the system credential vault",

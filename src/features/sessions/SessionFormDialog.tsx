@@ -595,7 +595,7 @@ export function SessionFormDialog({
         {session ? (
           <div className="dialog-secondary-action">
             <Button
-              icon={<KeyRound aria-hidden="true" size={16} />}
+              icon={brokerRequired ? undefined : <KeyRound aria-hidden="true" size={16} />}
               onClick={() => void forgetHostKey()}
               variant="ghost"
             >

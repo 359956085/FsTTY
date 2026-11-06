@@ -1,9 +1,9 @@
-use super::McpService;
+use super::{McpService, ToolRateLimit};
 use crate::mcp_transfer::McpTransferRuntime;
 use crate::models::AppError;
 use crate::services::AppState;
 use axum::{
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
 use rmcp::transport::streamable_http_server::{
@@ -23,6 +23,7 @@ const HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct McpHttpRuntime {
     pub(super) state: Arc<Mutex<McpHttpRuntimeState>>,
     transition: Arc<Mutex<()>>,
+    rate_limit: ToolRateLimit,
 }
 
 #[derive(Default)]
@@ -135,12 +136,13 @@ impl McpHttpRuntime {
             McpTransferRuntime::new(state.clone(), port, cancellation.child_token());
         let service_state = state.clone();
         let service_transfers = transfer_runtime.clone();
+        let rate_limit = self.rate_limit.clone();
         let service = StreamableHttpService::new(
             move || {
-                Ok(McpService::new_http(
-                    service_state.clone(),
-                    service_transfers.clone(),
-                ))
+                let mut service =
+                    McpService::new_http(service_state.clone(), service_transfers.clone());
+                service.rate_limit = rate_limit.clone();
+                Ok(service)
             },
             LocalSessionManager::default().into(),
             http_server_config(cancellation.child_token()),
@@ -191,7 +193,14 @@ async fn authorize_http(
         } else {
             "未授权"
         };
-        return (status, message).into_response();
+        let mut response = (status, message).into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=\"FsTTY\""),
+            );
+        }
+        return response;
     }
     next.run(request).await
 }
@@ -254,8 +263,10 @@ pub(super) fn validate_http_headers(
     let authorized = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|value| value == expected_token);
+        .and_then(|value| value.split_once(' '))
+        .is_some_and(|(scheme, value)| {
+            scheme.eq_ignore_ascii_case("Bearer") && value.trim_start_matches(' ') == expected_token
+        });
     if authorized {
         Ok(())
     } else {

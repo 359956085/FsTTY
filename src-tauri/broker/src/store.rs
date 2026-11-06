@@ -471,6 +471,43 @@ mod tests {
     }
 
     #[test]
+    fn 核对主机指纹取消时保留旧值且确认时保留凭据() {
+        let mut store = store();
+        let target = target();
+        let ticket = store
+            .stage(
+                "owner",
+                Change::Configure {
+                    target: target.clone(),
+                    replace_secret: true,
+                },
+                Some(secret()),
+            )
+            .unwrap();
+        store.set_observed_key(&ticket, "旧指纹".into()).unwrap();
+        store.approve(&ticket, true, None).unwrap();
+
+        let change = Change::Trust {
+            id: target.id.clone(),
+        };
+        let cancelled = store.stage("owner", change.clone(), None).unwrap();
+        store.set_observed_key(&cancelled, "新指纹".into()).unwrap();
+        store.cancel("owner", &cancelled);
+        assert!(store.approve(&cancelled, true, None).is_err());
+        let (profile, secrets) = store.load("owner", &target.id).unwrap().unwrap();
+        assert_eq!(profile.host_key, "旧指纹");
+        assert_eq!(secrets.password.as_str(), secret().password.as_str());
+
+        let accepted = store.stage("owner", change, None).unwrap();
+        store.set_observed_key(&accepted, "新指纹".into()).unwrap();
+        store.approve(&accepted, true, None).unwrap();
+        let (profile, secrets) = store.load("owner", &target.id).unwrap().unwrap();
+        assert_eq!(profile.host_key, "新指纹");
+        assert_eq!(profile.target, target);
+        assert_eq!(secrets.password.as_str(), secret().password.as_str());
+    }
+
+    #[test]
     fn 非法代理不进入审批暂存且不产生默认直连请求() {
         let mut store = store();
         assert!(store

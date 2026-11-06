@@ -93,7 +93,7 @@ pub async fn authenticate(
             .and_then(|k| k.clone())
             .is_some_and(|k| k != profile.host_key)
         {
-            "主机指纹已变化，请在 FsTTY 安全管理窗口重新确认"
+            "服务器主机指纹已变化，连接已阻止。请在编辑终端窗口，点击『核对主机指纹』，重新核对指纹。"
         } else {
             "无法连接服务器"
         }

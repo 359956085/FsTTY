@@ -8,14 +8,21 @@ use axum::http::{header, HeaderMap, StatusCode};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rmcp::schemars;
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters},
+    handler::server::{
+        router::tool::ToolRouter,
+        tool::{Extension, InputResponses as ToolInputResponses, RequestState, ToolCallContext},
+        wrapper::Parameters,
+    },
     model::*,
     service::RequestContext,
     tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::borrow::Cow;
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(test)]
@@ -37,7 +44,9 @@ mod catalog;
 mod compatibility_tests;
 mod connection_cache;
 mod http;
+mod rate_limit;
 mod result;
+mod roots;
 mod search;
 
 use access::{
@@ -56,9 +65,14 @@ use connection_cache::{CacheLookup, ConnectionCache, ConnectionLease};
 pub use http::{get_http_token, get_or_create_http_token, rotate_http_token, McpHttpRuntime};
 #[cfg(test)]
 use http::{http_bind_address, http_server_config, validate_http_headers, RunningMcpHttp};
+use rate_limit::ToolRateLimit;
 use result::{
-    json_result, remote_file_name, structured_json_result, tool_error, transfer_link_result,
+    business_error, finish_tool_error, json_result, remote_file_name, structured_json_result,
+    tool_error, transfer_link_result,
 };
+#[cfg(test)]
+use roots::rooted_candidate;
+use roots::{LocalTransfer, PendingRoots};
 #[cfg(test)]
 use search::{
     default_search_scan_bytes, RemoteFileSearchMatch, RemoteFileSearchResult,
@@ -99,6 +113,8 @@ pub struct McpService {
     transport: McpTransport,
     transfer_runtime: Option<McpTransferRuntime>,
     tool_router: ToolRouter<Self>,
+    pending_roots: PendingRoots,
+    rate_limit: ToolRateLimit,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -183,6 +199,9 @@ struct LocalTransferArgs {
     session_id: String,
     local_path: String,
     remote_path: String,
+    #[serde(flatten, skip_serializing)]
+    #[schemars(skip)]
+    extra: JsonObject,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -269,6 +288,8 @@ impl McpService {
             transport,
             transfer_runtime: None,
             tool_router,
+            pending_roots: PendingRoots::default(),
+            rate_limit: ToolRateLimit::default(),
         }
     }
 
@@ -282,6 +303,8 @@ impl McpService {
             transport: McpTransport::Http,
             transfer_runtime: Some(transfer_runtime),
             tool_router,
+            pending_roots: PendingRoots::default(),
+            rate_limit: ToolRateLimit::default(),
         }
     }
 
@@ -352,7 +375,7 @@ impl McpService {
         self.state
             .mcp_operation_lock_service
             .try_lock(session_id)
-            .map_err(|message| McpError::invalid_request(message, None))
+            .map_err(|message| business_error(McpError::invalid_request(message, None)))
     }
 
     #[tool(
@@ -370,7 +393,7 @@ impl McpService {
         let audit = self.audit("get_permission_guide", None, &args);
         let settings = self.settings()?;
         let response = permission_guide_response(&settings.language, args.tool_name)
-            .map_err(|message| McpError::invalid_params(message, None))?;
+            .map_err(|message| business_error(McpError::invalid_params(message, None)))?;
         audit.succeed();
         Ok(structured_json_result(&response))
     }
@@ -525,7 +548,7 @@ impl McpService {
     ) -> Result<CallToolResult, McpError> {
         let audit = self.audit("search_remote_file", Some(&args.session_id), &args);
         validate_search_remote_file_args(&args)
-            .map_err(|message| McpError::invalid_params(message, None))?;
+            .map_err(|message| business_error(McpError::invalid_params(message, None)))?;
         let connection = self
             .authorized_connection(&args.session_id, Permission::FileRead)
             .await?;
@@ -644,7 +667,7 @@ impl McpService {
         let content = if args.base64 {
             BASE64_STANDARD
                 .decode(args.content.as_bytes())
-                .map_err(|_| McpError::invalid_params("Base64 内容无效", None))?
+                .map_err(|_| business_error(McpError::invalid_params("Base64 内容无效", None)))?
         } else {
             args.content.into_bytes()
         };
@@ -907,29 +930,17 @@ impl McpService {
         &self,
         Parameters(args): Parameters<LocalTransferArgs>,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("upload_local_file", Some(&args.session_id), &args);
-        rooted_path(&context, &args.local_path, true).await?;
-        let connection = self
-            .authorized_connection(&args.session_id, Permission::FileTransfer)
-            .await?;
-        let _operation_lock = self.operation_lock(&args.session_id)?;
-        // 鉴权和排队可能耗时；实际读取前重新确认 Roots，缩短路径校验与 I/O 的竞态窗口。
-        let local_path = rooted_path(&context, &args.local_path, true).await?;
-        let bytes = self
-            .state
-            .connection_manager
-            .upload_file_quiet(&connection, &local_path, &args.remote_path)
+        RequestState(state): RequestState,
+        ToolInputResponses(responses): ToolInputResponses,
+    ) -> Result<CallToolResponse, McpError> {
+        self.transfer_local_file(LocalTransfer::Upload, args, context, state, responses)
             .await
-            .map_err(mcp_error)?;
-        audit.succeed();
-        Ok(json_result(&json!({"bytes": bytes})))
     }
 
     #[tool(
         description = "将远程文件下载到 MCP Roots 内的本地路径",
         annotations(
-            read_only_hint = true,
+            read_only_hint = false,
             destructive_hint = false,
             idempotent_hint = false
         )
@@ -938,27 +949,117 @@ impl McpService {
         &self,
         Parameters(args): Parameters<LocalTransferArgs>,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let audit = self.audit("download_remote_file", Some(&args.session_id), &args);
-        rooted_path(&context, &args.local_path, false).await?;
-        let connection = self
-            .authorized_connection(&args.session_id, Permission::FileTransfer)
-            .await?;
-        let _operation_lock = self.operation_lock(&args.session_id)?;
-        // 覆盖本地目标前重新解析终点符号链接，避免使用过期的路径判定结果。
-        let local_path = rooted_path(&context, &args.local_path, false).await?;
-        let bytes = self
-            .state
-            .connection_manager
-            .download_file_quiet(&connection, &args.remote_path, &local_path)
+        RequestState(state): RequestState,
+        ToolInputResponses(responses): ToolInputResponses,
+    ) -> Result<CallToolResponse, McpError> {
+        self.transfer_local_file(LocalTransfer::Download, args, context, state, responses)
             .await
-            .map_err(mcp_error)?;
-        audit.succeed();
-        Ok(json_result(&json!({"bytes": bytes})))
     }
 }
 
 impl McpService {
+    #[allow(deprecated)] // Legacy clients still negotiate Roots. Modern clients use MRTR.
+    async fn transfer_local_file(
+        &self,
+        transfer: LocalTransfer,
+        args: LocalTransferArgs,
+        context: RequestContext<RoleServer>,
+        state: Option<String>,
+        responses: Option<InputResponses>,
+    ) -> Result<CallToolResponse, McpError> {
+        let modern = is_modern(&context);
+        let (tool, must_exist) = match transfer {
+            LocalTransfer::Upload => ("upload_local_file", true),
+            LocalTransfer::Download => ("download_remote_file", false),
+        };
+        let audit = || self.audit(tool, Some(&args.session_id), &args);
+        let legacy_audit = (!modern).then(audit);
+        if modern && !args.extra.is_empty() {
+            return Err(McpError::invalid_params(
+                "Unexpected file transfer arguments",
+                None,
+            ));
+        }
+        let requested = Path::new(&args.local_path);
+        if !requested.is_absolute() {
+            return Err(business_error(McpError::invalid_params(
+                "本地路径必须是绝对路径",
+                None,
+            )));
+        }
+        if !context
+            .client_capabilities()
+            .is_some_and(|caps| caps.roots.is_some())
+        {
+            return Err(if modern {
+                McpError::missing_required_client_capability(
+                    ClientCapabilities::builder().enable_roots().build(),
+                )
+            } else {
+                McpError::invalid_request("客户端未提供 Roots", None)
+            });
+        }
+        let first_roots = if modern {
+            match (state, responses) {
+                (None, None) => {
+                    return Ok(self.pending_roots.begin(transfer, &args).map_or_else(
+                        || tool_error("等待 Roots 的请求已满，请稍后重试").into(),
+                        Into::into,
+                    ));
+                }
+                (Some(state), Some(responses)) => {
+                    let roots = roots::decode_response(responses)?;
+                    self.pending_roots.resume(&state, transfer, &args)?;
+                    roots
+                }
+                _ => {
+                    return Err(McpError::invalid_params(
+                        "Roots continuation requires requestState and inputResponses",
+                        None,
+                    ))
+                }
+            }
+        } else {
+            roots::legacy_roots(&context).await?
+        };
+
+        let audit = legacy_audit.unwrap_or_else(audit);
+        let validate_path = |roots: &ListRootsResult| {
+            roots::rooted_path(roots, requested, must_exist).ok_or_else(|| {
+                business_error(McpError::invalid_request("本地路径不在 MCP Roots 内", None))
+            })
+        };
+        validate_path(&first_roots)?;
+        let connection = self
+            .authorized_connection(&args.session_id, Permission::FileTransfer)
+            .await?;
+        let _operation_lock = self.operation_lock(&args.session_id)?;
+        // Recheck the canonical path immediately before I/O. Legacy clients can
+        // also update their Roots while the server is acquiring the connection.
+        let final_roots = if modern {
+            first_roots
+        } else {
+            roots::legacy_roots(&context).await?
+        };
+        let local_path = validate_path(&final_roots)?;
+        let manager = &self.state.connection_manager;
+        let bytes = match transfer {
+            LocalTransfer::Upload => {
+                manager
+                    .upload_file_quiet(&connection, &local_path, &args.remote_path)
+                    .await
+            }
+            LocalTransfer::Download => {
+                manager
+                    .download_file_quiet(&connection, &args.remote_path, &local_path)
+                    .await
+            }
+        }
+        .map_err(mcp_error)?;
+        audit.succeed();
+        Ok(json_result(&json!({"bytes": bytes})).into())
+    }
+
     fn settings(&self) -> Result<AppSettings, McpError> {
         current_mcp_settings(&self.state).map_err(mcp_error)
     }
@@ -1038,69 +1139,143 @@ impl McpService {
     }
 }
 
-// 当前稳定客户端仍通过 Roots 声明本地边界；SDK 的替代能力尚未进入兼容规范。
-#[allow(deprecated)]
-async fn rooted_path(
-    context: &RequestContext<RoleServer>,
-    path: &str,
-    must_exist: bool,
-) -> Result<std::path::PathBuf, McpError> {
-    let requested = PathBuf::from(path);
-    if !requested.is_absolute() {
-        return Err(McpError::invalid_params("本地路径必须是绝对路径", None));
-    }
-    let roots = context
-        .peer
-        .list_roots()
-        .await
-        .map_err(|_| McpError::invalid_request("客户端未提供 Roots", None))?;
-    for root in roots.roots {
-        let Ok(url) = url::Url::parse(&root.uri) else {
-            continue;
-        };
-        let Ok(root_path) = url.to_file_path() else {
-            continue;
-        };
-        let Ok(root_path) = std::fs::canonicalize(root_path) else {
-            continue;
-        };
-        if let Some(candidate) = rooted_candidate(&root_path, &requested, must_exist) {
-            return Ok(candidate);
-        }
-    }
-    Err(McpError::invalid_request("本地路径不在 MCP Roots 内", None))
+fn is_modern(context: &RequestContext<RoleServer>) -> bool {
+    context
+        .protocol_version()
+        .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
 }
 
-fn rooted_candidate(root_path: &Path, requested: &Path, must_exist: bool) -> Option<PathBuf> {
-    let candidate = if must_exist {
-        std::fs::canonicalize(requested).ok()
-    } else if std::fs::symlink_metadata(requested).is_ok() {
-        // 已存在的终点也要解析，防止下载覆盖符号链接实际指向 Roots 外的文件。
-        std::fs::canonicalize(requested).ok()
-    } else {
-        requested
-            .parent()
-            .and_then(|parent| std::fs::canonicalize(parent).ok())
-            .and_then(|parent| requested.file_name().map(|name| parent.join(name)))
-    }?;
-    candidate.strip_prefix(root_path).ok()?;
-    Some(candidate)
+fn server_identity() -> Implementation {
+    Implementation::new("FsTTY", env!("CARGO_PKG_VERSION"))
+}
+
+fn response_meta(context: &RequestContext<RoleServer>) -> Option<MetaObject> {
+    is_modern(context).then(|| {
+        let mut meta = MetaObject::default();
+        meta.insert(
+            "io.modelcontextprotocol/serverInfo".to_owned(),
+            json!(server_identity()),
+        );
+        meta
+    })
+}
+
+fn check_cursor(request: Option<PaginatedRequestParams>) -> Result<(), McpError> {
+    if request.is_some_and(|request| request.cursor.is_some()) {
+        return Err(McpError::invalid_params("Invalid pagination cursor", None));
+    }
+    Ok(())
 }
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpService {
-    async fn list_tools(
+    async fn call_tool(
         &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, McpError> {
-        // MCP 2026-07-28 clients require cache hints on tool discovery.
-        Ok(ListToolsResult::with_all_items(self.tool_router.list_all())
-            .with_ttl_ms(0)
-            .with_cache_scope(CacheScope::Private))
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        let name = request.name.as_ref();
+        let Some(route) = self
+            .tool_router
+            .map
+            .get(name)
+            .filter(|_| self.tool_router.get(name).is_some())
+        else {
+            return Err(McpError::invalid_params("tool not found", None));
+        };
+        if let Err(wait) = self.rate_limit.take() {
+            let mut result =
+                tool_error("MCP 工具调用过于频繁，请稍后重试").with_meta(response_meta(&context));
+            result.structured_content = Some(
+                json!({"reason": "rateLimited", "retryAfterMs": wait.as_nanos().div_ceil(1_000_000)}),
+            );
+            return Ok(result.into());
+        }
+        let modern = is_modern(&context);
+        let meta = response_meta(&context);
+        let call = ToolCallContext::new(self, request, context);
+        // Keep malformed arguments as RPC errors. The SDK router's default call
+        // would translate parameter decoding failures to tool errors as well.
+        let mut response = match (route.call)(call).await {
+            Ok(result) => Ok(result),
+            Err(error) => finish_tool_error(error, modern),
+        }?;
+        if let Some(meta) = meta {
+            match &mut response {
+                CallToolResponse::Complete(result) => {
+                    result.meta.get_or_insert_default().0.extend(meta.0);
+                }
+                CallToolResponse::InputRequired(result) => {
+                    result.meta.get_or_insert_default().0.extend(meta.0);
+                }
+                _ => {}
+            }
+        }
+        Ok(response)
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        const HTTP_VERSIONS: &[ProtocolVersion] = &[
+            ProtocolVersion::V_2025_03_26,
+            ProtocolVersion::V_2025_06_18,
+            ProtocolVersion::V_2025_11_25,
+            ProtocolVersion::V_2026_07_28,
+        ];
+        Cow::Borrowed(match self.transport {
+            McpTransport::Stdio => ProtocolVersion::KNOWN_VERSIONS,
+            McpTransport::Http => HTTP_VERSIONS,
+        })
+    }
+
+    async fn list_tools(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        check_cursor(request)?;
+        // rmcp supplies private, zero-TTL hints on modern complete results.
+        let mut result = ListToolsResult::with_all_items(self.tool_router.list_all());
+        result.meta = response_meta(&context);
+        Ok(result)
+    }
+
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        check_cursor(request)?;
+        Ok(ListResourcesResult {
+            meta: response_meta(&context),
+            ..Default::default()
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        check_cursor(request)?;
+        Ok(ListResourceTemplatesResult {
+            meta: response_meta(&context),
+            ..Default::default()
+        })
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        check_cursor(request)?;
+        Ok(ListPromptsResult {
+            meta: response_meta(&context),
+            ..Default::default()
+        })
+    }
+
+    fn get_info(&self) -> ServerConfig {
         let language = self
             .settings()
             .map(|settings| settings.language)
@@ -1126,12 +1301,12 @@ impl ServerHandler for McpService {
         };
         let mut tools = ToolsCapability::default();
         tools.list_changed = Some(false);
-        ServerInfo::new(
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools_with(tools)
                 .build(),
         )
-        .with_server_info(Implementation::from_build_env())
+        .with_server_info(server_identity())
         .with_instructions(instructions)
     }
 }
@@ -1150,6 +1325,7 @@ mod tests {
             ),
             kind: crate::mcp_command_policy::UnsupportedShellSyntaxKind::CommandSubstitution,
         });
+        let error = finish_tool_error(error, false).unwrap_err();
         let data = error.data.expect("语法拒绝应包含结构化能力范围");
         assert_eq!(data["reason"], "unsupportedShellSyntax");
         assert_eq!(data["detectedKind"], "commandSubstitution");
