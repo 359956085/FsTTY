@@ -891,3 +891,11 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 使用 CI 同版本的 `cargo-audit 0.22.2` 复现 8 项漏洞。锁文件更新至 `crypto-bigint 0.7.10`、`ctutils 0.4.8`、`rustls-webpki 0.103.16` 和 `webpki-root-certs 1.0.10`。升级 Tauri 更新插件至 2.14.1，采用 `zip 9.3.0`，并将 npm API 和 CLI 与 Rust 核心对齐到 2.12 系列。
 - 最终锁文件审计退出 0，漏洞数为 0，仍有 8 条非阻断警告。审计规则保持原有设置。
 - `npm ci`、`npm run check:release` 和 `npm run verify:all` 通过。前端及脚本 792 项、Rust 448 项通过，9 项忽略。CI 的 Windows 桌面正式编译步骤通过，PE 产品版本为 2.0.1，数字版本为 2.0.1.0。远程 Actions 和正式安装包验收待验证。
+
+## 2026-11-06 · DSH 新版工具注册
+
+- 反馈截图中，ZCode 使用「兼容旧版」模式成功调用 `list_sessions`。DSH 面板探测能发现 15 个工具，但实际会话显示连接断开。
+- 使用官方 `@deepseek-ai/dsh-mcp-client 0.2.2-rc.1` 和实际工具注册器连接已安装的 FsTTY 2.0.1。复现首条错误 `Invalid result for tools/list`，缺失字段为 `ttlMs` 和 `cacheScope`。本机的 `0.1.1-rc.2` 注册和调用通过。
+- 两种传输的 `tools/list` 现返回 `ttlMs: 0` 和 `cacheScope: private`，声明目录立即过期且仅限当前授权上下文。工具清单仍从对应传输的实例路由生成。
+- 修复版在 Windows Sandbox 使用真实 STDIO 启动器，经 DSH `0.2.2-rc.1` 协商至 `2026-07-28`，成功注册 15 个工具并通过官方原生执行器调用 `mcp__fstty__list_sessions`，隔离工作区返回 `[]`。旧版 MCP TypeScript SDK `1.30.0` 同样列举并调用成功。反馈者的 DSH 桌面会话仍待用修复版复测。
+- `npm run verify:all` 通过。前端及脚本 792 项、Rust 448 项通过，9 项忽略。STDIO 和 HTTP 均覆盖缓存提示、工具列举和调用回归。

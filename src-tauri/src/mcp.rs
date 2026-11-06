@@ -1089,6 +1089,17 @@ fn rooted_candidate(root_path: &Path, requested: &Path, must_exist: bool) -> Opt
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpService {
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        // MCP 2026-07-28 clients require cache hints on tool discovery.
+        Ok(ListToolsResult::with_all_items(self.tool_router.list_all())
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
+    }
+
     fn get_info(&self) -> ServerInfo {
         let language = self
             .settings()

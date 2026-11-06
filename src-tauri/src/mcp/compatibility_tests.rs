@@ -58,6 +58,8 @@ async fn check_tools(mut rpc: impl AsyncFnMut(Value) -> Value, transfer_tools: [
     );
     rpc(json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).await;
     let list = rpc(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
+    assert_eq!(list["result"]["ttlMs"], 0);
+    assert_eq!(list["result"]["cacheScope"], "private");
     let tools = list["result"]["tools"].as_array().unwrap();
     if std::env::var_os("FSTTY_TEST_PRINT_MCP_TOOLS").is_some() {
         println!("MCP_TOOLS {}", list["result"]["tools"]);
