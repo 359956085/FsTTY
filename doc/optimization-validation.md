@@ -913,3 +913,9 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 使用独立临时工作区，通过官方 TypeScript SDK `@modelcontextprotocol/sdk 1.30.0`、`@modelcontextprotocol/client 2.4.0`（固定协商 `2026-07-28`）以及 `@deepseek-ai/dsh-mcp-client 0.2.2-rc.1` 联调。三种客户端均在两种传输发现 15 个工具并成功调用 `list_sessions`，返回 `[]`。DSH 使用实际插件和 DSH schema 校验器，注册器为隔离测试夹具；STDIO 使用子进程桥接隔离的 FsTTY 消息流，HTTP 访问本机测试服务。
 - 最终 `npm run verify:all` 退出 0：前端及脚本 792 项、Rust 454 项通过，保留 9 项需独立环境的忽略测试。版本一致性、类型、Lint、构建、Rust 格式和严格 Clippy 检查通过。
 - `cargo-audit 0.22.2` 检查当前锁文件退出 0，无已知漏洞，仍有 8 条非阻断警告。反馈者的 DSH 桌面新会话、ZCode 桌面、正式安装版 STDIO 启动器和新版 Roots 真实文件往返仍待端到端验收。本轮未修改认证设置或部署 OAuth、HTTPS。
+
+## 2026-11-07 · v2.0.2 正式版准备
+
+- `npm run check:release` 通过。应用、Broker、Network、Tauri、npm、锁文件和双语 README 徽章均为 2.0.2。发布脚本识别为正式版，双语发布说明校验通过。
+- `npm run verify:all` 最终退出 0。前端及脚本 792 项、Rust 454 项通过，9 项需独立环境的测试保持忽略。首次运行时安装检查读到本机残留的 2.0.1 调试程序。重新构建并确认 Windows 产品版本为 2.0.2 后，全量重跑通过。
+- Windows 签名安装包和在线更新清单待 `v2.0.2` 标签触发发布流水线后验证。
