@@ -1,0 +1,39 @@
+{
+  "name": "JetBrains Mono",
+  "version": "2.304",
+  "license": "SIL Open Font License 1.1",
+  "source": "https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304",
+  "fontBytes": 380768,
+  "files": [
+    {
+      "name": "JetBrainsMono-Regular.woff2",
+      "bytes": 92164,
+      "sha256": "a9cb1cd82332b23a47e3a1239d25d13c86d16c4220695e34b243effa999f45f2",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/webfonts/JetBrainsMono-Regular.woff2"
+    },
+    {
+      "name": "JetBrainsMono-Bold.woff2",
+      "bytes": 94588,
+      "sha256": "c503cc5ec5f8b2c7666b7ecda1adf44bd45f2e6579b2eba0fc292150416588a2",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/webfonts/JetBrainsMono-Bold.woff2"
+    },
+    {
+      "name": "JetBrainsMono-Italic.woff2",
+      "bytes": 95864,
+      "sha256": "cb6a1b246318ed3885d7dffa14a2609297fe80e9b8e500bea33b52fa312a36a4",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/webfonts/JetBrainsMono-Italic.woff2"
+    },
+    {
+      "name": "JetBrainsMono-BoldItalic.woff2",
+      "bytes": 98152,
+      "sha256": "3a013466c0eee979fb9d42c2d7a8887cd3645dc8b897cfc5b71781cf982efc5a",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/webfonts/JetBrainsMono-BoldItalic.woff2"
+    },
+    {
+      "name": "OFL.txt",
+      "bytes": 4399,
+      "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+      "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/OFL.txt"
+    }
+  ]
+}

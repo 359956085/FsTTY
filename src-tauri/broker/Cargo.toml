@@ -14,7 +14,7 @@ serde_json = "1"
 semver = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "fallible_uint"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["serde"] }
 rand = "0.10"

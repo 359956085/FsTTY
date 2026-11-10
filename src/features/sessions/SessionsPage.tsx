@@ -27,6 +27,7 @@ interface SessionsPageProps {
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
   terminalFontSize?: number;
+  fontFamily?: import("../../shared/api/types").FontFamilyPreference;
   onTerminalFontSizeAdjust?: (steps: number) => void;
   visible: boolean;
 }
@@ -38,6 +39,7 @@ export function SessionsPage({
   theme,
   terminalColorScheme,
   terminalFontSize,
+  fontFamily,
   onTerminalFontSizeAdjust,
   visible,
 }: SessionsPageProps) {
@@ -256,6 +258,7 @@ export function SessionsPage({
         theme={theme}
         terminalColorScheme={terminalColorScheme}
         terminalFontSize={terminalFontSize}
+        fontFamily={fontFamily}
         onTerminalFontSizeAdjust={onTerminalFontSizeAdjust}
         runtimes={connections.runtimes}
         visible={visible}

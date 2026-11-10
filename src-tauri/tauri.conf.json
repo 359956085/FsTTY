@@ -50,6 +50,9 @@
       }
     },
     "resources": {
+      "../src/assets/fonts/jetbrains-mono/OFL.txt": "third-party/jetbrains-mono/OFL.txt",
+      "../src/assets/fonts/jetbrains-mono/README.md": "third-party/jetbrains-mono/README.md",
+      "../src/assets/fonts/jetbrains-mono/manifest.json": "third-party/jetbrains-mono/manifest.json",
       "vendor/clink-1.9.34/build.ps1": "third-party/clink/build.ps1",
       "vendor/clink-1.9.34/LICENSE": "third-party/clink/LICENSE",
       "vendor/clink-1.9.34/README.md": "third-party/clink/README.md",

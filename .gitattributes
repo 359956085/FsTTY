@@ -1,0 +1,3 @@
+# Preserve upstream font and license bytes recorded in the distribution manifest.
+src/assets/fonts/jetbrains-mono/*.woff2 -text
+src/assets/fonts/jetbrains-mono/OFL.txt -text

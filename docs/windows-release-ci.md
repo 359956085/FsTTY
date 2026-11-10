@@ -12,6 +12,10 @@
 
 本地和所有 Windows 检查/构建固定 Rust 1.97.0，包含 rustfmt、Clippy。工具链升级应单独验证后同时修改 `rust-toolchain.toml` 与 Windows 环境 action，避免滚动 stable 引入新的警告。格式、Lint、Clippy 的严格失败规则与依赖审计继续保留。
 
+安全依赖维护使用 Node.js 24，与 Windows action 一致。Vite 7／Vitest 4 升级后仍显式保留原 Vite 5 的浏览器语法目标，不因开发工具升级提高 WebView 兼容门槛。npm 锁文件中的间接补丁与 `package.json` 一起保留；`@typescript-eslint/typescript-estree` 的 `minimatch` 暂时限定覆盖至 11.0.5 或同主版本后续补丁，修复 GHSA-g3hv-75wg-m249。该覆盖仅针对这个父包，上游采用修复系列后移除；不要全局替换 ESLint 使用的 minimatch 3。
+
+本地升级后分别运行 `npm audit`、`npm audit --omit=dev` 及 `cargo audit --file src-tauri/Cargo.lock`，再运行完整回归。`verify:all` 本身不包含联网审计；CI 仍由既有 Rust audit action 单独执行 Rust 审计。2026-11-10 复核：`.cargo/audit.toml` 只暂时豁免 RUSTSEC-2023-0071；RSA 已有正式修复，但 russh 0.62.2 与核查的最新版 0.65.1 均精确依赖 rsa 0.10.0-rc.18。保留 RSA 连接兼容，不维护私有 SSH 分叉；上游允许正式 RSA 后升级并移除豁免。其他漏洞继续阻断，维护状态和平台相关提示继续显示。[RSA 公告](https://rustsec.org/advisories/RUSTSEC-2023-0071.html) · [russh 0.65.1 发布来源中的依赖](https://github.com/warp-tech/russh/blob/b33092aad1e51c66258a12e8b83fc473a68d9d34/russh/Cargo.toml)
+
 测试只扫描 `src`、`scripts`，不扫描验收副本、构建材料和缓存。日志弹窗、延迟加载焦点与提取测试使用独立双语夹具，测试语言、渲染、排序、版本边界和关闭行为，不固定当前版本、历史正文或条目数。移除 CSS 字符串、固定颜色/尺寸/间距及专用解析器测试，视觉效果继续记录界面验收；焦点、键盘、缩放、终端实例和调色板映射仍由行为测试覆盖。
 
 工作流回归只固定检查依赖、无签名隔离、并发取消及密钥使用范围，不锁定步骤名称、数量和完整命令列表。文件选择、去重、缓存上限及签名附件集合等具有行为含义的数量断言保留。发布签名、哈希、草稿重跑、已发布附件保护及更新源隔离规则不变。

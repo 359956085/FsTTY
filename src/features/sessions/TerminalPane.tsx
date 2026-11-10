@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { api } from "../../shared/api/client";
+import { getFontStacks } from "../../shared/fonts";
 import { installTerminalFontWheel } from "./terminalFontWheel";
 import { readApiError, resolveApiError } from "../../shared/api/errors";
 import type {
@@ -123,6 +124,7 @@ interface TerminalPaneProps {
   theme: ResolvedTheme;
   terminalColorScheme?: TerminalColorScheme;
   terminalFontSize?: number;
+  fontFamily?: import("../../shared/api/types").FontFamilyPreference;
   onTerminalFontSizeAdjust?: (steps: number) => void;
   connectionState: ConnectionState;
   currentPath?: string;
@@ -155,6 +157,7 @@ export const TerminalPane = memo(function TerminalPane({
   theme,
   terminalColorScheme = "default",
   terminalFontSize = 13,
+  fontFamily = "default",
   onTerminalFontSizeAdjust,
   visible,
 }: TerminalPaneProps) {
@@ -242,6 +245,8 @@ export const TerminalPane = memo(function TerminalPane({
   const shortcutsRef = useRef(shortcuts);
   const themeRef = useRef(theme);
   const terminalColorSchemeRef = useRef(terminalColorScheme);
+  const fontFamilyRef = useRef(fontFamily);
+  fontFamilyRef.current = fontFamily;
   const fontSizeRef = useRef(terminalFontSize);
   const adjustFontRef = useRef(onTerminalFontSizeAdjust);
   const fitFontRef = useRef(fitAndResize);
@@ -342,14 +347,16 @@ export const TerminalPane = memo(function TerminalPane({
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || terminal.options.fontSize === terminalFontSize) return;
+    const family = getFontStacks(fontFamily).mono;
+    if (!terminal || (terminal.options.fontSize === terminalFontSize && terminal.options.fontFamily === family)) return;
+    terminal.options.fontFamily = family;
     terminal.options.fontSize = terminalFontSize;
     const frame = requestAnimationFrame(() => {
       fitFontRef.current();
       localHighlightRef.current?.refresh();
     });
     return () => cancelAnimationFrame(frame);
-  }, [terminalFontSize]);
+  }, [terminalFontSize, fontFamily]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -698,6 +705,7 @@ export const TerminalPane = memo(function TerminalPane({
         theme: themeRef.current,
         terminalColorScheme: terminalColorSchemeRef.current,
         terminalFontSize: fontSizeRef.current,
+        fontFamily: fontFamilyRef.current,
         localHighlight: localRef.current,
       });
       if (!runtime) {
@@ -708,6 +716,7 @@ export const TerminalPane = memo(function TerminalPane({
       // 动态模块加载期间主题可能已变化，安装完成时再次对齐最新值。
       terminal.options.theme = getTerminalTheme(themeRef.current, terminalColorSchemeRef.current);
       terminal.options.fontSize = fontSizeRef.current;
+      terminal.options.fontFamily = getFontStacks(fontFamilyRef.current).mono;
       terminal.options.minimumContrastRatio = terminalColorSchemeRef.current === "default" ? 1 : 4.5;
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();

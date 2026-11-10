@@ -310,7 +310,7 @@
 .settings-shortcut-key {
   min-width: 142px;
   padding: 0 12px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", Consolas, monospace);
   font-size: 12px;
 }
 
@@ -806,7 +806,7 @@
 .settings-mcp-command-policy-rule input {
   min-width: 0;
   padding: 0 10px;
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", "SFMono-Regular", Consolas, monospace);
 }
 
 .settings-mcp-command-policy-delete {
@@ -899,7 +899,7 @@
   border-radius: 6px;
   background: var(--inset-bg);
   color: var(--text-secondary);
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", "SFMono-Regular", Consolas, monospace);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1250,7 +1250,7 @@
   padding: 2px 5px;
   border-radius: 4px;
   background: var(--control-hover);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", Consolas, monospace);
   font-size: 0.92em;
 }
 
@@ -1521,7 +1521,7 @@
   height: 132px;
   padding: 10px 12px;
   resize: vertical;
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", "SFMono-Regular", Consolas, monospace);
   line-height: 1.45;
 }
 
@@ -1882,7 +1882,7 @@
 .security-details dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", Consolas, monospace);
 }
 
 .security-dialog > p {
@@ -1956,4 +1956,9 @@
 .settings-font-size-input {
   width: 100px;
   flex-shrink: 0;
+}
+
+.settings-font-select {
+  width: 280px;
+  max-width: 100%;
 }

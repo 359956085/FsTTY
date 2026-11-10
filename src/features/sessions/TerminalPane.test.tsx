@@ -7,6 +7,7 @@ import type {
   PreservedTerminalAttachment, Session, ShortcutSettings, TerminalEvent, TerminalResumeEvent,
 } from "../../shared/api/types";
 import { TerminalPane } from "./TerminalPane";
+import { getFontStacks } from "../../shared/fonts";
 import i18n from "../../shared/i18n";
 import {
   enterLightweightMode, hasPreservedTerminal, initializeLightweightMode,
@@ -43,7 +44,7 @@ const runtimeMocks = vi.hoisted(() => ({
   keys: vi.fn(),
   getTheme: vi.fn((theme: string, colorScheme: string) => ({ name: theme, colorScheme })),
   install: vi.fn(),
-  options: { theme: undefined as unknown, minimumContrastRatio: 1, fontSize: 13 },
+  options: { theme: undefined as unknown, minimumContrastRatio: 1, fontSize: 13, fontFamily: "" },
   oscHandlers: new Map<number, (data: string) => boolean>(),
   registerOscHandler: vi.fn(
     (identifier: number, handler: (data: string) => boolean) => {
@@ -246,9 +247,10 @@ describe("终端面板连接", () => {
       channel.onmessage({ kind: "ready", connectionId: attachment.connection.connectionId, truncated: false });
       return attachment;
     });
-    const { onConnected, onStateChange, onDirectoryChange } = renderPreservedTerminal({ terminalFontSize: 19 });
+    const { onConnected, onStateChange, onDirectoryChange } = renderPreservedTerminal({ terminalFontSize: 19, fontFamily: "jetBrainsMono" });
     await waitFor(() => expect(hasPreservedTerminal(attachment.runtimeId)).toBe(false));
     expect(runtimeMocks.options.fontSize).toBe(19);
+    expect(runtimeMocks.options.fontFamily).toBe(getFontStacks("jetBrainsMono").mono);
     expect(runtimeMocks.resize).toHaveBeenCalledWith(120, 40);
     expect(runtimeMocks.resize.mock.invocationCallOrder[0]).toBeLessThan(
       runtimeMocks.write.mock.invocationCallOrder[0]!,
@@ -413,6 +415,12 @@ describe("终端面板连接", () => {
     expect(runtimeMocks.options.fontSize).toBe(8);
     rerender(<TerminalPane {...commonProps} theme="dark" terminalFontSize={8} />);
     expect(runtimeMocks.options.fontSize).toBe(8);
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalFontSize={8} fontFamily="jetBrainsMono" />);
+    expect(runtimeMocks.options.fontFamily).toBe(getFontStacks("jetBrainsMono").mono);
+    rerender(<TerminalPane {...commonProps} active={false} theme="dark" terminalFontSize={8} fontFamily="consolas" />);
+    expect(runtimeMocks.options.fontFamily).toBe(getFontStacks("consolas").mono);
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalFontSize={8} fontFamily="consolas" />);
+    expect(runtimeMocks.options.fontFamily).toBe(getFontStacks("consolas").mono);
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.dispose).not.toHaveBeenCalled();
     expect(apiMocks.connectSession).not.toHaveBeenCalled();

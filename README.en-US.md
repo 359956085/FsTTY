@@ -175,7 +175,7 @@ The NSIS installer supports Simplified Chinese and English and follows the Windo
 
 ## Local Development
 
-Requirements: Windows, Node.js 20+, Rust 1.97.0, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/). The repository's `rust-toolchain.toml` pins local and CI builds with rustfmt and Clippy; toolchain upgrades are verified separately.
+Requirements: Windows, Node.js 24 (matching CI), Rust 1.97.0, and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/). The repository's `rust-toolchain.toml` pins local and CI builds with rustfmt and Clippy; toolchain upgrades are verified separately.
 
 ```bash
 npm ci

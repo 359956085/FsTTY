@@ -33,7 +33,7 @@ function appSettings(shortcuts = DEFAULT_SHORTCUTS): AppSettings {
     language: "zh-CN",
     theme: "system",
     terminalColorScheme: "default",
-    terminalFontSize: 13,
+    terminalFontSize: 13, fontFamily: "default",
     mcpEnabled: false,
     mcpGroupPermissions: [],
     mcpHttpEnabled: false,

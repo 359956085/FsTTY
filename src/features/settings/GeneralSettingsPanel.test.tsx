@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings } from "../../shared/api/types";
 import { DEFAULT_SHORTCUTS } from "../../shared/shortcuts";
@@ -25,7 +25,7 @@ const settings: AppSettings = {
   language: "zh-CN",
   theme: "system",
   terminalColorScheme: "default",
-  terminalFontSize: 13,
+  terminalFontSize: 13, fontFamily: "default",
   mcpEnabled: false,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,
@@ -39,6 +39,7 @@ const settings: AppSettings = {
 
 describe("常规设置分组顺序", () => {
   it("凭据管理仅出现一次，位于历史命令下方、日志上方", () => {
+    const changeFont = vi.fn();
     render(<GeneralSettingsPanel
       activeTooltipKey={null}
       logDirectoryError={null}
@@ -65,6 +66,7 @@ describe("常规设置分组顺序", () => {
       savingLogSettings={false}
       savingUpdateSettings={false}
       settings={settings}
+      onFontFamilyChange={changeFont}
     />);
     const history = screen.getByRole("heading", { name: "历史命令" }).closest("section");
     const credentials = screen.getByRole("heading", { name: "security.managementTitle" }).closest("section");
@@ -76,6 +78,14 @@ describe("常规设置分组顺序", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect((screen.getByRole("switch", { name: "settings.localHighlight" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText("settings.localHighlightHint")).toBeTruthy();
+    const font = screen.getByRole("combobox", { name: "settings.font" });
+    expect(screen.getByText("settings.fontHint")).toBeTruthy();
+    font.focus();
+    fireEvent.click(font);
+    fireEvent.keyDown(font, { key: "ArrowDown" });
+    fireEvent.keyDown(font, { key: "Enter" });
+    expect(changeFont).toHaveBeenCalledWith("jetBrainsMono");
+    expect(document.activeElement).toBe(font);
     const proxy = screen.getByRole("textbox", { name: "settings.proxyAddress" });
     const basic = screen.getByRole("heading", { name: "settings.generalSettings" }).closest("section");
     const group = screen.getByRole("heading", { name: "settings.proxyTitle" }).closest("section");

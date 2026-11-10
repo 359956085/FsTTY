@@ -1,4 +1,4 @@
-# 终端文字配色
+# 字体与终端配色
 
 在「设置 → 常规 → 终端文字配色」可以选择跟随应用主题，或使用 10 套独立配色：Ayu Mirage、Catppuccin Mocha、Dracula、Everforest Dark、Gruvbox Dark、Kanagawa Wave、Nord、One Half Dark、Rosé Pine、Solarized。
 
@@ -10,9 +10,23 @@
 
 旧设置缺少 `terminalColorScheme` 字段时，默认跟随应用主题。
 
+## 字体
+
+在「设置 → 常规 → 字体」选择应用的全局字体。选项包括默认、JetBrains Mono（内置）、Cascadia Mono、Cascadia Code、Consolas、Courier New、Lucida Console、Fira Code、Source Code Pro。除内置字体外，需先在 Windows 中安装；没有安装的字体及缺失字形由原有字体链回退。
+
+选择应用于终端列表、标签、设置、应用内弹窗、代码文本及所有 SSH／本地终端。Windows 原生安全确认窗口和系统 UAC 继续使用系统字体。「默认」保留原有界面字体及各代码区域、终端各自的等宽回退链。
+
+JetBrains Mono 使用官方 v2.304 的 Regular、Bold、Italic、BoldItalic 四款 WOFF2，共 380,768 字节（约 371.84KiB），不安装到系统，也不通过 CDN 加载。内置资源使用独立 CSS 字体名称，与本机同名字体隔离。来源、SHA-256、大小及版权记录见 [字体资源说明](../src/assets/fonts/jetbrains-mono/README.md) 和 [OFL 许可证](../src/assets/fonts/jetbrains-mono/OFL.txt)。字体资源大小不等同于安装包实际增量。
+
+字体选择即时应用并独立保存。内置字体加载期间使用默认字体，加载失败时保留选择并提示，可切换到其他字体后重新选择，或重启应用重试。保存失败则恢复最后成功保存的选择。更换字体重新适配现有终端尺寸，不重建连接或进程；后台标签和轻量恢复沿用最新选择。
+
+旧设置缺少 `fontFamily` 时使用 `default`。该设置只接受预设标识，不接受任意 CSS 或字体路径。
+
 ## 终端字体大小
 
 在「设置 → 常规 → 终端字体大小」输入 8～32 的整数（px），按 Enter 或移出输入框后应用，默认 13px。鼠标位于终端内容区域时，按住 Ctrl 向上滚轮增大字号，向下减小。高分辨率滚轮按累计滚动量换算，普通滚动保持原行为。
+
+字号仅作用于终端，不改变应用界面字号；字体名称选择与字号设置分别保存。
 
 字号由所有 SSH、本地终端标签共用，即时更新并独立保存；重启后保留。Ctrl＋滚轮停止 300ms 后合并保存，保存失败时提示并恢复最近成功保存的字号。旧设置缺少 `terminalFontSize` 时使用 13px。
 

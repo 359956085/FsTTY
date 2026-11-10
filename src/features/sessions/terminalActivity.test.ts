@@ -1,13 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import { syncTerminalActivity, type TerminalActivityController } from "./terminalActivity";
 
 function activity(): TerminalActivityController & {
-  start: ReturnType<typeof vi.fn>;
-  stop: ReturnType<typeof vi.fn>;
+  start: Mock<() => void>;
+  stop: Mock<() => void>;
 } {
   return {
-    start: vi.fn(),
-    stop: vi.fn(),
+    start: vi.fn<() => void>(),
+    stop: vi.fn<() => void>(),
   };
 }
 

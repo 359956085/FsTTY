@@ -1,8 +1,8 @@
 use crate::local_agent_setup::{LocalAgentHttpConfig, LocalAgentTransport};
 use crate::mcp_runtime::McpStdioLaunchSpec;
 use crate::models::{
-    AppError, AppSettings, Language, McpCommandPolicy, McpGroupPermission, ShortcutSettings,
-    TerminalColorScheme, ThemePreference, UpdateSourcePreference,
+    AppError, AppSettings, FontFamilyPreference, Language, McpCommandPolicy, McpGroupPermission,
+    ShortcutSettings, TerminalColorScheme, ThemePreference, UpdateSourcePreference,
 };
 use crate::services::AppState;
 use serde::Serialize;
@@ -91,6 +91,20 @@ pub fn set_terminal_color_scheme(
         .lock()
         .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
     let settings = service.set_terminal_color_scheme(color_scheme)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
+}
+
+#[tauri::command]
+pub fn set_font_family(
+    state: State<'_, AppState>,
+    font_family: FontFamilyPreference,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    let settings = service.set_font_family(font_family)?;
     drop(service);
     hydrate_mcp_permissions(&state, settings)
 }

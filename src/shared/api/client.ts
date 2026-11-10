@@ -33,6 +33,7 @@ import type {
   ShortcutSettings,
   TerminalEvent,
   TerminalColorScheme,
+  FontFamilyPreference,
   TerminalResumeEvent,
   PreservedTerminalAttachment,
   StartTransferJobRequest,
@@ -313,6 +314,9 @@ export const api = {
   },
   setTerminalColorScheme(colorScheme: TerminalColorScheme) {
     return invoke<AppSettings>("set_terminal_color_scheme", { colorScheme });
+  },
+  setFontFamily(fontFamily: FontFamilyPreference) {
+    return invoke<AppSettings>("set_font_family", { fontFamily });
   },
   setTerminalFontSize(fontSize: number) {
     return invoke<AppSettings>("set_terminal_font_size", { fontSize });

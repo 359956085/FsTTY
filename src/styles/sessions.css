@@ -383,7 +383,7 @@
 
 .command-history-command {
   overflow: hidden;
-  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", "JetBrains Mono", Consolas, monospace);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -986,7 +986,7 @@
 
 .file-operation-body code {
   overflow-wrap: anywhere;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--app-mono-font-family, "Cascadia Mono", Consolas, monospace);
 }
 
 .file-operation-dialog .dialog-actions {

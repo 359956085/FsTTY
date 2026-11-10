@@ -34,9 +34,9 @@ pub use session::{
     SessionProfile, StoredSession, UpdateSessionPayload,
 };
 pub use settings::{
-    AppSettings, Language, McpCommandMatchType, McpCommandPolicy, McpCommandPolicyMode,
-    McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings, TerminalColorScheme,
-    ThemePreference, UpdateSourcePreference,
+    AppSettings, FontFamilyPreference, Language, McpCommandMatchType, McpCommandPolicy,
+    McpCommandPolicyMode, McpCommandRule, McpGroupPermission, ShortcutBinding, ShortcutSettings,
+    TerminalColorScheme, ThemePreference, UpdateSourcePreference,
 };
 pub use transfer_job::{
     StartTransferJobRequest, TransferConflictDecision, TransferJobDirection, TransferJobEvent,

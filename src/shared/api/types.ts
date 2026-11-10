@@ -12,6 +12,7 @@ export type TerminalColorScheme =
   | "oneHalf"
   | "rosePine"
   | "solarized";
+export type FontFamilyPreference = "default" | "jetBrainsMono" | "cascadiaMono" | "cascadiaCode" | "consolas" | "courierNew" | "lucidaConsole" | "firaCode" | "sourceCodePro";
 export type UpdateSourcePreference = "auto" | "github" | "mirror";
 export type ClipboardContentKind = "empty" | "text" | "nonText";
 
@@ -20,6 +21,7 @@ export interface AppSettings {
   theme: ThemePreference;
   terminalColorScheme: TerminalColorScheme;
   terminalFontSize: number;
+  fontFamily: FontFamilyPreference;
   localTerminalHighlightEnabled?: boolean;
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;

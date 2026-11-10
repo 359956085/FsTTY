@@ -41,6 +41,7 @@ interface WorkspaceProps {
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
   terminalFontSize?: number;
+  fontFamily?: import("../../shared/api/types").FontFamilyPreference;
   onTerminalFontSizeAdjust?: (steps: number) => void;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   visible: boolean;
@@ -114,6 +115,7 @@ export function Workspace({
   theme,
   terminalColorScheme,
   terminalFontSize,
+  fontFamily,
   onTerminalFontSizeAdjust,
   runtimes,
   visible,
@@ -377,6 +379,7 @@ export function Workspace({
                     theme={theme}
                     terminalColorScheme={terminalColorScheme}
                     terminalFontSize={terminalFontSize}
+                    fontFamily={fontFamily}
                     onTerminalFontSizeAdjust={onTerminalFontSizeAdjust}
                     visible={visible}
                   />

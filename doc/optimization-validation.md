@@ -930,3 +930,48 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 首轮受限运行因 Git Bash 无法创建原生对象而失败；后续遇到系统临时目录清理权限、原生测试路径过长，以及一次既有更新日志懒加载焦点测试超时。焦点专项重跑通过；最终使用工作区内独立短路径临时目录完成完整校验，未放宽规则或跳过测试，临时目录在验收后清理。
 - 待人工验收：Windows WebView2 中真实 Ctrl＋滚轮／触控板、100%／125%／150% 原生 DPI，以及真实 SSH／本地进程下的选区、浏览历史位置、PTY 尺寸变化和轻量恢复。浏览器演示不替代这些原生检查。
 - 新增文件：`src/shared/terminalFontSize.ts`、`src/features/settings/useTerminalFontSize.ts`、`src/features/settings/useTerminalFontSize.test.tsx`、`src/features/settings/TerminalFontSizeSetting.tsx`、`src/features/settings/TerminalFontSizeSetting.test.tsx`、`src/features/sessions/terminalFontWheel.ts`、`src/features/sessions/terminalFontWheel.test.ts`。当前版本保持 2.0.2；未构建安装包，未提交、推送或发布。
+
+## 2026-11-10 · 全局字体与内置 JetBrains Mono
+
+- 常规设置在终端字号上方新增“字体 / Font”，提供默认及八种预设。指定字体统一应用到 WebView 界面、代码文本和现有 xterm；默认保留原有界面和各代码区域的回退链。终端字号及 Ctrl＋滚轮继续只影响终端。原生安全确认窗口和 UAC 不参与切换。
+- `fontFamily` 枚举缺失时默认 `default`，独立 IPC 校验预设并原子保存。字体请求串行处理，以最新选择为准；失败恢复最近成功值。应用只合并字体或字号各自保存的字段，主题、配色等设置的旧完整响应不能覆盖它们。关闭及进入轻量模式前刷新待保存字体。
+- 内置官方 JetBrains Mono v2.304，内部名称 `FsTTY JetBrains Mono`，不依赖本机同名字体。四种字形全部加载成功后再应用和测量；加载失败使用默认字体并提示，保留选择以便下次启动重试，迟到结果不会覆盖新选择。资源只来自本地构建产物，不安装系统字体、不引入连字渲染。
+
+| 官方资源 | 实测字节数 |
+| --- | ---: |
+| Regular WOFF2 | 92,164 |
+| Bold WOFF2 | 94,588 |
+| Italic WOFF2 | 95,864 |
+| BoldItalic WOFF2 | 98,152 |
+| 四份字体合计 | 380,768（371.84 KiB） |
+| OFL.txt | 4,399 |
+
+- 每份资源的固定来源、SHA-256 和大小记录在 `src/assets/fonts/jetbrains-mono/manifest.json`。版权、SIL OFL 1.1 及来源说明通过 Tauri 资源映射保留；WOFF2 由 Vite 打包。`.gitattributes` 保留上游字体和许可证的原始字节，避免 Windows 换行转换破坏哈希。
+- 最终 `npm run verify:all` 退出 0：106 个前端／脚本文件、815 项测试通过；Rust 456 项通过，保留 9 项需独立环境的忽略测试。版本一致性、TypeScript、ESLint、生产前端构建、Rust 格式及严格 Clippy 全部通过。专项覆盖预设、旧配置、持久化失败、快速切换、加载失败／超时／迟到、四种字形完整性和哈希，以及字体／字号／主题并发保存。终端实例、后台激活及轻量恢复沿用原对象。
+- 完整检查先遇到既有临时 Git 目录删除的 Windows EPERM 和既有更新日志懒加载测试超时；专项重跑通过。最终在独立短路径临时目录运行，Vitest 的 forks／threads 最小和最大 worker 均设为 1，完整执行所有测试，未修改检查规则或增加跳过项。临时目录及演示文件在验收后清理。
+- 隔离 Chrome 页面使用实际 App／设置／真实 xterm，API 使用演示响应，未改真实应用设置或连接服务器。检查中文亮色、英文暗色、鼠标及键盘选字体、四种字形和中文回退、标签切换及刷新恢复。选择本机未安装的 Fira Code 时正常回退；内置字体在未安装系统 JetBrains Mono 的环境正常显示。终端 22px 时界面保持 14px。1180×720 最小窗口的英文内置字体名称原先略有省略，选择框调宽至 280px 后复验完整显示。浏览器视口已恢复，演示服务已停止。
+- 待人工验收：Windows WebView2、100%／125%／150% 原生 DPI、真实 Ctrl＋滚轮／触控板／输入法、真实 SSH 和本地进程中的选区、浏览位置、重排及轻量恢复；本轮浏览器演示和自动测试不替代这些检查。
+- 新增源码／测试：`src/shared/fonts.ts`、`src/shared/fonts.test.ts`、`src/shared/useFontFamily.ts`、`src/shared/useFontFamily.test.tsx`、`src/features/settings/useFontFamilyPreference.ts`、`src/features/settings/useFontFamilyPreference.test.tsx`、`src/App.fontFamily.test.tsx`、`src/styles/fonts.css`、`scripts/bundled-fonts.test.mjs`、`.gitattributes`。
+- 新增资源：`src/assets/fonts/jetbrains-mono/` 下四份上述 WOFF2、`OFL.txt`、`README.md` 和 `manifest.json`。使用说明更新于 `doc/terminal-colors.md`。当前版本保持 2.0.2，未构建安装包，未提交、推送或发布；远程 Actions 仍待执行。
+
+## 2026-11-11 · 安全依赖升级
+
+- 保留前述未提交的全局字体修改，应用、Broker、Network、Tauri 和 npm 项目版本继续为 2.0.2。未改变业务接口、数据库结构、发布流程或 SSH 的 RSA 支持。
+
+| 依赖 | 升级前 | 升级后 |
+| --- | --- | --- |
+| rusqlite（应用和 Broker） | 0.37.0 | 0.41.1 |
+| libsqlite3-sys | 0.35.0 | 0.39.1 |
+| Tokio | 1.52.3 | 1.54.1 |
+| Vite | 5.4.21 | 7.3.8 |
+| Vitest | 3.2.7 | 4.1.12 |
+| @vitejs/plugin-react | 4.7.0 | 5.2.0 |
+| typescript-eslint | 8.65.0 | 8.72.2 |
+
+- 修复 SQLite RUSTSEC-2026-0459 和 Tokio RUSTSEC-2026-0386。新版 rusqlite 将 u64 转换移至可选 `fallible_uint` 特性，为 Broker 显式启用，保留原有有界转换、凭据版本号及数据库格式。Vitest 4 的模拟类型增加可构造函数分支，终端活动测试改用显式 `Mock<() => void>`，断言和覆盖不变。
+- npm 间接安全补丁包括 brace-expansion 1.1.21／5.0.12、undici 7.30.2、postcss 8.5.32、nanoid 3.3.20、source-map-js 1.2.2 等。typescript-eslint 最新版仍依赖受影响的 minimatch 10，仅对 `@typescript-eslint/typescript-estree` 限定覆盖 `^11.0.5`，保留 ESLint 使用的 minimatch 3。未执行强制审计修复，也未集中升级无关的 React、i18next、图标或 Tauri 直接依赖。
+- 使用 Node 24.20.0、npm 11.19.0、Rust 1.97.0；双语开发说明推荐与 CI 一致的 Node 24。Vite 显式保留原有 ES2020／Chrome 87／Edge 88／Firefox 78／Safari 14 语法目标，不因默认 baseline 变化提高 WebView 兼容门槛；未迁移到 Vite 8 的 Rolldown 工具链。
+- 最终联网 `npm audit` 和 `npm audit --omit=dev` 均退出 0、零告警。`npm ci --ignore-scripts` 以最终锁文件完成干净安装，随后完整构建和测试通过。与 CI 相同的 cargo-audit 0.22.2 审计退出 0；RustSec 数据库 1,446 条，提交 `28d73fc95e5972af3403225a217def57dcaba3c4`。5 条非阻断提示（proc-macro-error、zbus_names、zvariant、zvariant_derive、glib）继续显示，未增加豁免。
+- 用户明确选择暂留 RUSTSEC-2023-0071 单项豁免。尝试更新 rsa 至 0.10.0，被 russh 0.62.2 的精确 RC 约束拒绝；核查 russh 0.63.3、0.64.1、0.65.1 均仍锁定 rsa 0.10.0-rc.18，未进行无效升级。RSA 正式修复已发布，当前是上游依赖链尚未接纳，不将此项记为已修复。`.cargo/audit.toml` 和发布说明补充版本、原因、复查日期与移除条件，待可用的正式依赖链；未引入私有 SSH 分叉或隐藏其他漏洞。[SQLite 公告](https://rustsec.org/advisories/RUSTSEC-2026-0459.html) · [RSA 公告](https://rustsec.org/advisories/RUSTSEC-2023-0071.html)
+- 最终 `npm run verify:all` 退出 0：106 个前端／脚本文件、815 项测试通过，Rust 456 项通过、9 项原有环境测试保持忽略。版本、类型、严格 Lint、生产前端构建、Rust 格式及严格 Clippy 全部通过；`npm run check:release` 同等入口检查通过，版本保持 2.0.2。使用独立短路径临时目录及 `VITEST_MAX_WORKERS=1`，未放宽检查或新增跳过项。首轮因 rusqlite 可选整数转换特性未启用而编译失败，启用后完整重跑通过。最终测试期间受限工具环境出现命令延迟，使用可正常响应的执行环境读取结果；未将该延迟记作测试失败。
+- 本轮没有新增受版本管理的文件；原有字体资源和测试文件继续保留。依赖变更、限定覆盖和 RSA 豁免说明见 `package.json`、两份 Cargo.toml、锁文件及 `docs/windows-release-ci.md`。临时测试目录已清理；原生安装升级、真实客户端和远程 Actions 未在本轮执行。未构建安装包，未提交、推送或发布。

@@ -6,6 +6,8 @@ import { SessionsPage } from "./features/sessions/SessionsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { UpdateDialog } from "./features/settings/UpdateDialog";
 import { useAppUpdater } from "./features/settings/useAppUpdater";
+import { useFontFamilyPreference } from "./features/settings/useFontFamilyPreference";
+import { useFontFamily } from "./shared/useFontFamily";
 import { useTerminalFontSize } from "./features/settings/useTerminalFontSize";
 import { api } from "./shared/api/client";
 import { resolveApiError } from "./shared/api/errors";
@@ -37,6 +39,7 @@ export function App() {
     theme: readCachedThemePreference(),
     terminalColorScheme: "default",
     terminalFontSize: 13,
+    fontFamily: "default",
     autoUpdate: true,
     updateSource: "auto",
     proxyAddress: "",
@@ -54,9 +57,14 @@ export function App() {
     setSettings((current) => ({ ...current, terminalFontSize: size }));
   }, []));
   const { initialize: initializeFont } = font;
+  const family = useFontFamilyPreference(useCallback((fontFamily) => {
+    setSettings((current) => ({ ...current, fontFamily }));
+  }, []));
+  const { initialize: initializeFamily } = family;
+  const resolvedFont = useFontFamily(family.preference);
   // Other settings responses must not overwrite the independently saved font.
   const applySettings = useCallback((next: AppSettings) => {
-    setSettings((current) => ({ ...next, terminalFontSize: current.terminalFontSize }));
+    setSettings((current) => ({ ...next, terminalFontSize: current.terminalFontSize, fontFamily: current.fontFamily }));
   }, []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -84,6 +92,7 @@ export function App() {
         }
         setSettings(nextSettings);
         initializeFont(nextSettings.terminalFontSize);
+        initializeFamily(nextSettings.fontFamily);
         setSettingsLoaded(true);
         void i18n.changeLanguage(nextSettings.language);
       })
@@ -95,7 +104,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [i18n, initializeFont]);
+  }, [i18n, initializeFont, initializeFamily]);
 
   const windowLabels = {
     minimize: t("nav.minimize"),
@@ -111,7 +120,7 @@ export function App() {
       } else if (action === "maximize") {
         await currentWindow.toggleMaximize();
       } else {
-        await font.flush();
+        await Promise.all([font.flush(), family.flush()]);
         await currentWindow.close();
       }
     } catch (error) {
@@ -140,7 +149,7 @@ export function App() {
     setLightweightDialogOpen(false);
     setLoadError(null);
     try {
-      await font.flush();
+      await Promise.all([font.flush(), family.flush()]);
       await enterLightweightMode(suppressConfirmation);
       setSuppressLightweightConfirmation(suppressConfirmation);
     } catch (error) {
@@ -235,6 +244,8 @@ export function App() {
       </header>
 
       <main className="app-main">
+        {family.error !== null ? <div className="error-banner" role="alert">{t("settings.fontSaveFailed")} {resolveApiError(family.error, t("errors.unknown"))}</div> : null}
+        {resolvedFont.loadFailed ? <div className="error-banner" role="alert">{t("settings.fontLoadFailed")}</div> : null}
         {font.error !== null ? <div className="error-banner" role="alert">{t("settings.terminalFontSizeSaveFailed")} {resolveApiError(font.error, t("errors.unknown"))}</div> : null}
         {loadError ? <div className="error-banner">{loadError}</div> : null}
         <div
@@ -246,6 +257,7 @@ export function App() {
             theme={resolvedTheme}
             terminalColorScheme={settings.terminalColorScheme}
             terminalFontSize={font.fontSize}
+            fontFamily={resolvedFont.effective}
             onTerminalFontSizeAdjust={settingsLoaded ? font.adjust : undefined}
             shortcuts={settings.shortcuts}
             visible={view === "sessions"}
@@ -258,7 +270,9 @@ export function App() {
               setView("sessions");
               settingsButtonRef.current?.focus();
             }}
-            settings={{ ...settings, terminalFontSize: font.fontSize }}
+            settings={{ ...settings, terminalFontSize: font.fontSize, fontFamily: family.preference }}
+            onFontFamilyChange={settingsLoaded ? family.change : undefined}
+            savingFontFamily={family.saving}
             onTerminalFontSizeChange={settingsLoaded ? font.change : undefined}
             savingTerminalFontSize={font.saving}
             updater={updater}

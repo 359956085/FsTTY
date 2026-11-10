@@ -10,6 +10,8 @@ pub struct AppSettings {
     pub terminal_color_scheme: TerminalColorScheme,
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: u8,
+    #[serde(default)]
+    pub font_family: FontFamilyPreference,
     #[serde(default = "default_local_terminal_highlight_enabled")]
     pub local_terminal_highlight_enabled: bool,
     pub auto_update: bool,
@@ -46,6 +48,7 @@ impl std::fmt::Debug for AppSettings {
             .field("theme", &self.theme)
             .field("terminal_color_scheme", &self.terminal_color_scheme)
             .field("terminal_font_size", &self.terminal_font_size)
+            .field("font_family", &self.font_family)
             .field(
                 "local_terminal_highlight_enabled",
                 &self.local_terminal_highlight_enabled,
@@ -79,6 +82,21 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontFamilyPreference {
+    #[default]
+    Default,
+    JetBrainsMono,
+    CascadiaMono,
+    CascadiaCode,
+    Consolas,
+    CourierNew,
+    LucidaConsole,
+    FiraCode,
+    SourceCodePro,
 }
 
 fn default_terminal_font_size() -> u8 {

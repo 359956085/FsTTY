@@ -187,7 +187,7 @@ NSIS 支持简体中文和英文，并跟随 Windows 显示语言。`v1.6.0` 在
 
 ## 本地开发
 
-环境要求：Windows、Node.js 20+、Rust 1.97.0 和 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。仓库的 `rust-toolchain.toml` 固定本地与 CI 工具链，包含 rustfmt 和 Clippy；工具链升级单独验证。
+环境要求：Windows、Node.js 24（与 CI 一致）、Rust 1.97.0 和 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。仓库的 `rust-toolchain.toml` 固定本地与 CI 工具链，包含 rustfmt 和 Clippy；工具链升级单独验证。
 
 ```bash
 npm ci

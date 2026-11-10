@@ -1,7 +1,7 @@
 use crate::mcp_command_policy::normalize_policy;
 use crate::models::{
-    AppError, AppSettings, Language, McpGroupPermission, ShortcutBinding, ShortcutSettings,
-    TerminalColorScheme, ThemePreference, UpdateSourcePreference,
+    AppError, AppSettings, FontFamilyPreference, Language, McpGroupPermission, ShortcutBinding,
+    ShortcutSettings, TerminalColorScheme, ThemePreference, UpdateSourcePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -155,6 +155,15 @@ impl SettingsService {
         validate_terminal_font_size(font_size)?;
         let mut next = self.settings.clone();
         next.terminal_font_size = font_size;
+        self.replace(next)
+    }
+
+    pub fn set_font_family(
+        &mut self,
+        font_family: FontFamilyPreference,
+    ) -> Result<AppSettings, AppError> {
+        let mut next = self.settings.clone();
+        next.font_family = font_family;
         self.replace(next)
     }
 
@@ -322,6 +331,7 @@ fn default_settings() -> AppSettings {
         theme: ThemePreference::System,
         terminal_color_scheme: TerminalColorScheme::Default,
         terminal_font_size: 13,
+        font_family: FontFamilyPreference::Default,
         local_terminal_highlight_enabled: true,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
@@ -1095,6 +1105,7 @@ mod tests {
         assert_eq!(restored.theme, ThemePreference::System);
         assert_eq!(restored.terminal_color_scheme, TerminalColorScheme::Default);
         assert_eq!(restored.terminal_font_size, 13);
+        assert_eq!(restored.font_family, FontFamilyPreference::Default);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -1227,6 +1238,39 @@ mod tests {
     }
 
     #[test]
+    fn font_family_presets_persist_without_modifying_size_or_other_settings() {
+        let directory = test_directory("font-family");
+        let mut service = SettingsService::load(&directory);
+        service.set_terminal_font_size(19).unwrap();
+        service.set_theme(ThemePreference::Dark).unwrap();
+        let original = service.get();
+        for family in [
+            FontFamilyPreference::Default,
+            FontFamilyPreference::JetBrainsMono,
+            FontFamilyPreference::CascadiaMono,
+            FontFamilyPreference::CascadiaCode,
+            FontFamilyPreference::Consolas,
+            FontFamilyPreference::CourierNew,
+            FontFamilyPreference::LucidaConsole,
+            FontFamilyPreference::FiraCode,
+            FontFamilyPreference::SourceCodePro,
+        ] {
+            let mut expected = original.clone();
+            expected.font_family = family;
+            assert_eq!(service.set_font_family(family).unwrap(), expected);
+            assert_eq!(SettingsService::load(&directory).get(), expected);
+        }
+        let mut wire = serde_json::to_value(service.get()).unwrap();
+        wire["fontFamily"] = serde_json::json!("unsupported");
+        assert!(serde_json::from_value::<AppSettings>(wire).is_err());
+        assert_eq!(
+            serde_json::to_value(FontFamilyPreference::JetBrainsMono).unwrap(),
+            serde_json::json!("jetBrainsMono")
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn terminal_font_size_validates_and_persists_without_changing_other_settings() {
         let directory = test_directory("terminal-font-size");
         let mut service = SettingsService::load(&directory);
@@ -1266,6 +1310,9 @@ mod tests {
 
         assert!(service.set_language(Language::EnUs).is_err());
         assert!(service.set_terminal_font_size(16).is_err());
+        assert!(service
+            .set_font_family(FontFamilyPreference::JetBrainsMono)
+            .is_err());
         assert_eq!(service.get(), default_settings());
         assert!(service.update_log_settings(true).is_err());
         assert!(!service.get().record_mcp_tool_inputs);
