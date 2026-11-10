@@ -1953,3 +1953,7 @@
     gap: 12px;
   }
 }
+.settings-font-size-input {
+  width: 100px;
+  flex-shrink: 0;
+}

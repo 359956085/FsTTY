@@ -151,6 +151,13 @@ impl SettingsService {
         self.replace(next)
     }
 
+    pub fn set_terminal_font_size(&mut self, font_size: u8) -> Result<AppSettings, AppError> {
+        validate_terminal_font_size(font_size)?;
+        let mut next = self.settings.clone();
+        next.terminal_font_size = font_size;
+        self.replace(next)
+    }
+
     pub fn update(
         &mut self,
         auto_update: bool,
@@ -314,6 +321,7 @@ fn default_settings() -> AppSettings {
         language: Language::ZhCn,
         theme: ThemePreference::System,
         terminal_color_scheme: TerminalColorScheme::Default,
+        terminal_font_size: 13,
         local_terminal_highlight_enabled: true,
         auto_update: true,
         update_source: UpdateSourcePreference::Auto,
@@ -328,6 +336,15 @@ fn default_settings() -> AppSettings {
         mcp_group_permissions: Vec::new(),
         shortcuts: ShortcutSettings::default(),
     }
+}
+
+fn validate_terminal_font_size(font_size: u8) -> Result<(), AppError> {
+    if !(8..=32).contains(&font_size) {
+        return Err(AppError::Validation(
+            "终端字号必须为 8～32 的整数".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_shortcut_settings(shortcuts: &ShortcutSettings) -> Result<(), AppError> {
@@ -495,6 +512,7 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
         .shortcuts
         .preserve_existing_bindings(missing_shortcuts);
     validate_shortcut_settings(&store.settings.shortcuts)?;
+    validate_terminal_font_size(store.settings.terminal_font_size)?;
     store.settings.mcp_group_permissions =
         validate_mcp_permissions(store.settings.mcp_group_permissions)?;
     Ok(Some(store))
@@ -1076,6 +1094,7 @@ mod tests {
         assert_eq!(restored.update_source, UpdateSourcePreference::Auto);
         assert_eq!(restored.theme, ThemePreference::System);
         assert_eq!(restored.terminal_color_scheme, TerminalColorScheme::Default);
+        assert_eq!(restored.terminal_font_size, 13);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -1208,6 +1227,36 @@ mod tests {
     }
 
     #[test]
+    fn terminal_font_size_validates_and_persists_without_changing_other_settings() {
+        let directory = test_directory("terminal-font-size");
+        let mut service = SettingsService::load(&directory);
+        let original = service.get();
+        for size in [8, 13, 32] {
+            let mut expected = original.clone();
+            expected.terminal_font_size = size;
+            assert_eq!(service.set_terminal_font_size(size).unwrap(), expected);
+            assert_eq!(SettingsService::load(&directory).get(), expected);
+        }
+        let saved = service.get();
+        for size in [0, 7, 33, 255] {
+            assert!(service.set_terminal_font_size(size).is_err());
+            assert_eq!(service.get(), saved);
+        }
+        assert_eq!(SettingsService::load(&directory).get(), saved);
+        // A malformed new field must not silently become an unsafe font size.
+        for value in [
+            serde_json::json!(12.5),
+            serde_json::json!(-1),
+            serde_json::json!("16"),
+        ] {
+            let mut wire = serde_json::to_value(&saved).unwrap();
+            wire["terminalFontSize"] = value;
+            assert!(serde_json::from_value::<AppSettings>(wire).is_err());
+        }
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn rolls_back_memory_when_persistence_fails() {
         let directory = test_directory("settings-rollback");
         let mut service = SettingsService::load(&directory);
@@ -1216,6 +1265,7 @@ mod tests {
         service.temp_path = blocked_path;
 
         assert!(service.set_language(Language::EnUs).is_err());
+        assert!(service.set_terminal_font_size(16).is_err());
         assert_eq!(service.get(), default_settings());
         assert!(service.update_log_settings(true).is_err());
         assert!(!service.get().record_mcp_tool_inputs);

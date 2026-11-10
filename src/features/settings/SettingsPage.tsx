@@ -29,11 +29,13 @@ interface SettingsPageProps {
   onChange: (settings: AppSettings) => void;
   settings: AppSettings;
   updater: AppUpdaterController;
+  onTerminalFontSizeChange?: (size: number) => void;
+  savingTerminalFontSize?: boolean;
 }
 
 type SettingsSection = "about" | "general" | "mcp";
 
-export function SettingsPage({ settings, onChange, updater, onBack, sidebarCollapsed }: SettingsPageProps) {
+export function SettingsPage({ settings, onChange, updater, onBack, sidebarCollapsed, onTerminalFontSizeChange, savingTerminalFontSize }: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const configurationBusyRef = useRef(false);
@@ -235,6 +237,8 @@ export function SettingsPage({ settings, onChange, updater, onBack, sidebarColla
             savingLanguage={savingLanguage}
             savingTheme={savingTheme}
             savingTerminalColorScheme={savingTerminalColorScheme}
+            onTerminalFontSizeChange={onTerminalFontSizeChange}
+            savingTerminalFontSize={savingTerminalFontSize}
             savingLogSettings={savingLogSettings}
             savingUpdateSettings={savingUpdateSettings}
             settings={settings}

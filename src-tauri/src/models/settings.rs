@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub theme: ThemePreference,
     #[serde(default)]
     pub terminal_color_scheme: TerminalColorScheme,
+    #[serde(default = "default_terminal_font_size")]
+    pub terminal_font_size: u8,
     #[serde(default = "default_local_terminal_highlight_enabled")]
     pub local_terminal_highlight_enabled: bool,
     pub auto_update: bool,
@@ -43,6 +45,7 @@ impl std::fmt::Debug for AppSettings {
             .field("language", &self.language)
             .field("theme", &self.theme)
             .field("terminal_color_scheme", &self.terminal_color_scheme)
+            .field("terminal_font_size", &self.terminal_font_size)
             .field(
                 "local_terminal_highlight_enabled",
                 &self.local_terminal_highlight_enabled,
@@ -76,6 +79,10 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+}
+
+fn default_terminal_font_size() -> u8 {
+    13
 }
 
 fn default_local_terminal_highlight_enabled() -> bool {

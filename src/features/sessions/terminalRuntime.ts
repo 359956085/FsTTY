@@ -6,6 +6,7 @@ import type { TerminalColorScheme } from "../../shared/api/types";
 import { TERMINAL_ANSI_PALETTES } from "../../shared/terminalColors";
 import { StrictClipboardBase64, TauriClipboardProvider } from "./terminalClipboard";
 import { installTerminalMouseSelectionCopy } from "./terminalMouseSelection";
+import { DEFAULT_TERMINAL_FONT_SIZE } from "../../shared/terminalFontSize";
 
 interface InstallTerminalRuntimeOptions {
   container: HTMLElement;
@@ -16,6 +17,7 @@ interface InstallTerminalRuntimeOptions {
   onClipboardWriteError: () => void;
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
+  terminalFontSize?: number;
   localHighlight?: boolean;
 }
 
@@ -83,6 +85,7 @@ export async function installTerminalRuntime({
   onClipboardWriteError,
   theme,
   terminalColorScheme,
+  terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE,
   localHighlight = false,
 }: InstallTerminalRuntimeOptions): Promise<InstalledTerminalRuntime | null> {
   const [{ Terminal }, { FitAddon }, { ClipboardAddon }, { SerializeAddon }] =
@@ -101,7 +104,7 @@ export async function installTerminalRuntime({
     convertEol: false,
     cursorBlink: true,
     fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
-    fontSize: 13,
+    fontSize: terminalFontSize,
     lineHeight: 1.38,
     // xterm 6 使用独立滚动条，必须通过 overviewRuler 覆盖默认的 14px 宽度。
     overviewRuler: { width: TERMINAL_SCROLLBAR_SIZE },

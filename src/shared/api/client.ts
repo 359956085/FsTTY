@@ -314,6 +314,9 @@ export const api = {
   setTerminalColorScheme(colorScheme: TerminalColorScheme) {
     return invoke<AppSettings>("set_terminal_color_scheme", { colorScheme });
   },
+  setTerminalFontSize(fontSize: number) {
+    return invoke<AppSettings>("set_terminal_font_size", { fontSize });
+  },
   setLocalTerminalHighlightEnabled(enabled: boolean) {
     return invoke<AppSettings>("set_local_terminal_highlight_enabled", { enabled });
   },

@@ -23,7 +23,7 @@ vi.mock("./useAutostartSettings", () => ({ useAutostartSettings: () => ({
 }) }));
 
 const settings: AppSettings = {
-  language: "zh-CN", theme: "system", terminalColorScheme: "default", autoUpdate: true, updateSource: "auto", proxyAddress: "", proxyEnabled: false,
+  language: "zh-CN", theme: "system", terminalColorScheme: "default", terminalFontSize: 13, autoUpdate: true, updateSource: "auto", proxyAddress: "", proxyEnabled: false,
   allowRemoteClipboardWrite: true, recordMcpToolInputs: false, ignoredUpdateVersion: null,
   mcpEnabled: false, mcpHttpEnabled: false, mcpHttpPort: 37653, mcpGroupPermissions: [],
   shortcuts: DEFAULT_SHORTCUTS,

@@ -40,8 +40,8 @@ pub use settings_commands::{
     get_mcp_stdio_client_config, import_mcp_command_policy, inspect_local_agent_setup,
     open_log_directory, open_project_link, rotate_mcp_http_token, set_ignored_update_version,
     set_language, set_local_terminal_highlight_enabled, set_proxy_address, set_proxy_settings,
-    set_terminal_color_scheme, set_theme, update_app_settings, update_log_settings,
-    update_mcp_settings, update_shortcut_settings,
+    set_terminal_color_scheme, set_terminal_font_size, set_theme, update_app_settings,
+    update_log_settings, update_mcp_settings, update_shortcut_settings,
 };
 pub use update_commands::{check_app_update, close_app_update, install_app_update};
 

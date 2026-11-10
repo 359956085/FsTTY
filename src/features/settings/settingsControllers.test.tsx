@@ -57,6 +57,7 @@ const settings: AppSettings = {
   language: "zh-CN",
   theme: "system",
   terminalColorScheme: "default",
+  terminalFontSize: 13,
   mcpEnabled: true,
   mcpGroupPermissions: [],
   mcpHttpEnabled: false,

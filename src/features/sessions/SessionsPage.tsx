@@ -26,6 +26,8 @@ interface SessionsPageProps {
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
+  terminalFontSize?: number;
+  onTerminalFontSizeAdjust?: (steps: number) => void;
   visible: boolean;
 }
 
@@ -35,6 +37,8 @@ export function SessionsPage({
   shortcuts,
   theme,
   terminalColorScheme,
+  terminalFontSize,
+  onTerminalFontSizeAdjust,
   visible,
 }: SessionsPageProps) {
   const { t } = useTranslation();
@@ -251,6 +255,8 @@ export function SessionsPage({
         shortcuts={shortcuts}
         theme={theme}
         terminalColorScheme={terminalColorScheme}
+        terminalFontSize={terminalFontSize}
+        onTerminalFontSizeAdjust={onTerminalFontSizeAdjust}
         runtimes={connections.runtimes}
         visible={visible}
       />

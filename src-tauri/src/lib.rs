@@ -34,10 +34,11 @@ use commands::{
     resolve_transfer_job_conflict, rotate_mcp_http_token, save_local_session,
     set_autostart_enabled, set_ignored_update_version, set_language,
     set_local_terminal_highlight_enabled, set_proxy_address, set_proxy_settings,
-    set_session_credential, set_terminal_color_scheme, set_theme, start_local_terminal,
-    start_transfer_job, stop_local_terminal, trust_host_key, update_app_settings,
-    update_command_history_deduplication, update_log_settings, update_mcp_settings, update_session,
-    update_shortcut_settings, upload_file, write_local_terminal, write_terminal,
+    set_session_credential, set_terminal_color_scheme, set_terminal_font_size, set_theme,
+    start_local_terminal, start_transfer_job, stop_local_terminal, trust_host_key,
+    update_app_settings, update_command_history_deduplication, update_log_settings,
+    update_mcp_settings, update_session, update_shortcut_settings, upload_file,
+    write_local_terminal, write_terminal,
 };
 use gui_lifecycle::{create_main_window, request_app_exit, request_main_window, GuiLifecycle};
 use gui_startup::GuiStartupGuard;
@@ -333,6 +334,7 @@ pub fn run() {
             set_language,
             set_theme,
             set_terminal_color_scheme,
+            set_terminal_font_size,
             set_local_terminal_highlight_enabled,
             set_proxy_address,
             set_proxy_settings,

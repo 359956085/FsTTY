@@ -19,6 +19,7 @@ export interface AppSettings {
   language: Language;
   theme: ThemePreference;
   terminalColorScheme: TerminalColorScheme;
+  terminalFontSize: number;
   localTerminalHighlightEnabled?: boolean;
   autoUpdate: boolean;
   updateSource: UpdateSourcePreference;

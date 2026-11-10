@@ -919,3 +919,14 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - `npm run check:release` 通过。应用、Broker、Network、Tauri、npm、锁文件和双语 README 徽章均为 2.0.2。发布脚本识别为正式版，双语发布说明校验通过。
 - `npm run verify:all` 最终退出 0。前端及脚本 792 项、Rust 454 项通过，9 项需独立环境的测试保持忽略。首次运行时安装检查读到本机残留的 2.0.1 调试程序。重新构建并确认 Windows 产品版本为 2.0.2 后，全量重跑通过。
 - Windows 签名安装包和在线更新清单待 `v2.0.2` 标签触发发布流水线后验证。
+
+## 2026-11-10 · 终端字号设置与 Ctrl＋滚轮
+
+- 常规设置新增终端字体大小：8～32px 整数，默认 13px，Enter／失焦提交。SSH、CMD、PowerShell、Git Bash 共用全局字号。旧设置缺失字段时默认 13，后端校验范围并沿用原子保存与失败回滚。
+- Ctrl＋滚轮仅在活动、可见终端内容区接管事件；停止 300ms 后合并保存，进行中的写入串行处理，旧响应不覆盖最新字号或其他设置。设置导航不取消保存，关闭按钮及进入轻量模式前刷新待保存字号。调整现有 xterm 实例，后台标签激活和轻量恢复继续使用最新值。
+- 最终 `npm run verify:all` 退出 0：101 个前端／脚本测试文件、802 项测试通过；Rust 455 项通过，9 项需独立环境的测试保持忽略。版本一致性、类型、严格 Lint、前端构建、Rust 格式及严格 Clippy 均通过。最终补充轻量恢复字号断言后，4 个专项文件共 45 项测试再次通过。
+- 自动覆盖旧配置默认值、非法整数及范围、持久化失败回滚、滚轮方向和单位、高分辨率增量、上下限、普通滚动、拦截远端鼠标事件、监听清理、300ms 合并、异步写入顺序、迟到失败与最新请求，以及终端实例保留和轻量恢复。未增加 CSS 源码字符串断言。
+- 隔离 Chrome 页面使用实际 App／设置／终端组件及真实 xterm 渲染，后端替换为演示响应，未连接实际服务器。检查中英文、亮暗主题、8／22／32px、四种终端同步、切换与刷新恢复；已有中文及 ANSI 彩色输出、光标继续显示。1180×720 的应用最小窗口下字号控件和说明完整可见。浏览器视口覆盖已恢复，临时演示服务已停止。
+- 首轮受限运行因 Git Bash 无法创建原生对象而失败；后续遇到系统临时目录清理权限、原生测试路径过长，以及一次既有更新日志懒加载焦点测试超时。焦点专项重跑通过；最终使用工作区内独立短路径临时目录完成完整校验，未放宽规则或跳过测试，临时目录在验收后清理。
+- 待人工验收：Windows WebView2 中真实 Ctrl＋滚轮／触控板、100%／125%／150% 原生 DPI，以及真实 SSH／本地进程下的选区、浏览历史位置、PTY 尺寸变化和轻量恢复。浏览器演示不替代这些原生检查。
+- 新增文件：`src/shared/terminalFontSize.ts`、`src/features/settings/useTerminalFontSize.ts`、`src/features/settings/useTerminalFontSize.test.tsx`、`src/features/settings/TerminalFontSizeSetting.tsx`、`src/features/settings/TerminalFontSizeSetting.test.tsx`、`src/features/sessions/terminalFontWheel.ts`、`src/features/sessions/terminalFontWheel.test.ts`。当前版本保持 2.0.2；未构建安装包，未提交、推送或发布。

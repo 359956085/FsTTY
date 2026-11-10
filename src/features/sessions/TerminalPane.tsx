@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { api } from "../../shared/api/client";
+import { installTerminalFontWheel } from "./terminalFontWheel";
 import { readApiError, resolveApiError } from "../../shared/api/errors";
 import type {
   ConnectionState,
@@ -121,6 +122,8 @@ interface TerminalPaneProps {
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
   terminalColorScheme?: TerminalColorScheme;
+  terminalFontSize?: number;
+  onTerminalFontSizeAdjust?: (steps: number) => void;
   connectionState: ConnectionState;
   currentPath?: string;
   activationFocusTarget?: RefObject<HTMLElement | null>;
@@ -151,6 +154,8 @@ export const TerminalPane = memo(function TerminalPane({
   shortcuts,
   theme,
   terminalColorScheme = "default",
+  terminalFontSize = 13,
+  onTerminalFontSizeAdjust,
   visible,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -237,6 +242,12 @@ export const TerminalPane = memo(function TerminalPane({
   const shortcutsRef = useRef(shortcuts);
   const themeRef = useRef(theme);
   const terminalColorSchemeRef = useRef(terminalColorScheme);
+  const fontSizeRef = useRef(terminalFontSize);
+  const adjustFontRef = useRef(onTerminalFontSizeAdjust);
+  const fitFontRef = useRef(fitAndResize);
+  fontSizeRef.current = terminalFontSize;
+  adjustFontRef.current = onTerminalFontSizeAdjust;
+  fitFontRef.current = fitAndResize;
   const lightweightBlockedRef = useRef(false);
   const lightweightBarrierRef = useRef<LightweightBarrierWait | null>(null);
   const restoringRef = useRef(false);
@@ -328,6 +339,24 @@ export const TerminalPane = memo(function TerminalPane({
       localHighlightRef.current?.refresh();
     }
   }, [theme, terminalColorScheme]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || terminal.options.fontSize === terminalFontSize) return;
+    terminal.options.fontSize = terminalFontSize;
+    const frame = requestAnimationFrame(() => {
+      fitFontRef.current();
+      localHighlightRef.current?.refresh();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [terminalFontSize]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    return installTerminalFontWheel(container, (steps) => adjustFontRef.current?.(steps),
+      () => activeRef.current && visibleRef.current && !!adjustFontRef.current);
+  }, []);
 
   function reportState(state: ConnectionState, error: string | null = null) {
     if (mountedRef.current) {
@@ -668,6 +697,7 @@ export const TerminalPane = memo(function TerminalPane({
         onClipboardWriteError: () => reportClipboardErrorRef.current(),
         theme: themeRef.current,
         terminalColorScheme: terminalColorSchemeRef.current,
+        terminalFontSize: fontSizeRef.current,
         localHighlight: localRef.current,
       });
       if (!runtime) {
@@ -677,6 +707,7 @@ export const TerminalPane = memo(function TerminalPane({
       const { fitAddon, terminal } = runtime;
       // 动态模块加载期间主题可能已变化，安装完成时再次对齐最新值。
       terminal.options.theme = getTerminalTheme(themeRef.current, terminalColorSchemeRef.current);
+      terminal.options.fontSize = fontSizeRef.current;
       terminal.options.minimumContrastRatio = terminalColorSchemeRef.current === "default" ? 1 : 4.5;
       const remoteRightDragState = remoteRightDragStateRef.current;
       const syntheticMouseMoves = new WeakSet<Event>();

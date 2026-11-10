@@ -15,7 +15,11 @@ import { CommandHistorySettingsSection } from "./CommandHistorySettingsSection";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import { CredentialSecuritySection } from "./CredentialSecuritySection";
 
+import { TerminalFontSizeSetting } from "./TerminalFontSizeSetting";
+
 interface GeneralSettingsPanelProps {
+  onTerminalFontSizeChange?: (size: number) => void;
+  savingTerminalFontSize?: boolean;
   activeTooltipKey: string | null;
   logDirectoryError: string | null;
   logSettingsError: string | null;
@@ -46,6 +50,8 @@ interface GeneralSettingsPanelProps {
 }
 
 export function GeneralSettingsPanel({
+  onTerminalFontSizeChange,
+  savingTerminalFontSize,
   activeTooltipKey,
   logDirectoryError,
   logSettingsError,
@@ -138,6 +144,7 @@ export function GeneralSettingsPanel({
             value={settings.terminalColorScheme}
           />
         </div>
+        <TerminalFontSizeSetting value={settings.terminalFontSize} onChange={onTerminalFontSizeChange} saving={savingTerminalFontSize} />
         <div className="settings-row">
           <div className="settings-row-copy">
             <label className="settings-row-label" htmlFor="local-terminal-highlight">{t("settings.localHighlight")}</label>

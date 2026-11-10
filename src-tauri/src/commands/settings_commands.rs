@@ -96,6 +96,20 @@ pub fn set_terminal_color_scheme(
 }
 
 #[tauri::command]
+pub fn set_terminal_font_size(
+    state: State<'_, AppState>,
+    font_size: u8,
+) -> Result<AppSettings, AppError> {
+    let mut service = state
+        .settings_service
+        .lock()
+        .map_err(|_| AppError::Internal("设置服务锁定失败".to_owned()))?;
+    let settings = service.set_terminal_font_size(font_size)?;
+    drop(service);
+    hydrate_mcp_permissions(&state, settings)
+}
+
+#[tauri::command]
 pub fn set_local_terminal_highlight_enabled(
     state: State<'_, AppState>,
     enabled: bool,

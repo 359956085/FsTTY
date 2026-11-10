@@ -43,7 +43,7 @@ const runtimeMocks = vi.hoisted(() => ({
   keys: vi.fn(),
   getTheme: vi.fn((theme: string, colorScheme: string) => ({ name: theme, colorScheme })),
   install: vi.fn(),
-  options: { theme: undefined as unknown, minimumContrastRatio: 1 },
+  options: { theme: undefined as unknown, minimumContrastRatio: 1, fontSize: 13 },
   oscHandlers: new Map<number, (data: string) => boolean>(),
   registerOscHandler: vi.fn(
     (identifier: number, handler: (data: string) => boolean) => {
@@ -246,8 +246,9 @@ describe("终端面板连接", () => {
       channel.onmessage({ kind: "ready", connectionId: attachment.connection.connectionId, truncated: false });
       return attachment;
     });
-    const { onConnected, onStateChange, onDirectoryChange } = renderPreservedTerminal();
+    const { onConnected, onStateChange, onDirectoryChange } = renderPreservedTerminal({ terminalFontSize: 19 });
     await waitFor(() => expect(hasPreservedTerminal(attachment.runtimeId)).toBe(false));
+    expect(runtimeMocks.options.fontSize).toBe(19);
     expect(runtimeMocks.resize).toHaveBeenCalledWith(120, 40);
     expect(runtimeMocks.resize.mock.invocationCallOrder[0]).toBeLessThan(
       runtimeMocks.write.mock.invocationCallOrder[0]!,
@@ -377,7 +378,7 @@ describe("终端面板连接", () => {
     expect(runtimeMocks.reset).toHaveBeenCalledTimes(1);
   });
 
-  it("切换主题时更新现有终端而不重新安装", async () => {
+  it("切换主题、配色和字号时更新现有终端而不重新安装", async () => {
     const commonProps = {
       active: true,
       allowRemoteClipboardWrite: false,
@@ -406,6 +407,12 @@ describe("终端面板连接", () => {
     rerender(<TerminalPane {...commonProps} theme="dark" terminalColorScheme="default" />);
     await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark", colorScheme: "default" }));
     expect(runtimeMocks.options.minimumContrastRatio).toBe(1);
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalFontSize={22} />);
+    expect(runtimeMocks.options.fontSize).toBe(22);
+    rerender(<TerminalPane {...commonProps} active={false} theme="dark" terminalFontSize={8} />);
+    expect(runtimeMocks.options.fontSize).toBe(8);
+    rerender(<TerminalPane {...commonProps} theme="dark" terminalFontSize={8} />);
+    expect(runtimeMocks.options.fontSize).toBe(8);
     expect(runtimeMocks.install).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.dispose).not.toHaveBeenCalled();
     expect(apiMocks.connectSession).not.toHaveBeenCalled();

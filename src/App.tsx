@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Minus, PanelLeftClose, PanelLeftOpen, Settings, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
@@ -6,6 +6,7 @@ import { SessionsPage } from "./features/sessions/SessionsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { UpdateDialog } from "./features/settings/UpdateDialog";
 import { useAppUpdater } from "./features/settings/useAppUpdater";
+import { useTerminalFontSize } from "./features/settings/useTerminalFontSize";
 import { api } from "./shared/api/client";
 import { resolveApiError } from "./shared/api/errors";
 import type { AppSettings } from "./shared/api/types";
@@ -35,6 +36,7 @@ export function App() {
     language: "zh-CN",
     theme: readCachedThemePreference(),
     terminalColorScheme: "default",
+    terminalFontSize: 13,
     autoUpdate: true,
     updateSource: "auto",
     proxyAddress: "",
@@ -48,6 +50,14 @@ export function App() {
     recordMcpToolInputs: false,
     shortcuts: DEFAULT_SHORTCUTS,
   });
+  const font = useTerminalFontSize(useCallback((size: number) => {
+    setSettings((current) => ({ ...current, terminalFontSize: size }));
+  }, []));
+  const { initialize: initializeFont } = font;
+  // Other settings responses must not overwrite the independently saved font.
+  const applySettings = useCallback((next: AppSettings) => {
+    setSettings((current) => ({ ...next, terminalFontSize: current.terminalFontSize }));
+  }, []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [lightweightDialogOpen, setLightweightDialogOpen] = useState(false);
@@ -59,7 +69,7 @@ export function App() {
   const updater = useAppUpdater({
     autoUpdate: settings.autoUpdate,
     ignoredUpdateVersion: settings.ignoredUpdateVersion,
-    onSettingsChange: setSettings,
+    onSettingsChange: applySettings,
     updateSource: settings.updateSource,
     startupReady: settingsLoaded,
   });
@@ -73,6 +83,7 @@ export function App() {
           return;
         }
         setSettings(nextSettings);
+        initializeFont(nextSettings.terminalFontSize);
         setSettingsLoaded(true);
         void i18n.changeLanguage(nextSettings.language);
       })
@@ -84,7 +95,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [i18n]);
+  }, [i18n, initializeFont]);
 
   const windowLabels = {
     minimize: t("nav.minimize"),
@@ -100,6 +111,7 @@ export function App() {
       } else if (action === "maximize") {
         await currentWindow.toggleMaximize();
       } else {
+        await font.flush();
         await currentWindow.close();
       }
     } catch (error) {
@@ -128,6 +140,7 @@ export function App() {
     setLightweightDialogOpen(false);
     setLoadError(null);
     try {
+      await font.flush();
       await enterLightweightMode(suppressConfirmation);
       setSuppressLightweightConfirmation(suppressConfirmation);
     } catch (error) {
@@ -222,6 +235,7 @@ export function App() {
       </header>
 
       <main className="app-main">
+        {font.error !== null ? <div className="error-banner" role="alert">{t("settings.terminalFontSizeSaveFailed")} {resolveApiError(font.error, t("errors.unknown"))}</div> : null}
         {loadError ? <div className="error-banner">{loadError}</div> : null}
         <div
           className={view === "sessions" ? "app-view" : "app-view app-view-hidden"}
@@ -231,6 +245,8 @@ export function App() {
             allowRemoteClipboardWrite={settings.allowRemoteClipboardWrite}
             theme={resolvedTheme}
             terminalColorScheme={settings.terminalColorScheme}
+            terminalFontSize={font.fontSize}
+            onTerminalFontSizeAdjust={settingsLoaded ? font.adjust : undefined}
             shortcuts={settings.shortcuts}
             visible={view === "sessions"}
           />
@@ -242,10 +258,12 @@ export function App() {
               setView("sessions");
               settingsButtonRef.current?.focus();
             }}
-            settings={settings}
+            settings={{ ...settings, terminalFontSize: font.fontSize }}
+            onTerminalFontSizeChange={settingsLoaded ? font.change : undefined}
+            savingTerminalFontSize={font.saving}
             updater={updater}
             onChange={(nextSettings) => {
-              setSettings(nextSettings);
+              applySettings(nextSettings);
               void i18n.changeLanguage(nextSettings.language);
             }}
           />

@@ -40,6 +40,8 @@ interface WorkspaceProps {
   shortcuts: ShortcutSettings;
   theme: ResolvedTheme;
   terminalColorScheme: TerminalColorScheme;
+  terminalFontSize?: number;
+  onTerminalFontSizeAdjust?: (steps: number) => void;
   runtimes: Readonly<Record<string, SessionRuntime>>;
   visible: boolean;
   onCancelTransfer: (tabId: string) => void;
@@ -111,6 +113,8 @@ export function Workspace({
   shortcuts,
   theme,
   terminalColorScheme,
+  terminalFontSize,
+  onTerminalFontSizeAdjust,
   runtimes,
   visible,
 }: WorkspaceProps) {
@@ -372,6 +376,8 @@ export function Workspace({
                     shortcuts={shortcuts}
                     theme={theme}
                     terminalColorScheme={terminalColorScheme}
+                    terminalFontSize={terminalFontSize}
+                    onTerminalFontSizeAdjust={onTerminalFontSizeAdjust}
                     visible={visible}
                   />
                 ) : null}
