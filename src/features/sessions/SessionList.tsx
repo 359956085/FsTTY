@@ -338,6 +338,7 @@ export function SessionList({
     event: ReactPointerEvent<HTMLElement>,
     source: SessionDragSource,
   ) {
+    if (event.button === 0) suppressClickRef.current = false;
     if (
       !dragAllowed ||
       event.button !== 0 ||
@@ -496,7 +497,7 @@ export function SessionList({
         .join(" ")}
       onContextMenu={(event) => event.preventDefault()}
       onPointerCancel={() => {
-        suppressClickRef.current = false;
+        if (dragGestureRef.current?.dragging) suppressClickRef.current = true;
         clearDrag();
       }}
       onPointerMove={handlePointerMove}
@@ -692,7 +693,17 @@ export function SessionList({
                       <button
                         className="session-item-select"
                         onClick={(event) => {
-                          consumeSuppressedClick(event);
+                          if (consumeSuppressedClick(event) || event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey) return;
+                          // Native clicks count a double-click as 2. A 0 count
+                          // also supports activation by assistive technology.
+                          if (event.detail === 2 || event.detail === 0) onOpen(session.id, true);
+                        }}
+                        onKeyDown={(event) => {
+                          if ((event.key !== "Enter" && event.key !== " ") || event.altKey || event.ctrlKey || event.metaKey) return;
+                          event.preventDefault();
+                          if (event.repeat || isComposingKey(event.nativeEvent)) return;
+                          suppressClickRef.current = false;
+                          onOpen(session.id, true);
                         }}
                         onPointerDown={(event) =>
                           beginDrag(event, {

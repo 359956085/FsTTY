@@ -7,7 +7,7 @@ A Windows SSH workspace and secure MCP control plane for AI agents.
 [简体中文](README.md) | **English**
 
 [![Latest release](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.1.0--beta.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -23,6 +23,10 @@ FsTTY securely exposes your saved SSH sessions to agents such as Codex, Claude, 
 - **One-click agent setup**: detect local agents, choose stdio or local HTTP, and merge MCP configuration and global instructions without overwriting unrelated settings.
 - **Production diagnostics**: search remote logs, read file windows, execute commands, write atomically, and transfer files under explicit permissions.
 - **Auditable operations**: record tool, session, result, and duration, with optional redacted tool inputs.
+
+## Terminal list
+
+Double-click a terminal configuration, or focus it and press Enter or Space, to open an independent tab and immediately connect to SSH or start the local terminal. Single clicks do not start terminals; another double-click opens another tab. Local tabs use the configuration’s default permissions.
 
 ## MCP Tools
 

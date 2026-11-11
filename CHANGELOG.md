@@ -6,6 +6,27 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.1.0-beta.1] - 2026-11-11
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 终端列表支持双击或按 Enter／空格，新建独立标签并立即连接 SSH 或启动 CMD、PowerShell、Git Bash；单击不启动，拖动排序后的点击不会误开标签。
+- 新增全局字体选择，内置 JetBrains Mono；支持终端字号设置及 Ctrl＋滚轮调整，现有终端即时更新并保存设置。
+- SSH 文件管理支持文件／文件夹混选上传、文件夹下载及批量权限修改。目录传输保留层级、隐藏文件和空目录，支持目录合并、冲突保护及取消；递归权限可分别设置文件和文件夹，并可在轻量模式后接回任务。
+- 更新部分安全依赖及构建工具，保留原有功能和已记录的上游依赖风险说明。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Double-click a terminal list item or press Enter or Space to open an independent tab and immediately connect to SSH or start CMD, PowerShell, or Git Bash. Single clicks do not start terminals, and clicks following a drag do not accidentally open tabs.
+- Added a global font selector with bundled JetBrains Mono, plus terminal font size settings and Ctrl+wheel adjustment. Existing terminals update immediately and preferences are saved.
+- SSH file management supports mixed file and folder uploads, folder downloads, and batch permission changes. Directory transfers preserve structure, hidden files, and empty folders, with directory merging, conflict protection, and cancellation. Recursive permissions can be set separately for files and folders, and tasks can be reattached after lightweight mode.
+- Updated selected security dependencies and build tools while preserving existing behavior and documented upstream dependency risk notes.
+
+<!-- release-notes:en-US:end -->
+
 ## [2.0.2] - 2026-11-07
 
 <!-- release-notes:zh-CN:start -->

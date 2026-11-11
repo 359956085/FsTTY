@@ -170,3 +170,14 @@ describe("会话列表异步生命周期", () => {
     expect(result.current.groups[0]?.name).toBe("新分组");
   });
 });
+
+it.each(["ssh","cmd","powershell","gitBash"] as const)("%s 启动总是新建独立标签并保留原标签",async kind=>{
+ const item=kind==="ssh"?session("start","默认"):{kind:"local" as const,id:"start",name:"Start",group:"默认",tags:[],shell:kind,startingDirectory:"",runAsAdmin:true};
+ mocks.listWorkspaceSessions.mockResolvedValue([{name:"默认",sessions:[item]}]);
+ const {result}=renderHook(()=>useSessionsPageState({confirmDeleteText:"delete",errorFallback:"error"}));
+ await waitFor(()=>expect(result.current.sessionsReady).toBe(true));
+ act(()=>result.current.openSessionTab(item.id,false));const original=result.current.openSessionTabs[0];
+ act(()=>{result.current.openSessionTab(item.id,true);result.current.openSessionTab(item.id,true);});
+ const tabs=result.current.openSessionTabs;expect(tabs).toHaveLength(3);expect(new Set(tabs.map(tab=>tab.id)).size).toBe(3);expect(tabs[0]).toEqual(original);expect(tabs.slice(1).every(tab=>tab.autoConnect)).toBe(true);
+ if(kind!=="ssh")expect(tabs.map(tab=>tab.runAsAdmin)).toEqual([true,true,true]);
+});

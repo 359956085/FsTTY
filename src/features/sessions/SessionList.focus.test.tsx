@@ -163,3 +163,68 @@ describe("会话与分组键盘体验", () => {
     expect(document.activeElement).toBe(search);
   });
 });
+
+describe("终端列表启动手势", () => {
+  const cases = ["ssh", "cmd", "powershell", "gitBash"] as const;
+  function fixture(kind: typeof cases[number]) {
+    const session = kind === "ssh" ? group("Start").sessions[0] : {
+      kind: "local" as const, id: kind, name: "Local-" + kind, shell: kind,
+      group: "Start", tags: [], startingDirectory: "", runAsAdmin: true,
+    };
+    const onOpen = vi.fn();
+    setup({ groups: [{ name: "Start", sessions: [session] }], onOpen });
+    return {session, onOpen, row:screen.getByText(session.name).closest("button")!};
+  }
+  it.each(cases)("%s 单击不打开，每次双击只发出一次新标签启动请求", kind => {
+    const {session, onOpen, row}=fixture(kind);
+    fireEvent.click(row,{detail:1});expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.click(row,{detail:2});fireEvent.doubleClick(row);
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(session.id,true);
+    fireEvent.click(row,{detail:3});expect(onOpen).toHaveBeenCalledOnce();
+    fireEvent.click(row,{detail:1});fireEvent.click(row,{detail:2});
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+  it.each(cases)("%s Enter／空格启动，阻止长按及输入法组合重复激活", kind=>{
+    const {session,onOpen,row}=fixture(kind);
+    for(const key of ["Enter"," "]){
+      expect(fireEvent.keyDown(row,{key})).toBe(false);
+      fireEvent.keyDown(row,{key,repeat:true});fireEvent.keyDown(row,{key,isComposing:true});fireEvent.keyDown(row,{key,keyCode:229});fireEvent.keyUp(row,{key});
+    }
+    expect(onOpen).toHaveBeenCalledTimes(2);expect(onOpen).toHaveBeenLastCalledWith(session.id,true);
+    fireEvent.click(row,{detail:0});expect(onOpen).toHaveBeenCalledTimes(3);
+  });
+  it.each(["query","favorites"] as const)("%s 筛选不影响双击启动", mode=>{
+    const onOpen=vi.fn();setup({query:mode==="query"?"Session-A":"",filter:mode==="favorites"?"favorites":"all",favoriteSessionIds:["A"],onOpen});
+    const row=screen.getByText("Session-A").closest("button")!;
+    fireEvent.click(row,{detail:1});fireEvent.click(row,{detail:2});expect(onOpen).toHaveBeenCalledExactlyOnceWith("A",true);
+  });
+  it("收藏与分组双击不创建标签",()=>{
+    const onOpen=vi.fn(),favorite=vi.fn();setup({onOpen,onToggleFavorite:favorite});
+    const star=screen.getByRole("button",{name:"sessions.filterFavorites Session-A"});
+    fireEvent.click(star,{detail:1});fireEvent.click(star,{detail:2});fireEvent.doubleClick(star);
+    fireEvent.click(button("A"),{detail:2});expect(onOpen).not.toHaveBeenCalled();expect(favorite).toHaveBeenCalledWith("A");
+  });
+  it.each(["drop","cancel"] as const)("拖动 %s 后抑制启动，下一次双击仍可启动", mode=>{
+    const onOpen=vi.fn(),reorder=vi.fn().mockResolvedValue(true);setup({onOpen,onReorderSession:reorder});
+    const source=screen.getByText("Session-A").closest("button")!;const target=screen.getByText("Session-B").closest("button")!;
+    Object.defineProperties(source,{setPointerCapture:{configurable:true,value:vi.fn()},hasPointerCapture:{configurable:true,value:()=>true},releasePointerCapture:{configurable:true,value:vi.fn()}});
+    const previous=Object.getOwnPropertyDescriptor(document,"elementFromPoint");Object.defineProperty(document,"elementFromPoint",{configurable:true,value:()=>target});
+    try{
+      fireEvent.pointerDown(source,{button:0,pointerType:"mouse",pointerId:1,clientX:0,clientY:0});
+      fireEvent.pointerMove(source,{pointerId:1,clientX:30,clientY:20});
+      if(mode==="drop")fireEvent.pointerUp(source,{pointerId:1,clientX:30,clientY:20});else fireEvent.pointerCancel(source,{pointerId:1});
+      fireEvent.click(source,{detail:2});expect(onOpen).not.toHaveBeenCalled();
+      if(mode==="drop")expect(reorder).toHaveBeenCalledWith("A","B",1);else expect(reorder).not.toHaveBeenCalled();
+      fireEvent.click(source,{detail:1});fireEvent.click(source,{detail:2});expect(onOpen).toHaveBeenCalledExactlyOnceWith("A",true);
+    }finally{if(previous)Object.defineProperty(document,"elementFromPoint",previous);else Reflect.deleteProperty(document,"elementFromPoint");}
+  });
+});
+
+it("列表启动不接管 Ctrl／Alt／Meta 组合快捷键",()=>{
+ const onOpen=vi.fn();setup({onOpen});const row=screen.getByText("Session-A").closest("button")!;
+ for(const modifiers of [{ctrlKey:true},{altKey:true},{metaKey:true}])for(const key of ["Enter"," "]){
+   expect(fireEvent.keyDown(row,{key,...modifiers})).toBe(true);
+   fireEvent.click(row,{detail:0,...modifiers});
+ }
+ expect(onOpen).not.toHaveBeenCalled();
+});

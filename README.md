@@ -7,7 +7,7 @@
 **简体中文** | [English](README.en-US.md)
 
 [![最新版本](https://img.shields.io/github/v/release/359956085/FsTTY?display_name=tag&label=release)](https://github.com/359956085/FsTTY/releases/latest)
-![Version](https://img.shields.io/badge/version-2.0.2-2563EB)
+![Version](https://img.shields.io/badge/version-2.1.0--beta.1-2563EB)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -23,6 +23,10 @@ FsTTY 把已经保存的 SSH 会话安全地开放给 Codex、Claude、Cursor �
 - **一键配置 Agent**：自动检测本机 Agent，支持 stdio 或本地 HTTP，合并 MCP 配置和全局提示词，不覆盖无关设置。
 - **适合生产排障**：支持远程日志搜索、分段读取、命令执行、原子写入和受控文件传输。
 - **可审计**：独立记录工具、会话、结果和耗时；可选记录脱敏后的工具输入。
+
+## 终端列表
+
+双击列表中的终端配置，或聚焦后按 Enter／空格，会新建独立标签并立即连接 SSH 或启动本地终端。单击不启动，重复双击会打开另一个标签；本地标签使用配置的默认权限。
 
 ## MCP 工具
 
