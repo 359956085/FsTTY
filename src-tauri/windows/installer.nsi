@@ -21,7 +21,6 @@ VIAddVersionKey "FileVersion" "{{version}}"
 VIAddVersionKey "ProductVersion" "{{version}}"
 !define MUI_ICON "{{installer_icon}}"
 !define MUI_UNICON "{{uninstaller_icon}}"
-!include "{{installer_hooks}}"
 Var Bootstrap
 Var CallerPid
 Var CallerMode
@@ -33,6 +32,9 @@ Var CandidateCombo
 Var SummaryText
 Var InitialDirectory
 Var LaunchAfter
+
+!include "{{installer_hooks}}"
+!define MUI_CUSTOMFUNCTION_GUIINIT FsTTYActivateWizardOnce
 
 !insertmacro MUI_PAGE_WELCOME
 Page custom ChoosePrevious ChoosePreviousLeave

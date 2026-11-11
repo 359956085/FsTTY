@@ -65,7 +65,7 @@ import {
 } from "./terminalInputController";
 import { CommandHistoryPopover } from "./CommandHistoryPopover";
 import type { CommandHistoryPopoverHandle } from "./CommandHistoryPopover";
-import { matchesShortcut } from "../../shared/shortcuts";
+import { matchesShortcut, terminalFontShortcutStep } from "../../shared/shortcuts";
 import type { ResolvedTheme } from "../../shared/theme";
 import { createCommandHistoryInsertion } from "./terminalCommandHistory";
 import { createLocalHistoryInsertion, parseLocalHistoryNotification, type LocalHistoryInsertion } from "./localCommandHistory";
@@ -362,7 +362,8 @@ export const TerminalPane = memo(function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
     return installTerminalFontWheel(container, (steps) => adjustFontRef.current?.(steps),
-      () => activeRef.current && visibleRef.current && !!adjustFontRef.current);
+      () => activeRef.current && visibleRef.current && !!adjustFontRef.current,
+      () => shortcutsRef.current);
   }, []);
 
   function reportState(state: ConnectionState, error: string | null = null) {
@@ -1055,6 +1056,13 @@ export const TerminalPane = memo(function TerminalPane({
           return true;
         }
         const currentShortcuts = shortcutsRef.current;
+        const fontStep = terminalFontShortcutStep(event, currentShortcuts);
+        if (fontStep && adjustFontRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          adjustFontRef.current(fontStep);
+          return false;
+        }
         if (matchesShortcut(event, currentShortcuts.commandHistory)) {
           event.preventDefault();
           event.stopPropagation();

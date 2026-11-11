@@ -11,6 +11,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   "newSession",
   "nextTab",
   "previousTab",
+  "terminalFontIncrease",
+  "terminalFontDecrease",
 ];
 
 export const DEFAULT_SHORTCUTS: ShortcutSettings = {
@@ -21,6 +23,8 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
   newSession: { code: "KeyT", ctrl: true, alt: false, shift: true },
   nextTab: { code: "Tab", ctrl: true, alt: false, shift: false },
   previousTab: { code: "Tab", ctrl: true, alt: false, shift: true },
+  terminalFontIncrease: { code: "WheelUp", ctrl: true, alt: false, shift: false },
+  terminalFontDecrease: { code: "WheelDown", ctrl: true, alt: false, shift: false },
 };
 
 interface ShortcutEvent {
@@ -52,8 +56,21 @@ export function matchesShortcut(event: ShortcutEvent, shortcut: ShortcutBinding 
   );
 }
 
-export function validateShortcut(shortcut: ShortcutBinding): ShortcutValidationError | null {
+export function isFontShortcutAction(action: ShortcutAction) {
+  return action === "terminalFontIncrease" || action === "terminalFontDecrease";
+}
+
+export function terminalFontShortcutStep(event: ShortcutEvent, shortcuts: ShortcutSettings) {
+  if (matchesShortcut(event, shortcuts.terminalFontIncrease)) return 1;
+  if (matchesShortcut(event, shortcuts.terminalFontDecrease)) return -1;
+  return 0;
+}
+
+export function validateShortcut(shortcut: ShortcutBinding, action?: ShortcutAction): ShortcutValidationError | null {
   if (!shortcut.ctrl && !shortcut.alt) return "modifierRequired";
+  if (shortcut.code === "WheelUp" || shortcut.code === "WheelDown") {
+    return action && isFontShortcutAction(action) ? null : "unsupported";
+  }
   if (!isSupportedCode(shortcut.code)) return "unsupported";
   if (isReservedShortcut(shortcut)) return "reserved";
   return null;
@@ -71,13 +88,15 @@ export function findShortcutConflict(
   );
 }
 
-export function formatShortcut(shortcut: ShortcutBinding | null) {
+export function formatShortcut(shortcut: ShortcutBinding | null, wheelLabels?: Record<"WheelUp" | "WheelDown", string>) {
   if (!shortcut) return "—";
   const parts: string[] = [];
   if (shortcut.ctrl) parts.push("Ctrl");
   if (shortcut.alt) parts.push("Alt");
   if (shortcut.shift) parts.push("Shift");
-  parts.push(formatCode(shortcut.code));
+  parts.push(shortcut.code === "WheelUp" || shortcut.code === "WheelDown"
+    ? wheelLabels?.[shortcut.code] ?? (shortcut.code === "WheelUp" ? "Wheel Up" : "Wheel Down")
+    : formatCode(shortcut.code));
   return parts.join("+");
 }
 

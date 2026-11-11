@@ -1,5 +1,7 @@
 import { Eraser, RotateCcw } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import type { ShortcutBinding } from "../../shared/api/types";
+import { createWheelStepAccumulator, wheelShortcutFromEvent } from "../../shared/wheelShortcuts";
 import { useTranslation } from "react-i18next";
 import { api } from "../../shared/api/client";
 import { resolveApiError } from "../../shared/api/errors";
@@ -7,6 +9,7 @@ import type { AppSettings, ShortcutSettings } from "../../shared/api/types";
 import {
   DEFAULT_SHORTCUTS,
   findShortcutConflict,
+  isFontShortcutAction,
   formatShortcut,
   shortcutFromEvent,
   shortcutsEqual,
@@ -30,6 +33,8 @@ const actionLabelKeys: Record<ShortcutAction, string> = {
   newSession: "settings.shortcutNewSession",
   nextTab: "settings.shortcutNextTab",
   previousTab: "settings.shortcutPreviousTab",
+  terminalFontIncrease: "settings.shortcutTerminalFontIncrease",
+  terminalFontDecrease: "settings.shortcutTerminalFontDecrease",
 };
 
 export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettingsSectionProps) {
@@ -39,6 +44,17 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
   const busyRef = useRef(false);
   const lifecycleRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const recordWheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  const wheelAccumulatorRef = useRef(createWheelStepAccumulator());
+
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const listener = (event: WheelEvent) => recordWheelRef.current(event);
+    section.addEventListener("wheel", listener, { capture: true, passive: false });
+    return () => section.removeEventListener("wheel", listener, true);
+  }, []);
 
   useEffect(() => {
     const lifecycle = ++lifecycleRef.current;
@@ -82,7 +98,11 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
     }
     const nextBinding = shortcutFromEvent(event.nativeEvent);
     if (!nextBinding) return;
-    const validationError = validateShortcut(nextBinding);
+    acceptBinding(action, nextBinding);
+  }
+
+  function acceptBinding(action: ShortcutAction, nextBinding: ShortcutBinding) {
+    const validationError = validateShortcut(nextBinding, action);
     if (validationError) {
       setError(t(`settings.shortcut${capitalize(validationError)}`));
       return;
@@ -102,6 +122,17 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
     }
   }
 
+  recordWheelRef.current = (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-shortcut-action]") : null;
+    if (!recording || !isFontShortcutAction(recording) || busyRef.current || button?.getAttribute("data-shortcut-action") !== recording) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.metaKey) { setError(t("settings.shortcutMetaUnsupported")); return; }
+    const binding = wheelShortcutFromEvent(event);
+    if (!binding || !wheelAccumulatorRef.current(event)) return;
+    acceptBinding(recording, binding);
+  };
+
   function restoreAction(action: ShortcutAction) {
     setRecording(null);
     setError(null);
@@ -118,13 +149,13 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
   );
 
   return (
-    <section aria-labelledby="shortcut-settings-title" className="settings-panel">
+    <section ref={sectionRef} aria-labelledby="shortcut-settings-title" className="settings-panel">
       <header className="settings-panel-header settings-shortcut-header">
         <h3 id="shortcut-settings-title">{t("settings.shortcuts")}</h3>
         <Button
           disabled={busy || defaultsActive}
           icon={<RotateCcw aria-hidden="true" size={14} />}
-          onClick={() => void saveShortcuts(DEFAULT_SHORTCUTS)}
+          onClick={() => { setRecording(null); void saveShortcuts(DEFAULT_SHORTCUTS); }}
           variant="ghost"
         >
           {t("settings.shortcutRestoreAll")}
@@ -141,8 +172,10 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
               aria-label={t("settings.shortcutEdit", { action: t(actionLabelKeys[action]) })}
               className={`settings-shortcut-key${recording === action ? " recording" : ""}`}
               disabled={busy}
+              data-shortcut-action={action}
               onClick={() => {
                 setError(null);
+                wheelAccumulatorRef.current = createWheelStepAccumulator();
                 setRecording(action);
               }}
               onKeyDown={(event) => {
@@ -151,15 +184,15 @@ export function ShortcutSettingsSection({ onChange, settings }: ShortcutSettings
               type="button"
             >
               {recording === action
-                ? t("settings.shortcutPressKeys")
-                : settings[action] ? formatShortcut(settings[action]) : t("settings.shortcutUnbound")}
+                ? t(isFontShortcutAction(action) ? "settings.shortcutPressKeysOrWheel" : "settings.shortcutPressKeys")
+                : settings[action] ? formatShortcut(settings[action], { WheelUp: t("settings.shortcutWheelUp"), WheelDown: t("settings.shortcutWheelDown") }) : t("settings.shortcutUnbound")}
             </button>
-            {(["newSession", "nextTab", "previousTab"] as string[]).includes(action) && (
+            {(["newSession", "nextTab", "previousTab", "terminalFontIncrease", "terminalFontDecrease"] as string[]).includes(action) && (
               <TooltipButton className="settings-shortcut-reset"
                 disabled={busy || !settings[action]}
                 label={t("settings.shortcutClearHint")}
                 aria-label={t("settings.shortcutClear", { action: t(actionLabelKeys[action]) })}
-                onClick={() => void saveShortcuts({ ...settings, [action]: null })}>
+                onClick={() => { setRecording(null); void saveShortcuts({ ...settings, [action]: null }); }}>
                 <Eraser aria-hidden="true" size={14} />
               </TooltipButton>
             )}

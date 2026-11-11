@@ -67,6 +67,8 @@ export interface ShortcutSettings {
   newSession: ShortcutBinding | null;
   nextTab: ShortcutBinding | null;
   previousTab: ShortcutBinding | null;
+  terminalFontIncrease: ShortcutBinding | null;
+  terminalFontDecrease: ShortcutBinding | null;
 }
 
 export interface McpGroupPermission {

@@ -51,6 +51,8 @@ describe("ShortcutSettingsSection", () => {
     ["newSession", "settings.shortcutNewSession"],
     ["nextTab", "settings.shortcutNextTab"],
     ["previousTab", "settings.shortcutPreviousTab"],
+    ["terminalFontIncrease", "settings.shortcutTerminalFontIncrease"],
+    ["terminalFontDecrease", "settings.shortcutTerminalFontDecrease"],
   ] as const)("%s 的图标清除按钮保留操作名称、去重及恢复默认", async (action, label) => {
     let resolve!: (value: AppSettings) => void;
     mocks.updateShortcutSettings.mockReturnValueOnce(new Promise<AppSettings>((done) => { resolve = done; }));
@@ -123,6 +125,54 @@ describe("ShortcutSettingsSection", () => {
     fireEvent.keyDown(edit, { key: "Tab", code: "Tab", altKey: true });
     await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith({ ...DEFAULT_SHORTCUTS, newSession: { code: "Tab", ctrl: false, alt: true, shift: false } }));
   });
+  it("清除字号绑定时结束录制，不再接收尾随键盘或滚轮输入", async () => {
+    const cleared = { ...DEFAULT_SHORTCUTS, terminalFontIncrease: null };
+    mocks.updateShortcutSettings.mockResolvedValue(appSettings(cleared));
+    const view = render(<ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} />);
+    const edit = document.querySelector<HTMLButtonElement>('[data-shortcut-action="terminalFontIncrease"]')!;
+    fireEvent.click(edit);
+    fireEvent.click(screen.getByRole("button", { name: "settings.shortcutClear settings.shortcutTerminalFontIncrease" }));
+    await waitFor(() => expect(edit.disabled).toBe(false));
+    view.rerender(<ShortcutSettingsSection onChange={vi.fn()} settings={cleared} />);
+    expect(edit.textContent).toBe("settings.shortcutUnbound");
+    fireEvent.keyDown(edit, { code: "Equal", key: "=", ctrlKey: true });
+    fireEvent.wheel(edit, { deltaY: -100, altKey: true });
+    expect(mocks.updateShortcutSettings).toHaveBeenCalledExactlyOnceWith(cleared);
+  });
+
+  it("字号录制支持高分辨率滚轮、冲突、取消及键盘改绑", async () => {
+    mocks.updateShortcutSettings.mockResolvedValue(appSettings());
+    const view = render(<ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} />);
+    const edit = document.querySelector<HTMLButtonElement>('[data-shortcut-action="terminalFontIncrease"]')!;
+    fireEvent.click(edit);
+    const plain = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+    edit.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(true);
+    expect(mocks.updateShortcutSettings).not.toHaveBeenCalled();
+    fireEvent.keyDown(edit, { key: "Escape", code: "Escape" });
+    fireEvent.wheel(edit, { deltaY: -100, altKey: true });
+    expect(mocks.updateShortcutSettings).not.toHaveBeenCalled();
+    fireEvent.click(edit);
+    fireEvent.wheel(edit, { deltaY: 100, ctrlKey: true });
+    expect(screen.getByRole("alert").textContent).toBe("settings.shortcutConflict");
+    expect(mocks.updateShortcutSettings).not.toHaveBeenCalled();
+    fireEvent.keyDown(edit, { key: "Escape", code: "Escape" });
+    fireEvent.click(edit);
+    for (let i = 0; i < 3; i++) fireEvent.wheel(edit, { deltaY: -25, altKey: true });
+    expect(mocks.updateShortcutSettings).not.toHaveBeenCalled();
+    fireEvent.wheel(edit, { deltaY: -25, altKey: true });
+    await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenCalledExactlyOnceWith({
+      ...DEFAULT_SHORTCUTS, terminalFontIncrease: { code: "WheelUp", ctrl: false, alt: true, shift: false },
+    }));
+    view.rerender(<ShortcutSettingsSection onChange={vi.fn()} settings={DEFAULT_SHORTCUTS} />);
+    await waitFor(() => expect(edit.disabled).toBe(false));
+    fireEvent.click(edit);
+    fireEvent.keyDown(edit, { code: "Equal", key: "=", ctrlKey: true });
+    await waitFor(() => expect(mocks.updateShortcutSettings).toHaveBeenLastCalledWith({
+      ...DEFAULT_SHORTCUTS, terminalFontIncrease: { code: "Equal", ctrl: true, alt: false, shift: false },
+    }));
+  });
+
   it("显示默认快捷键并录入新组合键", async () => {
     const nextShortcuts = {
       ...DEFAULT_SHORTCUTS,

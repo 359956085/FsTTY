@@ -44,6 +44,15 @@ describe("快捷键", () => {
     );
   });
 
+  it("滚轮仅用于字号动作，格式化和冲突沿用统一规则", () => {
+    const wheel = DEFAULT_SHORTCUTS.terminalFontIncrease!;
+    expect(validateShortcut(wheel, "terminalFontIncrease")).toBeNull();
+    expect(validateShortcut(wheel, "terminalCopy")).toBe("unsupported");
+    expect(validateShortcut({ ...wheel, ctrl: false }, "terminalFontIncrease")).toBe("modifierRequired");
+    expect(formatShortcut(wheel, { WheelUp: "滚轮向上", WheelDown: "滚轮向下" })).toBe("Ctrl+滚轮向上");
+    expect(findShortcutConflict(DEFAULT_SHORTCUTS, "terminalFontDecrease", wheel)).toBe("terminalFontIncrease");
+  });
+
   it("发现动作间冲突", () => {
     expect(
       findShortcutConflict(

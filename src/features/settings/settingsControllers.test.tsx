@@ -44,6 +44,8 @@ const shortcuts = {
   newSession: { code: "KeyT", ctrl: true, shift: true, alt: false },
   nextTab: { code: "Tab", ctrl: true, shift: false, alt: false },
   previousTab: { code: "Tab", ctrl: true, shift: true, alt: false },
+  terminalFontIncrease: { code: "WheelUp", ctrl: true, alt: false, shift: false },
+  terminalFontDecrease: { code: "WheelDown", ctrl: true, alt: false, shift: false },
   terminalCopy: { alt: false, code: "KeyC", ctrl: true, shift: true },
   terminalPaste: { alt: false, code: "KeyV", ctrl: true, shift: true },
   commandHistory: { alt: false, code: "KeyR", ctrl: true, shift: false },

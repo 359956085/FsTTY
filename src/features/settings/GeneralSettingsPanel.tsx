@@ -124,6 +124,15 @@ export function GeneralSettingsPanel({
             value={settings.theme}
           />
         </div>
+        <div className="settings-row settings-language-row" aria-busy={savingFontFamily}>
+          <div className="settings-row-copy">
+            <span className="settings-row-label">{t("settings.font")}</span>
+            <small>{t("settings.fontHint")}</small>
+          </div>
+          <Select<FontFamilyPreference> ariaLabel={t("settings.font")} className="settings-language-select settings-font-select"
+            value={settings.fontFamily ?? "default"} disabled={!onFontFamilyChange} onChange={(value) => onFontFamilyChange?.(value)}
+            options={FONT_FAMILIES.map((value) => ({ value, label: value === "default" ? t("settings.fontDefault") : value === "jetBrainsMono" ? t("settings.fontJetBrainsMono") : getFontLabel(value) }))} />
+        </div>
         <div className="settings-row settings-language-row">
           <div className="settings-row-copy">
             <span className="settings-row-label">{t("settings.terminalColorScheme")}</span>
@@ -149,15 +158,6 @@ export function GeneralSettingsPanel({
             ]}
             value={settings.terminalColorScheme}
           />
-        </div>
-        <div className="settings-row settings-language-row" aria-busy={savingFontFamily}>
-          <div className="settings-row-copy">
-            <span className="settings-row-label">{t("settings.font")}</span>
-            <small>{t("settings.fontHint")}</small>
-          </div>
-          <Select<FontFamilyPreference> ariaLabel={t("settings.font")} className="settings-language-select settings-font-select"
-            value={settings.fontFamily ?? "default"} disabled={!onFontFamilyChange} onChange={(value) => onFontFamilyChange?.(value)}
-            options={FONT_FAMILIES.map((value) => ({ value, label: value === "default" ? t("settings.fontDefault") : value === "jetBrainsMono" ? t("settings.fontJetBrainsMono") : getFontLabel(value) }))} />
         </div>
         <TerminalFontSizeSetting value={settings.terminalFontSize} onChange={onTerminalFontSizeChange} saving={savingTerminalFontSize} />
         <div className="settings-row">

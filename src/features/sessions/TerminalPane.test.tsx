@@ -105,6 +105,8 @@ const shortcuts: ShortcutSettings = {
     newSession: { code: "KeyT", ctrl: true, shift: true, alt: false },
     nextTab: { code: "Tab", ctrl: true, shift: false, alt: false },
     previousTab: { code: "Tab", ctrl: true, shift: true, alt: false },
+  terminalFontIncrease: { code: "WheelUp", ctrl: true, alt: false, shift: false },
+  terminalFontDecrease: { code: "WheelDown", ctrl: true, alt: false, shift: false },
   commandHistory: shortcut,
   commandHistorySearch: shortcut,
   terminalCopy: shortcut,
@@ -200,6 +202,7 @@ describe("终端面板连接", () => {
       element: null,
       focus: runtimeMocks.focus,
       getSelection: vi.fn(() => ""),
+      hasSelection: vi.fn(() => false),
       selectAll: vi.fn(),
       modes: { mouseTrackingMode: "none" },
       onData: vi.fn(),
@@ -232,6 +235,33 @@ describe("终端面板连接", () => {
         terminal,
       };
     });
+  });
+
+  it.each(["ssh", "cmd", "powershell", "gitBash"] as const)("%s 字号键盘改绑不发送给 Shell，隐藏和清除后不触发", async (shell) => {
+    const adjust = vi.fn();
+    const target = shell === "ssh" ? session : { kind: "local" as const, id: session.id, name: "Local", group: "", tags: [], shell, startingDirectory: "", runAsAdmin: false };
+    const bindings = { ...shortcuts,
+      terminalFontIncrease: { code: "Equal", ctrl: true, alt: false, shift: false },
+      terminalFontDecrease: { code: "Minus", ctrl: true, alt: false, shift: false },
+    };
+    const view = renderPreservedTerminal({ session: target, shortcuts: bindings, onTerminalFontSizeAdjust: adjust });
+    await waitFor(() => expect(runtimeMocks.keys).toHaveBeenCalledOnce());
+    const handler = runtimeMocks.keys.mock.calls[0][0] as (event: KeyboardEvent) => boolean;
+    const key = (code: string, options: KeyboardEventInit = {}) => new KeyboardEvent("keydown", { code, ctrlKey: true, cancelable: true, ...options });
+    const increase = key("Equal");
+    expect(handler(increase)).toBe(false);
+    expect(increase.defaultPrevented).toBe(true);
+    handler(key("Equal", { repeat: true }));
+    handler(key("Minus"));
+    expect(adjust.mock.calls).toEqual([[1], [1], [-1]]);
+    expect(handler(key("Equal", { isComposing: true }))).toBe(true);
+    view.rerenderTerminal({ session: target, shortcuts: bindings, onTerminalFontSizeAdjust: adjust, visible: false });
+    expect(handler(key("Equal"))).toBe(true);
+    view.rerenderTerminal({ session: target, shortcuts: { ...bindings, terminalFontIncrease: null }, onTerminalFontSizeAdjust: adjust });
+    expect(handler(key("Equal"))).toBe(true);
+    expect(adjust).toHaveBeenCalledTimes(3);
+    expect(apiMocks.writeTerminal).not.toHaveBeenCalled();
+    expect(runtimeMocks.install).toHaveBeenCalledOnce();
   });
 
   it("保活恢复先使用原尺寸，不注入命令，并在恢复后继续处理断线", async () => {

@@ -80,6 +80,7 @@ describe("常规设置分组顺序", () => {
     expect(screen.getByText("settings.localHighlightHint")).toBeTruthy();
     const font = screen.getByRole("combobox", { name: "settings.font" });
     expect(screen.getByText("settings.fontHint")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "settings.theme" }).closest(".settings-row")?.nextElementSibling).toBe(font.closest(".settings-row"));
     font.focus();
     fireEvent.click(font);
     fireEvent.keyDown(font, { key: "ArrowDown" });

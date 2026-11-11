@@ -273,6 +273,10 @@ pub struct ShortcutSettings {
     pub next_tab: Option<ShortcutBinding>,
     #[serde(default = "default_previous_tab")]
     pub previous_tab: Option<ShortcutBinding>,
+    #[serde(default = "default_terminal_font_increase")]
+    pub terminal_font_increase: Option<ShortcutBinding>,
+    #[serde(default = "default_terminal_font_decrease")]
+    pub terminal_font_decrease: Option<ShortcutBinding>,
 }
 
 fn default_new_session() -> Option<ShortcutBinding> {
@@ -285,8 +289,15 @@ fn default_previous_tab() -> Option<ShortcutBinding> {
     Some(ShortcutBinding::new("Tab", true, false, true))
 }
 
+fn default_terminal_font_increase() -> Option<ShortcutBinding> {
+    Some(ShortcutBinding::new("WheelUp", true, false, false))
+}
+fn default_terminal_font_decrease() -> Option<ShortcutBinding> {
+    Some(ShortcutBinding::new("WheelDown", true, false, false))
+}
+
 impl ShortcutSettings {
-    pub fn preserve_existing_bindings(&mut self, missing: [bool; 3]) {
+    pub fn preserve_existing_bindings(&mut self, missing: [bool; 5]) {
         let mut occupied = vec![
             self.terminal_copy.clone(),
             self.terminal_paste.clone(),
@@ -297,6 +308,8 @@ impl ShortcutSettings {
             &mut self.new_session,
             &mut self.next_tab,
             &mut self.previous_tab,
+            &mut self.terminal_font_increase,
+            &mut self.terminal_font_decrease,
         ];
         for (index, binding) in fields.iter().enumerate() {
             if !missing[index] {
@@ -332,6 +345,8 @@ impl Default for ShortcutSettings {
             new_session: default_new_session(),
             next_tab: default_next_tab(),
             previous_tab: default_previous_tab(),
+            terminal_font_increase: default_terminal_font_increase(),
+            terminal_font_decrease: default_terminal_font_decrease(),
         }
     }
 }

@@ -373,8 +373,25 @@ fn validate_shortcut_settings(shortcuts: &ShortcutSettings) -> Result<(), AppErr
         .into_iter()
         .flatten(),
     );
+    let keyboard_count = bindings.len();
+    bindings.extend(
+        [
+            shortcuts.terminal_font_increase.as_ref(),
+            shortcuts.terminal_font_decrease.as_ref(),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     for (index, binding) in bindings.iter().enumerate() {
-        validate_shortcut_binding(binding)?;
+        if index >= keyboard_count && matches!(binding.code.as_str(), "WheelUp" | "WheelDown") {
+            if !binding.ctrl && !binding.alt {
+                return Err(AppError::Validation(
+                    "滚轮快捷键必须包含 Ctrl 或 Alt".to_owned(),
+                ));
+            }
+        } else {
+            validate_shortcut_binding(binding)?;
+        }
         if bindings[..index].contains(binding) {
             return Err(AppError::Validation("快捷键不能重复".to_owned()));
         }
@@ -506,7 +523,14 @@ fn read_store(path: &Path) -> Result<Option<SettingsStore>, AppError> {
             object.insert("proxyEnabled".into(), serde_json::Value::Bool(enabled));
         }
     }
-    let missing_shortcuts = ["newSession", "nextTab", "previousTab"].map(|key| {
+    let missing_shortcuts = [
+        "newSession",
+        "nextTab",
+        "previousTab",
+        "terminalFontIncrease",
+        "terminalFontDecrease",
+    ]
+    .map(|key| {
         wire.get("shortcuts")
             .and_then(|value| value.get(key))
             .is_none()
@@ -569,6 +593,50 @@ mod tests {
             shift: false
         })
         .is_ok());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn font_shortcuts_migrate_clear_and_validate_wheel_scope() {
+        let directory = test_directory("font-shortcuts");
+        let mut json = serde_json::to_value(SettingsStore::default()).unwrap();
+        json["shortcuts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("terminalFontIncrease");
+        json["shortcuts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("terminalFontDecrease");
+        fs::write(
+            directory.join(STORE_FILE),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let mut service = SettingsService::load(&directory);
+        let mut shortcuts = service.get().shortcuts;
+        assert_eq!(
+            shortcuts.terminal_font_increase.as_ref().unwrap().code,
+            "WheelUp"
+        );
+        assert_eq!(
+            shortcuts.terminal_font_decrease.as_ref().unwrap().code,
+            "WheelDown"
+        );
+        shortcuts.terminal_font_increase = None;
+        service.update_shortcut_settings(shortcuts.clone()).unwrap();
+        assert_eq!(SettingsService::load(&directory).get().shortcuts, shortcuts);
+        let wheel = shortcuts.terminal_font_decrease.clone().unwrap();
+        let mut invalid = shortcuts.clone();
+        invalid.terminal_copy = wheel.clone();
+        invalid.terminal_font_decrease = None;
+        assert!(validate_shortcut_settings(&invalid).is_err());
+        invalid = shortcuts.clone();
+        invalid.terminal_font_increase = Some(wheel.clone());
+        assert!(validate_shortcut_settings(&invalid).is_err());
+        invalid = shortcuts;
+        invalid.terminal_font_decrease.as_mut().unwrap().ctrl = false;
+        assert!(validate_shortcut_settings(&invalid).is_err());
         let _ = fs::remove_dir_all(directory);
     }
 
