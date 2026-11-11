@@ -45,7 +45,7 @@ pub(super) fn download_targets(
         .collect()
 }
 
-fn valid_download_name(name: &str) -> bool {
+pub(super) fn valid_download_name(name: &str) -> bool {
     if name.is_empty() || name.contains(['\\', '/', ':']) || name.chars().any(char::is_control) {
         return false;
     }
@@ -90,51 +90,14 @@ pub(super) async fn acquire_download_slot(
     Some(permit)
 }
 
-enum DownloadOutcome {
+pub(super) enum DownloadOutcome {
     Downloaded,
     Skipped,
     Failed(String),
     Cancelled,
 }
 
-pub(super) async fn run_download_batch(
-    manager: ConnectionManager,
-    job: Arc<TransferJob>,
-    connection_id: String,
-    remote_paths: Vec<String>,
-    local_directory: String,
-    slots: Arc<Semaphore>,
-) {
-    let targets = match download_targets(&remote_paths, &local_directory) {
-        Ok(targets) => targets,
-        Err(error) => {
-            job.update(|summary| {
-                summary.state = TransferJobState::Failed;
-                summary.message = Some(error.to_string());
-                summary.queued_count = 0;
-            })
-            .await;
-            return;
-        }
-    };
-    let download_job = job.clone();
-    run_download_queue(
-        job,
-        slots,
-        targets,
-        move |index, remote_path, local_path| {
-            let job = download_job.clone();
-            let manager = manager.clone();
-            let connection_id = connection_id.clone();
-            async move {
-                download_one(manager, job, connection_id, index, remote_path, local_path).await
-            }
-        },
-    )
-    .await;
-}
-
-async fn run_download_queue<F, Fut>(
+pub(super) async fn run_download_queue<F, Fut>(
     job: Arc<TransferJob>,
     slots: Arc<Semaphore>,
     targets: Vec<DownloadTarget>,
@@ -178,6 +141,7 @@ async fn run_download_queue<F, Fut>(
                 };
                 job.update(|summary| {
                     summary.active_count = summary.active_count.saturating_sub(1);
+                    summary.details.processed_items += 1;
                     match outcome {
                         DownloadOutcome::Downloaded => summary.downloaded += 1,
                         DownloadOutcome::Skipped => summary.skipped += 1,
@@ -217,7 +181,11 @@ async fn run_download_queue<F, Fut>(
             summary.active_count = 0;
             summary.queued_count = 0;
             summary.conflict_id = None;
-            summary.state = if worker_failed || summary.failed == summary.batch_total {
+            summary.state = if worker_failed
+                || (summary.failed > 0
+                    && summary.downloaded == 0
+                    && summary.details.completed_directories == 0)
+            {
                 TransferJobState::Failed
             } else {
                 TransferJobState::Completed
@@ -240,7 +208,7 @@ async fn run_download_queue<F, Fut>(
     }
 }
 
-async fn download_one(
+pub(super) async fn download_one(
     manager: ConnectionManager,
     job: Arc<TransferJob>,
     connection_id: String,
@@ -405,6 +373,7 @@ mod tests {
 
     fn download_job(total: u32) -> Arc<TransferJob> {
         Arc::new(TransferJob::new(TransferJobSummary {
+            details: Default::default(),
             job_id: Uuid::new_v4().to_string(),
             runtime_id: Uuid::new_v4().to_string(),
             connection_id: Uuid::new_v4().to_string(),

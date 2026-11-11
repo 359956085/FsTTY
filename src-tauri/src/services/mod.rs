@@ -9,6 +9,7 @@ mod credential_service;
 mod device_metrics_service;
 mod device_service;
 mod lightweight_mode_service;
+pub(crate) mod local_files;
 pub(crate) mod local_terminal_service;
 mod mcp_command_policy_service;
 mod mcp_support_service;

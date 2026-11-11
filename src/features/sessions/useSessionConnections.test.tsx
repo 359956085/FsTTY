@@ -117,11 +117,11 @@ function transferJob(
     jobId: `job-${++transferJobSequence}`,
     runtimeId: request.runtimeId,
     connectionId: request.connectionId,
-    direction: request.kind === "uploadBatch" ? "upload" : "download",
+    direction: request.kind === "permissions" ? "permissions" : request.kind === "uploadBatch" ? "upload" : "download",
     fileName:
       request.kind === "uploadBatch"
         ? request.localPaths[0]?.split(/[\\/]/).pop() ?? "文件"
-        : (request.kind === "downloadBatch" ? request.remotePaths[0] : request.remotePath).split("/").pop() ?? "文件",
+        : (request.kind === "downloadBatch" ? request.remotePaths[0] : request.kind === "permissions" ? request.paths[0] : request.remotePath).split("/").pop() ?? "文件",
     batchIndex: 1,
     batchTotal: request.kind === "uploadBatch" ? request.localPaths.length : request.kind === "downloadBatch" ? request.remotePaths.length : 1,
     transferredBytes: 0,
@@ -728,12 +728,12 @@ describe("会话运行时异步生命周期", () => {
     expect(mocks.resolveTransferJobConflict).toHaveBeenCalledWith("job-1", "skip");
   });
 
-  it("空选区和包含目录的选区不弹出下载对话框", async () => {
+  it("空选区和包含符号链接的选区不弹出下载对话框", async () => {
     const { result } = renderHook(() => useSessionConnections({ devicePollingRuntimeId: "tab-1", errorFallback: "未知错误" }));
     act(() => result.current.handleConnected("session-1", connection));
     await act(async () => {
       await result.current.downloadFiles("session-1", []);
-      await result.current.downloadFiles("session-1", [file("/home/one.txt"), { ...file("/home/folder"), kind: "folder" }]);
+      await result.current.downloadFiles("session-1", [file("/home/one.txt"), { ...file("/home/link"), kind: "symlink" }]);
     });
     expect(mocks.open).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
@@ -871,4 +871,43 @@ describe("会话运行时异步生命周期", () => {
     expect(mocks.cancelTransfer).not.toHaveBeenCalled();
     expect(mocks.attachTransferJob).not.toHaveBeenCalled();
   });
+});
+
+describe("文件管理目录和权限任务", () => {
+  it("单个目录也选择目标目录，保留目录根名称交给后端", async () => {
+    mocks.open.mockResolvedValueOnce("C:/downloads");
+    const {result}=renderHook(()=>useSessionConnections({devicePollingRuntimeId:"tab-1",errorFallback:"error"}));
+    act(()=>result.current.handleConnected("session-1",connection));
+    await act(async()=>result.current.downloadFiles("session-1",[{...file("/home/tree"),kind:"folder"}]));
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.startTransferJob).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({kind:"downloadBatch",remotePaths:["/home/tree"],localDirectory:"C:/downloads"}));
+  });
+  it("权限任务独立接回进度并阻止同标签同时上传",async()=>{
+    const {result}=renderHook(()=>useSessionConnections({devicePollingRuntimeId:"tab-1",errorFallback:"error"}));
+    act(()=>result.current.handleConnected("session-1",connection));
+    const request={paths:["/home/tree"],recursive:true,filePatch:{mask:511,value:416},directoryPatch:{mask:511,value:488}};
+    await act(async()=>result.current.changePermissions("session-1",request));
+    expect(mocks.startTransferJob).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({kind:"permissions",connectionId:connection.connectionId,...request}));
+    await act(async()=>result.current.uploadFiles("session-1",["C:/upload.txt"]));
+    expect(mocks.startTransferJob).toHaveBeenCalledOnce();
+  });
+  it("权限启动迟到时取消旧连接任务，不转移到新连接",async()=>{
+    const pending=deferred<TransferJobSummary>();mocks.startTransferJob.mockReturnValueOnce(pending.promise);
+    const {result}=renderHook(()=>useSessionConnections({devicePollingRuntimeId:"tab-1",errorFallback:"error"}));
+    act(()=>result.current.handleConnected("session-1",connection));
+    let operation!:Promise<void>;
+    act(()=>{operation=result.current.changePermissions("session-1",{paths:["/home/a"],recursive:false,filePatch:{mask:128,value:0},directoryPatch:{mask:0,value:0}});});
+    act(()=>result.current.handleConnected("session-1",{...connection,connectionId:"connection-2"}));
+    pending.resolve(transferJob(mocks.startTransferJob.mock.calls[0][0]));
+    await act(async()=>{await expect(operation).rejects.toThrow();});
+    expect(mocks.cancelTransfer).toHaveBeenCalledWith("job-1");
+  });
+});
+
+it("轻量恢复重新挂接权限进度，保留分类统计且不重复启动",async()=>{
+ const job:TransferJobSummary={...transferJob({kind:"permissions",runtimeId:"session-1",connectionId:"connection-1",paths:["/tree"],recursive:true,filePatch:{mask:511,value:384},directoryPatch:{mask:0,value:0}}),phase:"applying",itemTotal:16,processedItems:5,changedPermissions:3,skipped:2};mocks.transferJobs.set(job.jobId,job);
+ initializeLightweightMode({active:true,suppressConfirmation:false,phase:"detached",terminals:[],transferJobs:[job]});
+ const {result,unmount}=renderHook(()=>useSessionConnections({devicePollingRuntimeId:"tab-1",errorFallback:"error"}));
+ await waitFor(()=>expect(result.current.runtimes["session-1"]?.transfer?.changedPermissions).toBe(3));
+ expect(mocks.startTransferJob).not.toHaveBeenCalled();unmount();expect(mocks.cancelTransfer).not.toHaveBeenCalled();
 });

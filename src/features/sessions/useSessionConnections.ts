@@ -32,10 +32,16 @@ import { createTransferJobSubscription } from "./sessionTransferJob";
 export interface TransferProgress {
   id: string;
   connectionId?: string;
-  direction: "upload" | "download";
+  direction: "upload" | "download" | "permissions";
+  phase?: string | null;
+  itemTotal?: number;
+  processedItems?: number;
+  completedDirectories?: number;
+  changedPermissions?: number;
   fileName: string;
   batchIndex?: number;
   batchTotal?: number;
+  uploaded?: number;
   downloaded?: number;
   skipped?: number;
   failed?: number;
@@ -45,7 +51,7 @@ export interface TransferProgress {
   totalBytes: number;
   speedBytesPerSecond: number;
   speedUpdatedAtMs: number;
-  state: "running" | "completed" | "cancelled";
+  state: "running" | "completed" | "cancelled" | "failed";
 }
 
 export interface SessionRuntime {
@@ -411,7 +417,7 @@ export function useSessionConnections({
           return conflictJob.direction === "upload" || conflictJob.batchTotal > 1 ? "skip" : "cancel";
         },
         onTerminal: (terminalJob) => {
-          if (terminalJob.direction !== "upload") return;
+          if (terminalJob.direction === "download") return;
           const runtime = runtimesRef.current[terminalJob.runtimeId];
           if (runtime?.connection?.connectionId === terminalJob.connectionId) {
             void loadFiles(
@@ -458,7 +464,7 @@ export function useSessionConnections({
   }, [attachTransferJob]);
 
   const uploadFiles = useCallback(
-    async (sessionId: string, localPaths: string[]) => {
+    async (sessionId: string, localPaths: string[], remoteDirectory?: string) => {
       const paths = localPaths.filter(Boolean);
       const runtime = runtimesRef.current[sessionId];
       if (
@@ -483,7 +489,7 @@ export function useSessionConnections({
           runtimeId: sessionId,
           connectionId,
           localPaths: paths,
-          remoteDirectory: runtime.currentPath,
+          remoteDirectory: remoteDirectory ?? runtime.currentPath,
         });
         // WebView 卸载不撤销 Rust 已接管的任务；仅仍存活的界面负责取消旧连接任务。
         if (!runtimeControllerRef.current.isActive()) return;
@@ -558,12 +564,13 @@ export function useSessionConnections({
         if (
           !runtime?.connection?.sftpAvailable ||
           runtime.transfer?.state === "running" ||
-          files.length === 0 || files.some((file) => file.kind !== "file")
+          files.length === 0 || files.some((file) => file.kind !== "file" && file.kind !== "folder")
         ) {
           return;
         }
         if (!runtimeControllerRef.current.startUploadBatch(sessionId, startToken)) return;
-        const selected = files.length === 1
+        const singleFile = files.length === 1 && files[0].kind === "file";
+        const selected = singleFile
           ? await save({
               defaultPath: files[0].name,
               title: i18n.t("sessions.saveDownloadFile"),
@@ -591,7 +598,7 @@ export function useSessionConnections({
             .acknowledgeTransferJob(selectedRuntime.transfer.id)
             .catch(() => undefined);
         }
-        const job = await api.startTransferJob(files.length === 1 ? {
+        const job = await api.startTransferJob(singleFile ? {
           kind: "download",
           runtimeId: sessionId,
           connectionId,
@@ -697,7 +704,25 @@ export function useSessionConnections({
     [errorFallback, updateRuntime],
   );
 
+  const changePermissions = useCallback(async (sessionId: string, request: import("../../shared/api/types").PermissionChange) => {
+    const runtime = runtimesRef.current[sessionId];
+    if (!runtime?.connection?.sftpAvailable || runtime.transfer?.state === "running") throw new Error(i18n.t("sessions.fileOperationBusy"));
+    const connectionId = runtime.connection.connectionId;
+    const token = crypto.randomUUID();
+    if (!runtimeControllerRef.current.startUploadBatch(sessionId, token)) throw new Error(i18n.t("sessions.fileOperationBusy"));
+    try {
+      if (runtime.transfer) await api.acknowledgeTransferJob(runtime.transfer.id).catch(() => undefined);
+      const job = await api.startTransferJob({ kind: "permissions", runtimeId: sessionId, connectionId, ...request });
+      if (!runtimeControllerRef.current.isActive()) return;
+      if (runtimesRef.current[sessionId]?.connection?.connectionId !== connectionId) {
+        await api.cancelTransfer(job.jobId); throw new Error(i18n.t("fileManagement.connectionChanged"));
+      }
+      await attachTransferJob(job);
+    } finally { runtimeControllerRef.current.endUploadBatch(sessionId, token); }
+  }, [attachTransferJob]);
+
   return {
+    changePermissions,
     cancelTransfer,
     createRemoteDirectory,
     deleteRemoteEntry,

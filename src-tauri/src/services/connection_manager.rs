@@ -1,3 +1,4 @@
+mod file_operations;
 #[cfg(test)]
 use super::connection_paths::join_remote_path;
 use super::connection_paths::normalize_remote_path;
@@ -2111,3 +2112,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(test_dir);
     }
 }
+
+#[cfg(test)]
+mod file_operations_tests;

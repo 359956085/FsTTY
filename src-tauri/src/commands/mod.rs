@@ -48,3 +48,6 @@ pub use update_commands::{check_app_update, close_app_update, install_app_update
 
 mod local_terminal_commands;
 pub use local_terminal_commands::*;
+
+mod file_management_commands;
+pub use file_management_commands::*;

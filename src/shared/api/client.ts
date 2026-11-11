@@ -197,6 +197,15 @@ export const api = {
   acknowledgeTransferJob(jobId: string) {
     return invoke<void>("acknowledge_transfer_job", { jobId });
   },
+  getLocalUploadLocations() {
+    return invoke<{ locations: import("./types").LocalUploadLocation[]; initialPath: string | null }>("get_local_upload_locations");
+  },
+  listLocalUploadEntries(path: string) {
+    return invoke<import("./types").LocalUploadDirectory>("list_local_upload_entries", { path });
+  },
+  getRemotePermissions(connectionId: string, paths: string[]) {
+    return invoke<import("./types").RemotePermissionEntry[]>("get_remote_permissions", { connectionId, paths });
+  },
   listRemoteFiles(connectionId: string, path: string) {
     return invoke<FileEntry[]>("list_remote_files", { connectionId, path });
   },

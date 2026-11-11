@@ -1,3 +1,5 @@
+import { LocalUploadPicker } from "./LocalUploadPicker";
+import { PermissionDialog } from "./PermissionDialog";
 import { TooltipButton } from "../../shared/ui/TooltipButton";
 import {
   Ban,
@@ -91,7 +93,8 @@ interface FilesPaneProps {
   onRefresh: () => void;
   onRenameEntry: (path: string, newName: string) => Promise<void>;
   onUpload: () => void;
-  onUploadFiles: (localPaths: string[]) => void;
+  onUploadFiles: (localPaths: string[], remoteDirectory?: string) => void;
+  onChangePermissions?: (request: import("../../shared/api/types").PermissionChange) => Promise<void>;
 }
 
 type FileContextMenu =
@@ -135,8 +138,8 @@ export function FilesPane({
   onOpenPath,
   onRefresh,
   onRenameEntry,
-  onUpload,
   onUploadFiles,
+  onChangePermissions,
   sftpAvailable,
   transfer,
 }: FilesPaneProps) {
@@ -144,6 +147,33 @@ export function FilesPane({
   const panelRef = useRef<HTMLElement>(null);
   const { adjustFileColumn, beginFileColumnResize, fileColumns, tableRef } =
     useFileColumnResizing();
+  const [uploadTarget, setUploadTarget] = useState<{ path: string; connectionId: string; upload: (paths: string[], remoteDirectory?: string) => void } | null>(null);
+  const [permissionTarget, setPermissionTarget] = useState<{ files: FileEntry[]; connectionId: string; apply: (request: import("../../shared/api/types").PermissionChange) => Promise<void> } | null>(null);
+  const [contextNotice, setContextNotice] = useState(false);
+  const dialogOpenRef = useRef(false);
+  dialogOpenRef.current = uploadTarget !== null || permissionTarget !== null;
+  const contextConnectionRef = useRef(connectionId);
+  const openUpload = () => { setContextNotice(false); if (connectionId) setUploadTarget({ path: currentPath, connectionId, upload: onUploadFiles }); };
+  const closeUploadPicker = () => {
+    const originalConnection = connectionId;
+    setUploadTarget(null);
+    // The trigger is disabled while this dialog is open. Restore after the
+    // close commit enables it; the dialog cleanup runs before that update.
+    requestAnimationFrame(() => {
+      if (contextConnectionRef.current !== originalConnection || dialogOpenRef.current || document.activeElement !== document.body) return;
+      const button = panelRef.current?.querySelector<HTMLButtonElement>("[data-file-upload]");
+      const target = button && !button.disabled ? button : tableRef.current;
+      target?.focus({preventScroll:true});
+    });
+  };
+  const openPermissions = (files: FileEntry[]) => { setContextNotice(false); if (connectionId && onChangePermissions) setPermissionTarget({ files, connectionId, apply: onChangePermissions }); };
+  useEffect(() => {
+    if (contextConnectionRef.current === connectionId) return;
+    contextConnectionRef.current = connectionId;
+    if (dialogOpenRef.current) setContextNotice(true);
+    setUploadTarget(null);
+    setPermissionTarget(null);
+  }, [connectionId]);
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(new Set());
   const selectionAnchorRef = useRef<string | null>(null);
   const selectionRevisionRef = useRef(0);
@@ -213,6 +243,7 @@ export function FilesPane({
   const transferRunning = transfer?.state === "running";
   const operationBlocked =
     !sftpAvailable ||
+    uploadTarget !== null || permissionTarget !== null ||
     loading ||
     transferRunning ||
     operationPending ||
@@ -379,9 +410,14 @@ export function FilesPane({
     [i18n.language, i18n.resolvedLanguage],
   );
   const parentPath = remoteParentPath(currentPath);
-  const progressPercent = transfer?.totalBytes
-    ? Math.min(100, Math.round((transfer.transferredBytes / transfer.totalBytes) * 100))
+  const itemProgress = transfer?.itemTotal
+    ? Math.min(100, Math.round((transfer.processedItems ?? 0) / transfer.itemTotal * 100))
     : 0;
+  const progressPercent = transfer?.state === "completed" ? 100
+    : transfer?.direction === "permissions" ? itemProgress
+    : transfer?.totalBytes
+      ? Math.min(100, Math.round(transfer.transferredBytes / transfer.totalBytes * 100))
+      : itemProgress;
   const displayedSpeed =
     transferRunning &&
     transfer &&
@@ -766,7 +802,7 @@ export function FilesPane({
             label={t("sessions.upload")}
             className="icon-button"
             disabled={operationBlocked}
-            onClick={onUpload}
+            data-file-upload onClick={openUpload}
             type="button"
           >
             <Upload size={17} />
@@ -1046,7 +1082,7 @@ export function FilesPane({
                     label: t("sessions.upload"),
                     icon: <Upload size={15} />,
                     disabled: operationBlocked,
-                    onSelect: onUpload,
+                    onSelect: openUpload,
                   },
                   {
                     id: "copyCurrentFolderPath",
@@ -1064,11 +1100,16 @@ export function FilesPane({
                 ]
               : contextMenu.files.length > 1
                 ? [
+{
+                    id: "permissions", label: t("fileManagement.permissions"), icon: <Pencil size={15} />,
+                    disabled: operationBlocked || !onChangePermissions || !contextMenu.files.some(file => file.kind === "file" || file.kind === "folder"),
+                    onSelect: () => openPermissions(contextMenu.files),
+                  },
                     {
                       id: "download",
                       label: t("sessions.download"),
                       icon: <Download size={15} />,
-                      disabled: operationBlocked || contextMenu.files.some((file) => file.kind !== "file"),
+                      disabled: operationBlocked || contextMenu.files.some((file) => file.kind !== "file" && file.kind !== "folder"),
                       onSelect: () => onDownloadFiles(contextMenu.files),
                     },
                     {
@@ -1081,6 +1122,11 @@ export function FilesPane({
                     },
                   ]
                 : [
+{
+                    id: "permissions", label: t("fileManagement.permissions"), icon: <Pencil size={15} />,
+                    disabled: operationBlocked || !onChangePermissions || !contextMenu.files.some(file => file.kind === "file" || file.kind === "folder"),
+                    onSelect: () => openPermissions(contextMenu.files),
+                  },
                   ...(contextMenu.file.kind === "folder"
                     ? [
                         {
@@ -1089,6 +1135,7 @@ export function FilesPane({
                           icon: <FolderOpen size={15} />,
                           onSelect: () => onOpenPath(contextMenu.file.path),
                         },
+                        { id: "download", label: t("sessions.download"), icon: <Download size={15}/>, disabled: operationBlocked, onSelect: () => onDownloadFiles([contextMenu.file]) },
                       ]
                     : contextMenu.file.kind === "file"
                       ? [
@@ -1234,12 +1281,15 @@ export function FilesPane({
         </div>
       ) : null}
 
+      {contextNotice && <p className="form-error" role="alert">{t("fileManagement.connectionChanged")}</p>}
+      {uploadTarget && <LocalUploadPicker remoteDirectory={uploadTarget.path} onClose={closeUploadPicker} onUpload={(paths) => { if (connectionId !== uploadTarget.connectionId) throw new Error(t("fileManagement.connectionChanged")); uploadTarget.upload(paths, uploadTarget.path); }} returnFocus={() => panelRef.current?.querySelector<HTMLElement>("[data-file-upload]") ?? null} />}
+      {permissionTarget && <PermissionDialog connectionId={permissionTarget.connectionId} files={permissionTarget.files} onClose={() => setPermissionTarget(null)} onApply={permissionTarget.apply} returnFocus={() => tableRef.current} />}
       {transfer ? (
         <section className={`transfer-bar transfer-${transfer.state}`}>
           <span>
-            {transfer.direction === "upload" ? <Upload size={15} /> : <Download size={15} />}
+            {transfer.direction === "permissions" ? <Pencil size={15}/> : transfer.direction === "upload" ? <Upload size={15} /> : <Download size={15} />}
             <strong>
-              {transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1
+              {transfer.phase === "scanning" && transferRunning ? t("fileManagement.scanning") : transfer.direction === "permissions" ? t("fileManagement.permissions") : transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1
                 ? t("sessions.downloadBatchProgress", {
                     completed: (transfer.downloaded ?? 0) + (transfer.skipped ?? 0) + (transfer.failed ?? 0),
                     total: transfer.batchTotal,
@@ -1250,7 +1300,7 @@ export function FilesPane({
                 : ""}
             </strong>
           </span>
-          <span className="transfer-track">
+          <span className="transfer-track" role="progressbar" aria-label={t(transfer.direction === "permissions" ? "fileManagement.permissions" : "fileManagement.taskProgress", {done:transfer.processedItems??0,total:transfer.itemTotal??1})} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
             <span style={{ width: `${progressPercent}%` }} />
           </span>
           <em>
@@ -1258,8 +1308,9 @@ export function FilesPane({
               ? t("sessions.transferCompleted")
               : transfer.state === "cancelled"
                 ? t("sessions.transferCancelled")
-                : `${progressPercent}% · ${formatTransferSpeed(displayedSpeed)}`}
+                : transfer.state === "failed" ? t("fileManagement.operationFailed") : transfer.direction === "permissions" || transfer.phase === "scanning" ? `${progressPercent}%` : `${progressPercent}% · ${formatTransferSpeed(displayedSpeed)}`}
           </em>
+          {transfer.itemTotal !== undefined && transfer.itemTotal > 0 ? <small className="transfer-queue-status" role="status">{transfer.direction === "permissions" ? t("fileManagement.permissionProgress", {done:transfer.processedItems??0,total:transfer.itemTotal,changed:transfer.changedPermissions??0,skipped:transfer.skipped??0,failed:transfer.failed??0}) : t("fileManagement.taskSummary",{files:transfer.direction==="upload"?transfer.uploaded??0:transfer.downloaded??0,directories:transfer.completedDirectories??0,skipped:transfer.skipped??0,failed:transfer.failed??0})}</small> : null}
           {transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1 ? (
             <small className="transfer-queue-status" role="status">
               {transferRunning
@@ -1269,7 +1320,7 @@ export function FilesPane({
           ) : null}
           {transferRunning ? (
             <button
-              aria-label={t("sessions.cancelTransfer")}
+              aria-label={t(transfer.direction === "permissions" ? "fileManagement.cancelOperation" : "sessions.cancelTransfer")}
               onClick={onCancelTransfer}
               type="button"
             >

@@ -5,3 +5,5 @@
 @import "./styles/shared.css";
 @import "./styles/settings.css";
 @import "./styles/settings-theme.css";
+
+@import "./styles/file-management.css";

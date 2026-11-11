@@ -455,7 +455,13 @@ export type TransferEvent =
       totalBytes: number;
     };
 
-export type TransferJobDirection = "upload" | "download";
+export interface PermissionChange { paths: string[]; recursive: boolean; filePatch: PermissionPatch; directoryPatch: PermissionPatch }
+export interface PermissionPatch { mask: number; value: number }
+export interface RemotePermissionEntry { path: string; name: string; kind: FileEntry["kind"]; mode: number | null; size: number; owner: string; group: string }
+export interface LocalUploadEntry { path: string; name: string; kind: FileEntry["kind"]; size: number | null; modifiedAt: number | null }
+export interface LocalUploadLocation { label: string; path: string }
+export interface LocalUploadDirectory { path: string; parent: string | null; entries: LocalUploadEntry[]; truncated: boolean }
+export type TransferJobDirection = "upload" | "download" | "permissions";
 export type TransferJobState =
   | "running"
   | "waitingForConflict"
@@ -464,6 +470,7 @@ export type TransferJobState =
   | "failed";
 
 export type StartTransferJobRequest =
+  | { kind: "permissions"; runtimeId: string; connectionId: string; paths: string[]; recursive: boolean; filePatch: PermissionPatch; directoryPatch: PermissionPatch }
   | {
       kind: "uploadBatch";
       runtimeId: string;
@@ -487,6 +494,11 @@ export type StartTransferJobRequest =
     };
 
 export interface TransferJobSummary {
+  phase?: "scanning" | "transferring" | "applying" | null;
+  itemTotal?: number;
+  processedItems?: number;
+  completedDirectories?: number;
+  changedPermissions?: number;
   jobId: string;
   runtimeId: string;
   connectionId: string;

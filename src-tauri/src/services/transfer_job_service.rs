@@ -1,4 +1,5 @@
 mod download_batch;
+mod tree;
 
 use super::connection_manager::{TransferReporter, MAX_CONCURRENT_DOWNLOADS};
 use super::connection_paths::normalize_remote_path;
@@ -156,6 +157,7 @@ impl TransferJobService {
             validate_request(&connection_manager, &request).await?;
         let job_id = Uuid::new_v4().to_string();
         let summary = TransferJobSummary {
+            details: Default::default(),
             job_id: job_id.clone(),
             runtime_id,
             connection_id,
@@ -200,13 +202,32 @@ impl TransferJobService {
         let download_slots = self.download_slots.clone();
         tauri::async_runtime::spawn(async move {
             match request {
+                StartTransferJobRequest::Permissions {
+                    connection_id,
+                    paths,
+                    recursive,
+                    file_patch,
+                    directory_patch,
+                    ..
+                } => {
+                    tree::run_permissions(
+                        connection_manager,
+                        job,
+                        connection_id,
+                        paths,
+                        recursive,
+                        file_patch,
+                        directory_patch,
+                    )
+                    .await;
+                }
                 StartTransferJobRequest::UploadBatch {
                     connection_id,
                     local_paths,
                     remote_directory,
                     ..
                 } => {
-                    run_upload_batch(
+                    tree::run_upload_tree(
                         connection_manager,
                         job,
                         connection_id,
@@ -237,7 +258,7 @@ impl TransferJobService {
                     local_directory,
                     ..
                 } => {
-                    download_batch::run_download_batch(
+                    tree::run_download_tree(
                         connection_manager,
                         job,
                         connection_id,
@@ -414,6 +435,33 @@ async fn validate_request(
     request: &StartTransferJobRequest,
 ) -> Result<(String, String, TransferJobDirection, String, u32), AppError> {
     let (runtime_id, connection_id, direction, file_name, batch_total) = match request {
+        StartTransferJobRequest::Permissions {
+            runtime_id,
+            connection_id,
+            paths,
+            file_patch,
+            directory_patch,
+            ..
+        } => {
+            if paths.is_empty()
+                || paths.len() > 256
+                || (file_patch.mask | directory_patch.mask) == 0
+            {
+                return Err(AppError::Validation("权限修改参数无效".into()));
+            }
+            file_patch.validate()?;
+            directory_patch.validate()?;
+            for path in paths {
+                normalize_remote_path(path)?;
+            }
+            (
+                runtime_id,
+                connection_id,
+                TransferJobDirection::Permissions,
+                remote_file_name(&paths[0]),
+                paths.len() as u32,
+            )
+        }
         StartTransferJobRequest::UploadBatch {
             runtime_id,
             connection_id,
@@ -459,7 +507,11 @@ async fn validate_request(
             remote_paths,
             local_directory,
         } => {
-            let files = download_batch::download_targets(remote_paths, local_directory)?;
+            if remote_paths.len() > 10_000 {
+                return Err(AppError::Validation("批量下载参数无效".into()));
+            }
+            let roots = tree::remote_roots(remote_paths.clone())?;
+            let files = download_batch::download_targets(&roots, local_directory)?;
             (
                 runtime_id,
                 connection_id,
@@ -487,99 +539,6 @@ fn valid_local_path(path: &str) -> bool {
         && path.len() <= 32 * 1024
         && Path::new(path).is_absolute()
         && !path.chars().any(char::is_control)
-}
-
-async fn run_upload_batch(
-    connection_manager: ConnectionManager,
-    job: Arc<TransferJob>,
-    connection_id: String,
-    local_paths: Vec<String>,
-    remote_directory: String,
-) {
-    for (index, local_path) in local_paths.iter().enumerate() {
-        if job.cancelled.load(Ordering::Acquire) {
-            finish_cancelled(&job).await;
-            return;
-        }
-        let file_name = local_file_name(local_path);
-        job.update(|summary| {
-            summary.file_name = file_name.clone();
-            summary.batch_index = index as u32 + 1;
-            summary.transferred_bytes = 0;
-            summary.total_bytes = 0;
-            summary.state = TransferJobState::Running;
-            summary.message = None;
-        })
-        .await;
-
-        let mut overwrite = false;
-        loop {
-            let transfer_id = Uuid::new_v4().to_string();
-            job.set_active_transfer(Some(transfer_id.clone())).await;
-            let (reporter, progress_task) = job_reporter(job.clone(), transfer_id.clone());
-            let result = connection_manager
-                .upload_file_reported(
-                    &connection_id,
-                    &transfer_id,
-                    local_path,
-                    &remote_directory,
-                    overwrite,
-                    reporter,
-                )
-                .await;
-            let _ = progress_task.await;
-            job.set_active_transfer(None).await;
-            if job.cancelled.load(Ordering::Acquire) {
-                finish_cancelled(&job).await;
-                return;
-            }
-            match result {
-                Ok(()) => {
-                    job.update(|summary| summary.uploaded += 1).await;
-                    break;
-                }
-                Err(AppError::Conflict(_)) if !overwrite => {
-                    job.update(|summary| summary.state = TransferJobState::WaitingForConflict)
-                        .await;
-                    match wait_for_conflict_decision(&connection_manager, &job, &connection_id)
-                        .await
-                    {
-                        TransferConflictDecision::Overwrite => {
-                            overwrite = true;
-                            job.update(|summary| summary.state = TransferJobState::Running)
-                                .await;
-                        }
-                        TransferConflictDecision::Skip => {
-                            job.update(|summary| summary.skipped += 1).await;
-                            break;
-                        }
-                        TransferConflictDecision::Cancel => {
-                            finish_cancelled(&job).await;
-                            return;
-                        }
-                    }
-                }
-                Err(error) => {
-                    job.update(|summary| {
-                        summary.failed += 1;
-                        summary.message = Some(error.to_string());
-                    })
-                    .await;
-                    break;
-                }
-            }
-        }
-    }
-    job.update(|summary| {
-        summary.state = TransferJobState::Completed;
-        if summary.skipped > 0 || summary.failed > 0 {
-            summary.message = Some(format!(
-                "上传结束：成功 {}，跳过 {}，失败 {}",
-                summary.uploaded, summary.skipped, summary.failed
-            ));
-        }
-    })
-    .await;
 }
 
 async fn run_download(
@@ -655,7 +614,6 @@ async fn run_download(
                     summary.active_count = 0;
                     summary.failed = 1;
                     summary.message = Some(error.to_string());
-                    summary.failed = 1;
                 })
                 .await;
                 return;
@@ -745,6 +703,7 @@ mod tests {
 
     fn summary(state: TransferJobState) -> TransferJobSummary {
         TransferJobSummary {
+            details: Default::default(),
             job_id: Uuid::new_v4().to_string(),
             runtime_id: Uuid::new_v4().to_string(),
             connection_id: Uuid::new_v4().to_string(),
@@ -964,8 +923,9 @@ mod tests {
             let job = Arc::new(TransferJob::new(summary(TransferJobState::Running)));
             job.cancelled.store(true, Ordering::Release);
             match direction {
+                TransferJobDirection::Permissions => unreachable!("test covers transfers"),
                 TransferJobDirection::Upload => {
-                    run_upload_batch(
+                    tree::run_upload_tree(
                         manager.clone(),
                         job.clone(),
                         "missing".to_owned(),

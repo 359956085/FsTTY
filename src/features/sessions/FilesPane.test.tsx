@@ -5,6 +5,7 @@ import { cloneElement, StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../../shared/api/types";
 import { FilesPane } from "./FilesPane";
+import type {TransferProgress} from "./useSessionConnections";
 
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
@@ -26,6 +27,8 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const picker = vi.hoisted(() => ({locations:vi.fn(),list:vi.fn()}));
+vi.mock("../../shared/api/client",()=>({api:{getLocalUploadLocations:picker.locations,listLocalUploadEntries:picker.list}}));
 const writeText = vi.fn<(text: string) => Promise<void>>();
 
 afterEach(() => {
@@ -40,6 +43,9 @@ interface RenderFilesPaneOptions {
   onRenameEntry?: (path: string, newName: string) => Promise<void>;
   onDownloadFiles?: (files: FileEntry[]) => void;
   strict?: boolean;
+  transfer?: TransferProgress;
+  connectionId?: string;
+  onUploadFiles?: (paths:string[],target?:string)=>void;
 }
 
 function deferred<T>() {
@@ -59,6 +65,7 @@ function renderFilesPane(files: FileEntry[] = [], options: RenderFilesPaneOption
 
   const pane = (
     <FilesPane
+      connectionId={options.connectionId}
       currentPath="/srv/apps"
       files={files}
       loading={false}
@@ -82,9 +89,9 @@ function renderFilesPane(files: FileEntry[] = [], options: RenderFilesPaneOption
       onRefresh={vi.fn()}
       onRenameEntry={options.onRenameEntry ?? vi.fn().mockResolvedValue(undefined)}
       onUpload={vi.fn()}
-      onUploadFiles={vi.fn()}
+      onUploadFiles={options.onUploadFiles ?? vi.fn()}
       sftpAvailable
-      transfer={null}
+      transfer={options.transfer ?? null}
     />
   );
   const rendered = render(options.strict ? <StrictMode>{pane}</StrictMode> : pane);
@@ -92,6 +99,7 @@ function renderFilesPane(files: FileEntry[] = [], options: RenderFilesPaneOption
     ...rendered,
     rerenderFiles: (nextFiles: FileEntry[], currentPath = "/srv/apps", loading = false) =>
       rendered.rerender(cloneElement(pane, { files: nextFiles, currentPath, loading })),
+    rerenderConnection: (connectionId:string) => rendered.rerender(cloneElement(pane,{connectionId})),
   };
 }
 
@@ -165,16 +173,15 @@ describe("FilesPane 批量选择与操作", () => {
     expect(selected()).toEqual([]);
   });
 
-  it("右键已选条目保留多选，菜单仅包含下载和删除，并下载整个选区", () => {
+  it("右键已选条目保留多选，菜单包含批量操作，并下载整个选区", () => {
     const onDownloadFiles = vi.fn();
     renderFilesPane(files, { onDownloadFiles });
     fireEvent.click(row(0));
     fireEvent.click(row(6), { shiftKey: true });
     fireEvent.contextMenu(row(3));
     expect(selected()).toEqual(files.map((file) => file.name));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "sessions.download", "sessions.deleteRemoteEntry",
-    ]);
+    expect(screen.getByRole("menuitem", { name: "fileManagement.permissions" })).toBeDefined();
+    expect(screen.getByRole("menuitem", { name: "sessions.deleteRemoteEntry" })).toBeDefined();
     fireEvent.click(screen.getByRole("menuitem", { name: "sessions.download" }));
     expect(onDownloadFiles).toHaveBeenCalledExactlyOnceWith(files);
   });
@@ -187,11 +194,11 @@ describe("FilesPane 批量选择与操作", () => {
     expect(screen.getByRole("menuitem", { name: "sessions.renameRemoteEntry" })).toBeDefined();
   });
 
-  it("混合文件夹选择仍有下载和删除菜单，下载禁用", () => {
+  it("混合文件夹选择支持下载和删除", () => {
     renderFilesPane([{ ...files[0], kind: "folder" }, ...files.slice(1)]);
     fireEvent.click(row(1), { shiftKey: true });
     fireEvent.contextMenu(row(0));
-    expect(screen.getByRole("menuitem", { name: "sessions.download" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("menuitem", { name: "sessions.download" }).hasAttribute("disabled")).toBe(false);
     expect(screen.getByRole("menuitem", { name: "sessions.deleteRemoteEntry" }).hasAttribute("disabled")).toBe(false);
   });
 
@@ -431,4 +438,40 @@ describe("FilesPane 右键菜单", () => {
     expect(setPointerCapture).toHaveBeenCalledWith(7);
     expect(releasePointerCapture).toHaveBeenCalledWith(7);
   });
+});
+
+describe("上传窗口连接和目录快照",()=>{
+  const prepare=()=>{
+    picker.locations.mockResolvedValue({initialPath:"C:/local",locations:[{label:"home",path:"C:/local"}]});
+    picker.list.mockResolvedValue({path:"C:/local",parent:"C:/",entries:[{name:"a.txt",path:"C:/local/a.txt",kind:"file",size:1,modifiedAt:null}],truncated:false});
+  };
+  it("目录在后台变化后仍上传到打开时的路径",async()=>{
+    prepare();const upload=vi.fn();const view=renderFilesPane([],{connectionId:"original",onUploadFiles:upload});
+    fireEvent.click(screen.getByRole("button",{name:"sessions.upload"}));
+    fireEvent.click(await screen.findByRole("checkbox",{name:"a.txt"}));
+    view.rerenderFiles([],"/different");
+    fireEvent.click(screen.getByRole("button",{name:"fileManagement.uploadCount"}));
+    await waitFor(()=>expect(upload).toHaveBeenCalledExactlyOnceWith(["C:/local/a.txt"],"/srv/apps"));
+  });
+  it("新连接使原选择失效并显示说明，不转发到新连接",async()=>{
+    prepare();const upload=vi.fn();const view=renderFilesPane([],{connectionId:"original",onUploadFiles:upload});
+    fireEvent.click(screen.getByRole("button",{name:"sessions.upload"}));
+    await screen.findByRole("checkbox",{name:"a.txt"});view.rerenderConnection("replacement");
+    expect(await screen.findByRole("alert")).toBeDefined();expect(screen.queryByRole("dialog")).toBeNull();expect(upload).not.toHaveBeenCalled();
+  });
+});
+
+it.each(["upload","download","permissions"] as const)("%s preserves byte progress or permission item progress",direction=>{
+ renderFilesPane([],{transfer:{id:"job",direction,fileName:"a",transferredBytes:50,totalBytes:100,itemTotal:4,processedItems:1,speedBytesPerSecond:0,speedUpdatedAtMs:0,state:"running"}});
+ expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe(direction==="permissions"?"25":"50");
+});
+
+it("Escape restores the disabled upload trigger after closing the picker",async()=>{
+ picker.locations.mockResolvedValue({initialPath:"C:/local",locations:[{label:"home",path:"C:/local"}]});
+ picker.list.mockResolvedValue({path:"C:/local",parent:"C:/",entries:[],truncated:false});
+ renderFilesPane([],{connectionId:"original"});
+ const trigger=screen.getByRole("button",{name:"sessions.upload"});trigger.focus();fireEvent.click(trigger);
+ await screen.findByRole("dialog");expect((trigger as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.keyDown(document.activeElement!,{key:"Escape"});
+ await waitFor(()=>expect(document.activeElement).toBe(trigger));
 });

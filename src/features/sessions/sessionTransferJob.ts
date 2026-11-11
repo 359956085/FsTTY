@@ -29,7 +29,7 @@ interface TransferJobSubscriptionOptions {
 
 function visibleState(job: TransferJobSummary): TransferProgress["state"] {
   if (job.state === "completed") return "completed";
-  if (job.state === "cancelled" || job.state === "failed") return "cancelled";
+  if (job.state === "cancelled" || job.state === "failed") return job.state;
   return "running";
 }
 
@@ -105,9 +105,15 @@ export function createTransferJobSubscription(
         id: job.jobId,
         connectionId: job.connectionId,
         direction: job.direction,
+        phase: job.phase,
+        itemTotal: job.itemTotal,
+        processedItems: job.processedItems,
+        completedDirectories: job.completedDirectories,
+        changedPermissions: job.changedPermissions,
         fileName: job.fileName,
         batchIndex: job.batchTotal > 1 ? job.batchIndex : undefined,
         batchTotal: job.batchTotal > 1 ? job.batchTotal : undefined,
+        uploaded: job.uploaded,
         downloaded: job.downloaded,
         skipped: job.skipped,
         failed: job.failed,

@@ -1,3 +1,4 @@
+use super::PermissionPatch;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -7,6 +8,14 @@ use serde::{Deserialize, Serialize};
     rename_all_fields = "camelCase"
 )]
 pub enum StartTransferJobRequest {
+    Permissions {
+        runtime_id: String,
+        connection_id: String,
+        paths: Vec<String>,
+        recursive: bool,
+        file_patch: PermissionPatch,
+        directory_patch: PermissionPatch,
+    },
     UploadBatch {
         runtime_id: String,
         connection_id: String,
@@ -30,6 +39,7 @@ pub enum StartTransferJobRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TransferJobDirection {
+    Permissions,
     Upload,
     Download,
 }
@@ -53,6 +63,8 @@ impl TransferJobState {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferJobSummary {
+    #[serde(flatten)]
+    pub details: FileJobDetails,
     pub job_id: String,
     pub runtime_id: String,
     pub connection_id: String,
@@ -89,4 +101,14 @@ pub enum TransferConflictDecision {
 )]
 pub enum TransferJobEvent {
     Updated { job: TransferJobSummary },
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileJobDetails {
+    pub phase: Option<String>,
+    pub item_total: u32,
+    pub processed_items: u32,
+    pub completed_directories: u32,
+    pub changed_permissions: u32,
 }

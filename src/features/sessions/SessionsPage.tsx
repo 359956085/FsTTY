@@ -225,6 +225,7 @@ export function SessionsPage({
         onCloseTab={(tabId) => void closeTab(tabId)}
         onConnected={handleConnected}
         onCredentialSaved={sessionsState.refreshSessions}
+        onChangePermissions={connections.changePermissions}
         onCreateRemoteDirectory={connections.createRemoteDirectory}
         onCreateSession={openCreateSession}
         createSessionButtonRef={createSessionButtonRef}

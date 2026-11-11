@@ -74,7 +74,8 @@ interface WorkspaceProps {
   ) => void;
   onToggleRight: () => void;
   onUpload: (tabId: string) => void;
-  onUploadFiles: (tabId: string, localPaths: string[]) => void;
+  onUploadFiles: (tabId: string, localPaths: string[], remoteDirectory?: string) => void;
+  onChangePermissions?: (tabId: string, request: import("../../shared/api/types").PermissionChange) => Promise<void>;
 }
 
 export function Workspace({
@@ -107,6 +108,7 @@ export function Workspace({
   onToggleRight,
   onUpload,
   onUploadFiles,
+  onChangePermissions,
   openTabs,
   rightCollapsed,
   hideRightPanel = false,
@@ -192,12 +194,13 @@ export function Workspace({
     onRenameEntry: (path: string, newName: string) => activeTabId
       ? onRenameRemoteEntry(activeTabId, path, newName) : Promise.resolve(),
     onUpload: () => activeTabId && onUpload(activeTabId),
-    onUploadFiles: (localPaths: string[]) => activeTabId && onUploadFiles(activeTabId, localPaths),
+    onUploadFiles: (localPaths: string[], remoteDirectory?: string) => activeTabId && onUploadFiles(activeTabId, localPaths, remoteDirectory),
+    onChangePermissions: onChangePermissions && activeTabId ? (request: import("../../shared/api/types").PermissionChange) => onChangePermissions(activeTabId, request) : undefined,
   }), [
     activeTabId, onCancelTransfer, onDismissTransfer, onCreateRemoteDirectory,
     onDeleteRemoteEntry, onDeleteRemoteEntries, onDownload, onDownloadFiles,
     onMoveRemoteEntry, onOpenPath, onRefreshFiles, onRenameRemoteEntry,
-    onUpload, onUploadFiles,
+    onUpload, onUploadFiles, onChangePermissions,
   ]);
   const activeError = activeRuntime.error ?? error;
   const [tabContextMenu, setTabContextMenu] = useState<{

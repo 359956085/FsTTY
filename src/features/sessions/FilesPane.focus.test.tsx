@@ -78,7 +78,8 @@ describe("文件操作键盘焦点", () => {
     fireEvent.click(row("c.txt"), { ctrlKey: true });
     act(() => row("b.txt").focus());
     key("ContextMenu");
-    expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+    expect(screen.getByRole("menuitem", { name: "sessions.download" })).toBeDefined();
+    expect(screen.getByRole("menuitem", { name: "sessions.deleteRemoteEntry" })).toBeDefined();
     key("Escape");
     expect(document.activeElement).toBe(row("b.txt"));
     expect(row("c.txt").getAttribute("aria-pressed")).toBe("true");

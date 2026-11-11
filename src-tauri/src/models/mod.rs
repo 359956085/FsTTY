@@ -4,6 +4,7 @@ mod command_history;
 mod connection;
 mod device;
 mod file;
+mod file_operations;
 mod lightweight;
 mod local_session;
 mod session;
@@ -22,6 +23,7 @@ pub use connection::{
 };
 pub use device::{DeviceMetricSample, DeviceMetricsSnapshot, DeviceStatus};
 pub use file::{FileEntry, FileKind};
+pub use file_operations::*;
 pub use lightweight::{
     BeginLightweightModeResult, LightweightModePhase, LightweightModeState,
     LightweightSnapshotKind, LightweightTerminalRequest, LocalHighlightSnapshot,
