@@ -222,13 +222,16 @@ async fn fail(job: &TransferJob, error: AppError) {
     })
     .await;
 }
-async fn start_manifest(job: &TransferJob, manifest: &Manifest, phase: &str) {
+pub(super) async fn start_manifest(job: &TransferJob, manifest: &Manifest, phase: &str) {
     job.update(|s| {
         s.details.phase = Some(phase.into());
         s.details.item_total = manifest.scanned as u32;
         s.details.processed_items = manifest.skipped;
         s.skipped = manifest.skipped;
         s.batch_total = manifest.items.iter().filter(|i| !i.directory).count() as u32;
+        s.details.total_files = Some(s.batch_total);
+        s.details.total_directories =
+            Some(manifest.items.iter().filter(|i| i.directory).count() as u32);
         s.queued_count = s.batch_total;
     })
     .await;

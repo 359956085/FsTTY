@@ -55,7 +55,8 @@ void i18n.use(initReactI18next).init({
           "apply": "应用",
           "scanning": "正在扫描项目…",
           "taskProgress": "已处理 {{done}} / {{total}} 项",
-          "taskSummary": "文件成功 {{files}} · 目录 {{directories}} · 跳过 {{skipped}} · 失败 {{failed}}",
+          "taskTotals": "总文件 {{files}} · 总目录 {{directories}}",
+          "taskSummary": "文件成功 {{files}} · 目录完成 {{directories}} · 跳过 {{skipped}} · 失败 {{failed}}",
           "permissionProgress": "已处理 {{done}} / {{total}} · 已修改 {{changed}} · 跳过 {{skipped}} · 失败 {{failed}}",
           "cancelOperation": "取消文件操作",
           "operationFailed": "操作失败"
@@ -634,7 +635,8 @@ void i18n.use(initReactI18next).init({
           "apply": "Apply",
           "scanning": "Scanning items…",
           "taskProgress": "Processed {{done}} / {{total}} items",
-          "taskSummary": "Files {{files}} · Folders {{directories}} · Skipped {{skipped}} · Failed {{failed}}",
+          "taskTotals": "Total files {{files}} · Total folders {{directories}}",
+          "taskSummary": "Files completed {{files}} · Folders completed {{directories}} · Skipped {{skipped}} · Failed {{failed}}",
           "permissionProgress": "Processed {{done}} / {{total}} · Changed {{changed}} · Skipped {{skipped}} · Failed {{failed}}",
           "cancelOperation": "Cancel file operation",
           "operationFailed": "Operation failed"

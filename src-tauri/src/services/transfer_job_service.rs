@@ -725,6 +725,46 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn 扫描总数区分文件目录并在取消后保留() {
+        let root = std::env::temp_dir().join(format!("fstty-counts-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(root.join("empty")).await.unwrap();
+        tokio::fs::write(root.join("file.txt"), b"data")
+            .await
+            .unwrap();
+        let manifest = tree::scan_local(vec![
+            root.to_string_lossy().into_owned(),
+            root.join("file.txt").to_string_lossy().into_owned(),
+        ])
+        .await
+        .unwrap();
+        for direction in [TransferJobDirection::Upload, TransferJobDirection::Download] {
+            let mut initial = summary(TransferJobState::Running);
+            initial.direction = direction;
+            let job = TransferJob::new(initial);
+            assert!(job.snapshot().await.details.total_files.is_none());
+            tree::start_manifest(&job, &manifest, "transferring").await;
+            let scanned = job.snapshot().await;
+            assert_eq!(scanned.details.total_files, Some(1));
+            assert_eq!(scanned.details.total_directories, Some(2));
+            assert_eq!(scanned.details.item_total, 3);
+            let json = serde_json::to_value(&scanned).unwrap();
+            assert_eq!(json["totalFiles"], 1);
+            assert_eq!(json["totalDirectories"], 2);
+            job.update(|s| s.state = TransferJobState::Cancelled).await;
+            assert_eq!(job.snapshot().await.details.total_directories, Some(2));
+        }
+        tokio::fs::remove_file(root.join("file.txt")).await.unwrap();
+        let empty = tree::scan_local(vec![root.to_string_lossy().into_owned()])
+            .await
+            .unwrap();
+        let job = TransferJob::new(summary(TransferJobState::Running));
+        tree::start_manifest(&job, &empty, "transferring").await;
+        assert_eq!(job.snapshot().await.details.total_files, Some(0));
+        assert_eq!(job.snapshot().await.details.total_directories, Some(2));
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
     #[test]
     fn 文件名只保留末段且不暴露完整路径() {
         assert_eq!(local_file_name(r"C:\secret\report.txt"), "report.txt");

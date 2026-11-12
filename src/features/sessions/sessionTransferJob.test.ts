@@ -37,12 +37,12 @@ describe("后台传输订阅", () => {
     const { subscription, runtime, onConflict } = setup();
     const batch: TransferJobSummary = {
       ...job, direction: "download", batchTotal: 7, downloaded: 0,
-      activeCount: 5, queuedCount: 2, conflictId: "first-conflict",
+      activeCount: 5, queuedCount: 2, conflictId: "first-conflict", totalFiles: 7, totalDirectories: 3,
     };
     await subscription.apply(batch);
     await subscription.apply({ ...batch, batchIndex: 3, downloaded: 3, queuedCount: 0 });
     expect(onConflict).toHaveBeenCalledOnce();
-    expect(runtime().transfer).toMatchObject({ downloaded: 3, activeCount: 5, queuedCount: 0 });
+    expect(runtime().transfer).toMatchObject({ downloaded: 3, activeCount: 5, queuedCount: 0, totalFiles: 7, totalDirectories: 3 });
     await subscription.apply({ ...batch, batchIndex: 3, fileName: "second.txt", conflictId: "second-conflict" });
     expect(onConflict).toHaveBeenCalledTimes(2);
   });

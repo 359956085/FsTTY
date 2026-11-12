@@ -1,4 +1,6 @@
 .terminal-panel {
+  --terminal-right-padding: 4px;
+  --terminal-expand-scrollbar-gap: 4px;
   position: relative;
   grid-area: terminal;
   display: grid;
@@ -152,7 +154,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 8px 10px 12px;
+  padding: 10px var(--terminal-right-padding, 4px) 10px 12px;
 }
 
 .terminal-body {
@@ -527,7 +529,8 @@
   position: absolute;
   z-index: 6;
   top: 12px;
-  right: 12px;
+  /* Leave the 8px xterm scrollbar and its gap outside the button hit area. */
+  right: calc(var(--terminal-right-padding) + var(--scrollbar-size) + var(--terminal-expand-scrollbar-gap));
   display: grid;
   place-items: center;
   width: 32px;
@@ -896,7 +899,7 @@
 
 .transfer-bar {
   display: grid;
-  grid-template-columns: minmax(70px, 1fr) minmax(44px, 0.7fr) max-content 26px;
+  grid-template-columns: minmax(0, 1fr) minmax(32px, 0.7fr) max-content 26px;
   align-items: center;
   gap: 8px;
   margin: 0 10px 8px;
@@ -951,7 +954,12 @@
 
 .transfer-queue-status {
   grid-column: 1 / -1;
-  grid-row: 2;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 11px;
 }

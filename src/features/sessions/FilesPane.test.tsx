@@ -23,7 +23,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     i18n: { language: "zh-CN", resolvedLanguage: "zh-CN" },
-    t: (key: string) => key,
+    t: (key: string, values?: Record<string, number>) => key === "fileManagement.taskTotals" ? `总文件 ${values?.files} · 总目录 ${values?.directories}` : key,
   }),
 }));
 
@@ -474,4 +474,23 @@ it("Escape restores the disabled upload trigger after closing the picker",async(
  await screen.findByRole("dialog");expect((trigger as HTMLButtonElement).disabled).toBe(true);
  fireEvent.keyDown(document.activeElement!,{key:"Escape"});
  await waitFor(()=>expect(document.activeElement).toBe(trigger));
+});
+
+it.each(["upload", "download"] as const)("%s shows scanned file/folder totals once beside progress and queue", direction => {
+  const view = renderFilesPane([], {transfer:{id:"job",direction,fileName:"folder",phase:"transferring",transferredBytes:50,totalBytes:100,totalFiles:31,totalDirectories:3,itemTotal:34,processedItems:5,completedDirectories:3,uploaded:2,downloaded:2,batchTotal:31,activeCount:2,queuedCount:27,speedBytesPerSecond:10,speedUpdatedAtMs:0,state:"running"}});
+  const statuses = view.container.querySelectorAll(".transfer-bar [role=status]");
+  expect(statuses).toHaveLength(1);
+  expect(statuses[0].textContent).toContain("总文件 31 · 总目录 3");
+  expect(statuses[0].textContent).toContain("fileManagement.taskSummary");
+  expect(statuses[0].textContent?.includes("sessions.downloadQueueStatus")).toBe(direction === "download");
+  const progress = screen.getByRole("progressbar");
+  expect(progress.getAttribute("aria-valuenow")).toBe("50");
+});
+it("folder-only and cancelled tasks retain exact totals; legacy summaries do not invent them", () => {
+  const view = renderFilesPane([], {transfer:{id:"job",direction:"download",fileName:"empty",transferredBytes:0,totalBytes:0,totalFiles:0,totalDirectories:3,itemTotal:3,processedItems:1,completedDirectories:1,batchTotal:0,speedBytesPerSecond:0,speedUpdatedAtMs:0,state:"cancelled"}});
+  expect(screen.getByRole("status").textContent).toContain("总文件 0 · 总目录 3");
+  view.unmount();
+  renderFilesPane([], {transfer:{id:"legacy",direction:"download",fileName:"old",transferredBytes:10,totalBytes:10,downloaded:2,batchTotal:2,speedBytesPerSecond:0,speedUpdatedAtMs:0,state:"completed"}});
+  expect(screen.getByRole("status").textContent).toBe("sessions.downloadBatchSummary");
+  expect(screen.queryByText(/总文件/)).toBeNull();
 });

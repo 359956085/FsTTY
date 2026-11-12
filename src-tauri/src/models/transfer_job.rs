@@ -108,6 +108,10 @@ pub enum TransferJobEvent {
 pub struct FileJobDetails {
     pub phase: Option<String>,
     pub item_total: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_files: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_directories: Option<u32>,
     pub processed_items: u32,
     pub completed_directories: u32,
     pub changed_permissions: u32,

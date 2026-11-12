@@ -1959,6 +1959,15 @@
 }
 
 .settings-font-select {
-  width: 200px;
+  width: 160px;
   max-width: 100%;
+}
+
+.settings-font-select .form-select-trigger {
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.settings-font-select .selectable-option-label {
+  white-space: normal;
 }

@@ -1310,12 +1310,21 @@ export function FilesPane({
                 ? t("sessions.transferCancelled")
                 : transfer.state === "failed" ? t("fileManagement.operationFailed") : transfer.direction === "permissions" || transfer.phase === "scanning" ? `${progressPercent}%` : `${progressPercent}% · ${formatTransferSpeed(displayedSpeed)}`}
           </em>
-          {transfer.itemTotal !== undefined && transfer.itemTotal > 0 ? <small className="transfer-queue-status" role="status">{transfer.direction === "permissions" ? t("fileManagement.permissionProgress", {done:transfer.processedItems??0,total:transfer.itemTotal,changed:transfer.changedPermissions??0,skipped:transfer.skipped??0,failed:transfer.failed??0}) : t("fileManagement.taskSummary",{files:transfer.direction==="upload"?transfer.uploaded??0:transfer.downloaded??0,directories:transfer.completedDirectories??0,skipped:transfer.skipped??0,failed:transfer.failed??0})}</small> : null}
-          {transfer.direction === "download" && transfer.batchTotal && transfer.batchTotal > 1 ? (
+          {((transfer.itemTotal ?? 0) > 0 || transfer.totalFiles !== undefined || (transfer.direction === "download" && transfer.phase !== "scanning" && (transfer.batchTotal ?? 0) > 1)) ? (
             <small className="transfer-queue-status" role="status">
-              {transferRunning
-                ? t("sessions.downloadQueueStatus", { active: transfer.activeCount ?? 0, queued: transfer.queuedCount ?? 0 })
-                : t("sessions.downloadBatchSummary", { downloaded: transfer.downloaded ?? 0, skipped: transfer.skipped ?? 0, failed: transfer.failed ?? 0 })}
+              {transfer.direction !== "permissions" && transfer.totalFiles !== undefined && transfer.totalDirectories !== undefined ? (
+                <span>{t("fileManagement.taskTotals", { files: transfer.totalFiles, directories: transfer.totalDirectories })}</span>
+              ) : null}
+              {(transfer.itemTotal ?? 0) > 0 ? (
+                <span>{transfer.direction === "permissions"
+                  ? t("fileManagement.permissionProgress", { done: transfer.processedItems ?? 0, total: transfer.itemTotal, changed: transfer.changedPermissions ?? 0, skipped: transfer.skipped ?? 0, failed: transfer.failed ?? 0 })
+                  : t("fileManagement.taskSummary", { files: transfer.direction === "upload" ? transfer.uploaded ?? 0 : transfer.downloaded ?? 0, directories: transfer.completedDirectories ?? 0, skipped: transfer.skipped ?? 0, failed: transfer.failed ?? 0 })}</span>
+              ) : null}
+              {transfer.direction === "download" && transfer.phase !== "scanning" && (transfer.batchTotal ?? 0) > 1 ? (
+                transferRunning
+                  ? <span>{t("sessions.downloadQueueStatus", { active: transfer.activeCount ?? 0, queued: transfer.queuedCount ?? 0 })}</span>
+                  : !(transfer.itemTotal ?? 0) ? <span>{t("sessions.downloadBatchSummary", { downloaded: transfer.downloaded ?? 0, skipped: transfer.skipped ?? 0, failed: transfer.failed ?? 0 })}</span> : null
+              ) : null}
             </small>
           ) : null}
           {transferRunning ? (

@@ -496,6 +496,8 @@ export type StartTransferJobRequest =
     };
 
 export interface TransferJobSummary {
+  totalFiles?: number;
+  totalDirectories?: number;
   phase?: "scanning" | "transferring" | "applying" | null;
   itemTotal?: number;
   processedItems?: number;

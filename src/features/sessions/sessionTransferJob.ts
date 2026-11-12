@@ -109,6 +109,8 @@ export function createTransferJobSubscription(
         itemTotal: job.itemTotal,
         processedItems: job.processedItems,
         completedDirectories: job.completedDirectories,
+        totalFiles: job.totalFiles,
+        totalDirectories: job.totalDirectories,
         changedPermissions: job.changedPermissions,
         fileName: job.fileName,
         batchIndex: job.batchTotal > 1 ? job.batchIndex : undefined,

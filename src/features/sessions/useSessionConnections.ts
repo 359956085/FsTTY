@@ -37,6 +37,8 @@ export interface TransferProgress {
   itemTotal?: number;
   processedItems?: number;
   completedDirectories?: number;
+  totalFiles?: number;
+  totalDirectories?: number;
   changedPermissions?: number;
   fileName: string;
   batchIndex?: number;

@@ -6,6 +6,29 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.1.0-beta.2] - 2026-11-11
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 调整常规设置中的字体排列、选项名称和字号说明，收紧字体下拉框。
+- 终端字体放大、缩小支持自定义键盘或滚轮绑定，可分别清除和恢复默认；所有终端共用字号设置并自动保存。
+- 收紧终端右侧留白，文件管理展开按钮与滚动条保持间隔，避免相互遮挡。
+- 批量上传、下载显示扫描后的总文件数和总目录数，修复下载状态文字重叠；窄面板支持状态文字换行。
+- 改进 UAC 授权后安装向导的首次激活；未获得前台时提供任务栏提醒。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Refined the order of font settings, font option labels, and font size guidance, and made the font selector more compact.
+- Terminal font size increase and decrease actions support custom keyboard or wheel bindings, with individual clearing and default restoration. All terminals share the font size and save changes automatically.
+- Reduced the terminal's right padding and separated the file panel expand button from the scrollbar to prevent overlap.
+- Batch uploads and downloads show total file and folder counts after scanning. Fixed overlapping download status text and enabled wrapping in narrow panels.
+- Improved initial installer wizard activation after UAC approval, with a taskbar notification when the wizard does not gain foreground focus.
+
+<!-- release-notes:en-US:end -->
+
 ## [2.1.0-beta.1] - 2026-11-11
 
 <!-- release-notes:zh-CN:start -->
