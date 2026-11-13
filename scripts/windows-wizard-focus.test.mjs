@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,7 +13,7 @@ const candidates = [
 ];
 const compiler = candidates.find(candidate => candidate && existsSync(candidate));
 
-it.skipIf(process.platform !== 'win32' || !compiler)('executes one-shot MUI focus, bounded fallback and silent/update isolation in NSIS', () => {
+it.skipIf(process.platform !== 'win32' || !compiler)('activates only after the visible welcome page and cancels deferred work in NSIS', () => {
   const directory = mkdtempSync(join(tmpdir(), 'fstty-wizard-focus-'));
   const executable = join(directory, 'fixture.exe');
   const resultFile = join(directory, 'result.ini');
@@ -29,22 +29,44 @@ it.skipIf(process.platform !== 'win32' || !compiler)('executes one-shot MUI focu
       ], { encoding: 'utf8', windowsHide: true, timeout: 20_000, env: { ...process.env, NSISDIR: dirname(compiler) } });
       expect(compile.error).toBeUndefined();
       expect(compile.status, compile.stdout + compile.stderr).toBe(0);
-      const scenarios = native ? ['update', 'silent'] : ['active', 'denied', 'silent', 'update'];
+      const scenarios = native
+        ? ['update', 'silent', ...(process.env.FSTTY_FOCUS_NATIVE === '1' ? ['success', 'success', 'success', 'success', 'success', 'back'] : [])]
+        : ['active', 'success', 'denied', 'hidden', 'minimized', 'earlyleave', 'closed', 'back', 'silent', 'update'];
       for (const scenario of scenarios) {
         rmSync(resultFile, { force: true });
         const run = spawnSync(executable, [
           ...(scenario === 'silent' ? ['/S'] : []),
           `/CASE=${scenario}`,
-        ], { windowsHide: true, timeout: 10_000 });
+        ], { windowsHide: false, timeout: 10_000 });
         expect(run.error, scenario).toBeUndefined();
         expect(run.status, scenario).toBe(0);
         const result = Object.fromEntries(readFileSync(resultFile, 'utf8')
           .split(/\r?\n/).filter(line => line.includes('='))
           .map(line => line.split('=')));
         const blocked = scenario === 'silent' || scenario === 'update';
-        expect(result.bring, scenario).toBe(blocked || native ? '0' : '1');
-        expect(result.flash, scenario).toBe(scenario === 'denied' ? '1' : '0');
-        expect(result.attempted, scenario).toBe(blocked ? '' : '1');
+        const canceled = ['earlyleave', 'closed', 'hidden', 'minimized'].includes(scenario);
+        if (native) expect(['0', '1'], scenario).toContain(result.bring);
+        else expect(result.bring, scenario).toBe(!blocked && !canceled && scenario !== 'active' ? '1' : '0');
+        if (native && !blocked) expect(['0', '1'], scenario).toContain(result.flash);
+        else expect(result.flash, scenario).toBe(!native && ['denied', 'back'].includes(scenario) ? '1' : '0');
+        expect(result.attempted, scenario).toBe(blocked || canceled ? '' : '1');
+        expect(result.pending, scenario).toBe(blocked ? '' : '0');
+        expect(result.scheduled, scenario).toBe(blocked ? '' : '1');
+        if (!blocked) {
+          expect(result.guiVisible, scenario).toBe('0');
+          expect(result.welcomeCount, scenario).toBe(['back', 'earlyleave'].includes(scenario) ? '2' : '1');
+          if (!canceled && scenario !== 'active') {
+            if (result.bring !== '0') expect(result.visibleAtActivation, scenario).toBe('1');
+          }
+          if (native) {
+            if (result.foreground === '1') expect(result.focusWithin, scenario).toBe('1');
+            else expect(result.flash, 'Native activation refused: must notify').toBe('1');
+            if (process.env.FSTTY_FOCUS_REQUIRE_FOREGROUND === '1') expect(result.foreground, scenario).toBe('1');
+            if (process.env.FSTTY_FOCUS_REPORT) {
+              appendFileSync(process.env.FSTTY_FOCUS_REPORT, JSON.stringify({ scenario, ...result }) + '\n');
+            }
+          }
+        }
       }
     }
 

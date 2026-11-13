@@ -902,7 +902,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(32px, 0.7fr) max-content 26px;
   align-items: center;
   gap: 8px;
-  margin: 0 10px 8px;
+  margin: 8px 10px;
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 5px;

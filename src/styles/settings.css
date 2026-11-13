@@ -359,7 +359,8 @@
   width: 160px;
 }
 
-.settings-terminal-color-select {
+.settings-terminal-color-select,
+.settings-font-select {
   width: 200px;
 }
 
@@ -1959,7 +1960,6 @@
 }
 
 .settings-font-select {
-  width: 160px;
   max-width: 100%;
 }
 

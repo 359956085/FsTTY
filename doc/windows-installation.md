@@ -8,9 +8,9 @@
 
 安装器在 UAC 前保留普通调用进程；另一管理员批准后仍读取原用户登记，桌面以原用户令牌启动。从已提权终端启动时，安装器先验证调用进程：存在可信的关联普通令牌就用它启动桌面；内置 Administrator 或关闭 UAC 导致没有普通令牌时进入管理员兼容模式，桌面会继续以管理员权限运行。会话 0、SYSTEM、服务账号、跨会话调用、SID 或会话不一致的关联令牌均会被拒绝。
 
-交互式安装在完成初始化、创建向导窗口后，通过 MUI 的 GUI 初始化扩展回调尝试激活一次。若前台仍不是安装向导，仅将其任务栏按钮闪烁三次；不置顶、不模拟按键、不循环抢焦点，后续翻页也不重新激活。静默安装及 `/UPDATE` 不执行激活或提醒。Windows 可能拒绝前台激活，因此不能承诺 UAC 返回后始终获得焦点；规则见 [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) 和 [NSIS BringToFront](https://nsis.sourceforge.io/Reference/BringToFront)。
+交互式安装在欢迎页创建后安排一次 50ms 定时回调，进入消息循环、向导及首页实际可见后才尝试激活。已经在前台则不再调用激活；用户已最小化或隐藏向导时不恢复。回调先注销定时器，离开首页及关闭时也清理，返回首页不重复执行。若 Windows 拒绝激活，仅将任务栏按钮闪烁三次；不置顶、不模拟按键、不循环抢焦点。静默安装及 /UPDATE 不安排激活。保留 MUI 默认按钮和键盘焦点流程。规则见 [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) 及 [NSIS 回调时机](https://nsis.sourceforge.io/Reference/.onGUIInit)。
 
-原生焦点逻辑的隔离测试使用 `scripts/windows-wizard-focus.test.mjs` 和不执行安装的 NSIS 夹具。安装 NSIS 后，将 `FSTTY_NSIS_DIR` 设置为包含 `makensis.exe` 的目录，运行 `npx vitest run scripts/windows-wizard-focus.test.mjs`。未提供且未发现本机 NSIS 时，该项明确跳过，普通前端检查无需下载安装工具。夹具通过编译期替身验证一次性激活和失败分支，核对真实 FLASHWINFO 内存布局；同时编译默认 Win32 实现及完整安装模板，但不运行完整安装器。真实 UAC、前台限制和默认按钮键盘焦点仍需隔离 Windows 人工验收。
+原生焦点逻辑使用 scripts/windows-wizard-focus.test.mjs 和不执行安装的 NSIS 夹具。设置 FSTTY_NSIS_DIR 为包含 makensis.exe 的目录后运行 npx vitest run scripts/windows-wizard-focus.test.mjs；工具缺失时明确跳过，不自动联网下载。夹具真正显示欢迎页并进入消息循环，覆盖已经在前台、激活成功／拒绝、最小化／隐藏、提前离开／关闭、返回首页、静默及更新；检查 FLASHWINFO 布局和完整模板编译。设置 FSTTY_FOCUS_NATIVE=1 可额外运行真实 Win32 窗口五次及返回首页场景，FSTTY_FOCUS_REPORT 指定 JSONL 结果路径。系统拒绝激活时验证提醒并记录失败，不冒充实际获得焦点；要求当前交互环境必须获得前台时另设 FSTTY_FOCUS_REQUIRE_FOREGROUND=1。真实 UAC 及安装包焦点仍须在 Windows Sandbox 或可还原虚拟机验收，不能用替身测试替代。
 
 程序替换由受保护暂存目录中的 Rust 安装工具完成。目录逐层相对已验证句柄打开，并持有不可删除句柄；末级目录使用自动清理的不可删除哨兵保持非空，防止验证后改成重解析点。拒绝已有重解析点和硬链接，写入新文件后原子替换目录项，避免修改竞争过程中创建的硬链接所指向的原文件。读取产品版本信息不会执行旧程序。旧桌面结束后才替换文件；取消关闭或文件占用都会停止操作。非空目录限制见[微软重解析点文档](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-set-reparse-point)。
 

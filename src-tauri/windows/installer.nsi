@@ -34,7 +34,8 @@ Var InitialDirectory
 Var LaunchAfter
 
 !include "{{installer_hooks}}"
-!define MUI_CUSTOMFUNCTION_GUIINIT FsTTYActivateWizardOnce
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FsTTYWelcomePageShow
+!define MUI_PAGE_CUSTOMFUNCTION_DESTROYED FsTTYCancelWizardActivation
 
 !insertmacro MUI_PAGE_WELCOME
 Page custom ChoosePrevious ChoosePreviousLeave
@@ -98,6 +99,11 @@ LangString UninstallConfirm ${LANG_SIMPCHINESE} "卸载将关闭当前桌面及�
 LangString UninstallConfirm ${LANG_ENGLISH} "Uninstalling closes the desktop and credential service and interrupts SSH connections and transfers. Sessions, original private keys, and protected credentials are retained."
 LangString UninstallFallback ${LANG_SIMPCHINESE} "卸载工具执行失败（退出码：$0）。请修复安装后重试。"
 LangString UninstallFallback ${LANG_ENGLISH} "The uninstaller failed (exit code: $0). Repair the installation and try again."
+
+Function FsTTYWelcomePageShow
+  StrCpy $FsTTYWizardWelcome $mui.WelcomePage
+  Call FsTTYScheduleWizardActivation
+FunctionEnd
 
 Function .onInit
   ${GetParameters} $R8
@@ -332,6 +338,7 @@ Function .onInstFailed
   Call RemoveBootstrap
 FunctionEnd
 Function .onGUIEnd
+  Call FsTTYCancelWizardActivation
   Call RemoveBootstrap
 FunctionEnd
 
