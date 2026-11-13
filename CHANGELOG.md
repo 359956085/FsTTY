@@ -6,6 +6,27 @@ This file records notable user-facing changes to FsTTY. Before publishing, move 
 
 ## [Unreleased]
 
+## [2.1.0-beta.3] - 2026-11-13
+
+<!-- release-notes:zh-CN:start -->
+### 简体中文
+
+- 新增暖陶土、薄荷绿、薰衣草三套浅色主题，覆盖工作区、设置和应用内弹窗；终端沿用原有 ANSI 高亮，切换主题不重建连接或进程。
+- 将安装向导首次激活移至欢迎页显示后的延迟回调；Windows 拒绝前台请求时提供有限任务栏提醒，不持续抢夺焦点。
+- 调整传输进度框上下间距，字体与终端文字配色下拉框统一宽度。
+- 更新 SSH 与系统调用相关安全依赖，保留已有凭据和主机指纹核对流程；既有 RSA 上游阻塞风险继续单独记录。
+
+<!-- release-notes:zh-CN:end -->
+<!-- release-notes:en-US:start -->
+### English
+
+- Added Warm Terracotta, Mint Green, and Lavender light themes for the workspace, settings, and in-app dialogs. Terminals retain existing ANSI colors, connections, and processes when themes change.
+- Moved the installer's initial activation to a delayed callback after the welcome page is displayed. If Windows denies foreground activation, the taskbar flashes briefly without repeatedly taking focus.
+- Balanced the spacing above and below transfer cards and aligned the font selector width with the terminal color selector.
+- Updated security dependencies for SSH and system calls while preserving credential protection and host fingerprint checks. The existing upstream RSA dependency risk remains documented separately.
+
+<!-- release-notes:en-US:end -->
+
 ## [2.1.0-beta.2] - 2026-11-11
 
 <!-- release-notes:zh-CN:start -->

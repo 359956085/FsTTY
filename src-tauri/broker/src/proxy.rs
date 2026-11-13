@@ -13,8 +13,12 @@ impl client::Handler for Remote {
     type Error = russh::Error;
     async fn check_server_key(
         &mut self,
-        key: &russh::keys::PublicKey,
+        key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // 证书需独立的 CA 信任策略，不能降为其中的裸公钥进行指纹匹配。
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } = key else {
+            return Ok(false);
+        };
         let key = key.to_openssh().map_err(|_| russh::Error::UnknownKey)?;
         *self.observed.lock().map_err(|_| russh::Error::UnknownKey)? = Some(key.clone());
         Ok(!self.expected.is_empty() && self.expected == key)
@@ -386,4 +390,36 @@ async fn bridge(
     let _ = remote_tx.close().await;
     let _ = local_tx.close().await;
     result
+}
+
+#[cfg(test)]
+mod host_key_tests {
+    use super::*;
+    use russh::client::Handler;
+    use russh::keys::{ssh_key::certificate, Algorithm, PrivateKey, PublicKeyOrCertificate};
+
+    #[tokio::test]
+    async fn 主机证书不能通过其中已信任的裸公钥绕过核对() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let mut builder =
+            certificate::Builder::new(vec![1; 32], key.public_key(), 0, u64::MAX).unwrap();
+        builder.cert_type(certificate::CertType::Host).unwrap();
+        builder.valid_principal("fixture.invalid").unwrap();
+        let cert = builder.sign(&key).unwrap();
+        let observed = Arc::new(Mutex::new(None));
+        let mut handler = Remote {
+            expected: key.public_key().to_openssh().unwrap(),
+            observed: observed.clone(),
+        };
+        assert!(!handler
+            .check_server_key(&PublicKeyOrCertificate::Certificate(cert))
+            .await
+            .unwrap());
+        assert!(observed.lock().unwrap().is_none());
+        assert!(handler
+            .check_server_key(&key.public_key().clone().into())
+            .await
+            .unwrap());
+        assert_eq!(observed.lock().unwrap().as_ref(), Some(&handler.expected));
+    }
 }

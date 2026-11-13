@@ -42,8 +42,17 @@ impl client::Handler for SshClient {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // 未配置主机证书信任，包含已知裸公钥的证书也必须拒绝。
+        let russh::keys::PublicKeyOrCertificate::PublicKey {
+            key: server_public_key,
+            ..
+        } = server_public_key
+        else {
+            set_observation(&self.observation, HostObservation::Failure);
+            return Ok(false);
+        };
         if self.broker_transport {
             // 此标记只能在命名管道已验证 SCM 服务身份后设置；真实主机校验由服务执行。
             return Ok(true);
@@ -420,4 +429,40 @@ fn authentication_method_unavailable(method: MethodKind) -> AppError {
         _ => "服务器未启用所选认证方式",
     };
     AppError::Authentication(message.to_owned())
+}
+
+#[cfg(test)]
+mod host_certificate_tests {
+    use super::*;
+    use russh::client::Handler;
+    use russh::keys::{
+        ssh_key::{certificate, private::Ed25519Keypair, PrivateKey},
+        PublicKeyOrCertificate,
+    };
+
+    #[tokio::test]
+    async fn 主机证书不进入普通指纹信任或管道免核对路径() {
+        let key = PrivateKey::new(Ed25519Keypair::from_seed(&[42; 32]).into(), "fixture").unwrap();
+        let mut builder =
+            certificate::Builder::new(vec![1; 32], key.public_key(), 0, u64::MAX).unwrap();
+        builder.cert_type(certificate::CertType::Host).unwrap();
+        builder.valid_principal("fixture.invalid").unwrap();
+        let cert = PublicKeyOrCertificate::Certificate(builder.sign(&key).unwrap());
+        for broker_transport in [false, true] {
+            let observation = Arc::new(StdMutex::new(None));
+            let mut handler = SshClient {
+                broker_transport,
+                host: "fixture.invalid".into(),
+                port: 22,
+                known_hosts_path: PathBuf::new(),
+                known_hosts_lock: Arc::new(StdMutex::new(())),
+                observation: observation.clone(),
+            };
+            assert!(!handler.check_server_key(&cert).await.unwrap());
+            assert!(matches!(
+                *observation.lock().unwrap(),
+                Some(HostObservation::Failure)
+            ));
+        }
+    }
 }

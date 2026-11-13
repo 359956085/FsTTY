@@ -329,7 +329,7 @@ describe("设置状态控制器", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it("主题保存成功、失败和重复点击均保持一致状态", async () => {
+  it.each(["light", "terracotta", "mint", "lavender"] as const)("主题 %s 保存成功、失败和重复点击均保持一致状态", async (theme) => {
     const request = deferred<AppSettings>();
     apiMocks.setTheme.mockReturnValueOnce(request.promise);
     const onChange = vi.fn();
@@ -344,13 +344,13 @@ describe("设置状态控制器", () => {
 
     let first!: Promise<void>;
     act(() => {
-      first = result.current.changeTheme("light");
+      first = result.current.changeTheme(theme);
       void result.current.changeTheme("dark");
     });
     expect(apiMocks.setTheme).toHaveBeenCalledTimes(1);
     expect(result.current.savingTheme).toBe(true);
 
-    const lightSettings = { ...settings, theme: "light" as const };
+    const lightSettings = { ...settings, theme };
     await act(async () => {
       request.resolve(lightSettings);
       await first;

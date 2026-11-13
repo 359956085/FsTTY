@@ -1098,3 +1098,30 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 字体与终端文字配色下拉框共用 200px 宽度声明，移除字体控件后部的 160px 覆盖。保留字体 max-width: 100%、长选项换行及原有选择交互；语言／主题控件宽度不变。
 - 两个相关设置测试文件共 8 项通过，覆盖现有中英文设置行为；TypeScript 与生产前端构建通过，git diff --check 通过。未新增 CSS 字符串断言。实际中英文长字体名称及窄窗口视觉对齐仍待界面验收，未用 jsdom 行为测试冒充布局测量。
 - 保留已有安装焦点和传输间距改动。版本仍为 2.1.0-beta.2，无新增受版本管理文件，不构建安装包、不提交、推送或发布。
+
+
+## 2026-11-13 · 暖陶土、薄荷绿与薰衣草主题
+
+- 保留跟随系统、亮色、暗色，新增 terracotta／mint／lavender 三套固定浅色主题及中英文名称。沿用 theme 字段和保存 IPC；Rust 枚举、原子保存、前端类型、启动缓存及首屏脚本同步接受六个选项。data-theme 表达明暗，data-palette 表达新增配色身份，避免浅色主题之间切换被当成相同主题；切回旧主题清理自定义身份。Windows 原生 Broker 安全确认映射原浅色模式，没有扩展其协议或修改 UAC。
+- 新样式仅设置颜色、背景和相同尺寸的阴影颜色，未改布局、尺寸、间距、圆角、字体或图标形状。覆盖侧栏、标签、设置、输入、选中／悬停／焦点、开关、文件与传输、设备指标、菜单及弹窗。设置中的固定信息／警告／错误色使用可选主题变量，原亮暗主题保留逐项原值作为回退。
+- xterm 表面颜色随配色身份立即更新，默认 ANSI 16 色逐项等于原浅色调色板；手动十套 ANSI 预设继续优先，RGB 输出处理不变。现有 TerminalPane 的原实例更新流程未改动，测试覆盖三套新主题相互切换及后台激活时只初始化一次，已有输出／高亮和历史机制沿用。
+- 专项 6 文件 101 项通过；新增首屏脚本回归使用真实 index.html 脚本，与运行时逐项核对无缓存、损坏缓存、六种偏好及系统亮暗组合。设置保存测试覆盖三套配色的成功、失败和重复提交；Rust 验证六个主题序列化、未知值拒绝及保存重载。没有新增 CSS 源码字符串断言。
+- 最终 npm run verify:all 退出 0：110 个前端／脚本测试文件、887 项通过；Rust 471 项通过、9 项既有环境测试仍忽略。版本、类型、严格 ESLint、格式、严格 Clippy、生产前端构建均通过，NSIS 既有夹具显式启用。首次 Rust 专项在系统临时目录遇到拒绝访问，最终全量使用工作区短路径临时目录通过，没有放宽权限。全量后补齐设置状态色变量回退，再跑生产构建退出 0；日志在忽略目录 artifacts/theme-validation。
+- 实际页面验收使用现有 SessionList、GeneralSettingsPanel、FilesPane、DeviceStatusPanel、SSH／本地表单、CommandHistoryPopover 和真实 xterm 的隔离浏览器预览；数据为虚构，API 仅内存替身，没有连接真实服务器或改用户设置。三套工作区、设置、SSH／PowerShell 表单均检查；实际 Select 切换 Mint → Lavender 后主题身份与选中值同步更新。薰衣草历史及文件右键菜单显示正常，禁用项与错误／警告示例可区分。英文 1180×760 窄窗口无页面横向溢出，字体及终端文字配色选择器均为 200px。
+- 对照原亮色及三套配色测量同一预览：侧栏 260×683、标签 170×39、文件列表 400×212、传输卡片 380×101、设备区 400×226，全部相同。未改交互状态或终端键值。浏览器组件预览与模拟 API 不代表已完成原生保存、真实 SSH／本地进程、轻量模式端到端或 UAC 验收；Windows 原生 DPI、WebView2、浏览器原生缩放及原生安全确认颜色仍待人工验收。
+- 截图均在项目外：C:/Users/fengshi/.codex/visualizations/2026/09/29/01a0ec7d-bb9b-7842-91ff-f96b41b6fb8a/theme-palettes-20261113。包含三套 workspace、settings、ssh-dialog、local-dialog，以及英文窄窗口、历史及文件菜单。验收服务已停止，临时视口已恢复；验收页和日志仅在忽略的 artifacts 目录，不纳入产品。
+- 新增受版本管理文件：scripts/theme-startup.test.mjs、src/shared/themePalettes.ts、src/styles/theme-palettes.css。使用说明更新于 doc/terminal-colors.md。版本保持 2.1.0-beta.2，没有升级依赖、修改数据库、构建安装包、创建标签、提交、推送或发布。
+
+
+## 2026-11-13 · 安全依赖审计与 2.1.0-beta.3
+
+- 按确认范围仅修复安全问题，不集中升级无漏洞的新版本。npm、Tauri、Rust 应用、Broker、Network、对应锁文件和双语 README 徽章统一为 2.1.0-beta.3。CHANGELOG 新增 2026-11-13 双语条目，汇总三套主题、欢迎页显示后首次激活、传输卡片间距／设置控件等宽及安全修复；逐字对比确认 Beta.2 起的历史正文未变。npm 锁文件除项目根版本外完全相同。
+- Rust 初始审计命中 russh 0.62.2 的 RUSTSEC-2026-0492／0495，分别涉及未建立通道的客户端回调与 Agent 确认约束。应用和 Broker 统一升级 russh 0.65.1，保留 ring／rsa 特性；rustix 1.1.4 → 1.1.6 修复 RUSTSEC-2026-0486。刷新完整 crates.io 索引后还发现已撤回的 async-executor 1.14.0 与 clipboard-win 5.4.1，定向更新至 1.14.1／5.4.3。其余锁文件变化为 russh 解析所需：curve25519／ed25519／p256／p384／p521 正式版本、num-bigint 0.5.1、sha3 0.12.0、sponge-cursor 0.1.0 等；没有批量更新其他依赖。
+- 适配新 PublicKeyOrCertificate 和 VerifiedPublicKey 回调。生产客户端及 Broker 对主机证书显式拒绝，不把其内部裸公钥降级为已有指纹信任；没有增加 CA 信任或改变认证顺序。测试及原生验收示例同步更新签名。RSA 用新 VerifiedPublicKey 的已验证密钥与算法验收，保持 RSA-SHA2 支持；夹具只比较密钥材料，不把不会随协议传输的注释当身份。
+- SSH 专项 6 项及新增线级安全回归通过：密码／带口令私钥、RSA-SHA2、指纹变化先阻断且不发送密码、HTTP／SOCKS 代理、PTY／命令退出码、SFTP 往返与大于窗口传输取消。内存中继在 CHANNEL_OPEN_CONFIRMATION 前，分别向待确认及未知通道注入伪造 data／exit-status／close，共 6 条；回调与合法通道均只接收真实输出、退出码和关闭。测试仅为隔离内存链路启用明文密码套件，生产算法配置不变。应用与 Broker 两项证书拒绝专项均通过，其中 Broker 验证证书含同一已信任裸公钥也不会被接受。
+- npm audit 与 npm audit --omit=dev 均退出 0、零漏洞。使用与 CI 一致的 cargo-audit 0.22.2 完成含撤回版本检查的联网审计，退出 0、零未豁免漏洞及零撤回版本。RustSec 数据库 1509 条，提交 4ef2df8e806a65e2f1ecc14f56f51249062b23d6。仍显示 5 条既有非阻断提示：proc-macro-error、zbus_names、zvariant、zvariant_derive 的维护状态，以及 glib 0.18.5 的 unsound 提示。审计工具在默认只读 Cargo 路径不能获取索引锁，本次使用忽略目录中的独立 CARGO_HOME 完成检查，没有修改全局权限或关闭索引检查；审计 JSON 与校验日志在 artifacts/security-review-20261113。
+- 唯一豁免仍为 RUSTSEC-2023-0071，未新增或扩大。russh 0.65.1／ssh-key 0.7.0-rc.11 仍精确约束 rsa 0.10.0-rc.18，等待接纳正式 RSA 的上游链路；不将此风险记为已修复。复查日期及解除条件更新于 .cargo/audit.toml 和 docs/windows-release-ci.md。
+- npm run check:release 退出 0，版本、双语徽章、日期和完整 Beta 发布说明通过。首轮 verify:all 的 887 项前端测试、生产构建、格式及严格 Clippy 通过，Rust 的既有 PE 产品版本测试读到旧 Beta.2 Debug 文件而失败；没有删测试或放宽断言。随后仅重新编译工作区本地 Debug 桌面程序供 PE 检查，不启动或替换宿主安装；最终完整校验结果见后续条目。
+- 本轮新增源码文件为 src-tauri/broker/tests/ssh_protocol_security.rs。上一轮尚未提交的 scripts/theme-startup.test.mjs、src/shared/themePalettes.ts、src/styles/theme-palettes.css 一并保留，提交时需包含这四个新增文件。公共 IPC、配置及数据库无新增变化，Beta 发布／更新隔离规则保持原样。没有构建安装包、创建标签、提交、推送或发布；真实 Windows 安装、UAC、远端 SSH 及远程 Actions 仍待验收。
+
+- 最终 npm run verify:all 完整重跑退出 0：110 个前端／脚本文件、887 项通过；Rust 475 项通过（应用 401、Broker 57、SSH 边界 6、新线级回归 1、Network 10），9 项原有环境测试保持忽略。类型、严格 ESLint、Rust 格式、严格 Clippy 及生产前端构建通过，既有 NSIS 夹具显式启用；保留原有 Canvas 环境提示及构建体积警告。Debug 校验程序 ProductVersion／FileVersion 均为 2.1.0-beta.3，既有 PE 测试通过。完整日志为 artifacts/security-review-20261113/verify-all-final.log；原生／远程待验收范围不因本地通过而变更。

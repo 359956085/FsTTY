@@ -1,0 +1,277 @@
+/* Design palettes change colors only. Geometry and interaction stay in the existing component rules. */
+
+:root[data-palette="terracotta"] {
+  color: var(--text);
+  background: var(--bg);
+  --bg: #fff6f0;
+  --panel: #fffaf6;
+  --panel-2: #fff4ed;
+  --panel-3: #fffdfb;
+  --text: #38271f;
+  --text-strong: #482714;
+  --text-secondary: #704b39;
+  --text-subtle: #8a7469;
+  --muted: #8a7469;
+  --accent: #c8582b;
+  --accent-soft: rgba(200, 88, 43, 0.10);
+  --success: #268448;
+  --danger: #c43f4e;
+  --warning: #946000;
+  --border: #ebcebe;
+  --border-strong: #dfb49b;
+  --titlebar-bg: #fff1e8;
+  --workspace-surface: #fffaf6;
+  --workspace-tabs-bg: #fff0e7;
+  --workspace-sidebar-bg: #fff5ee;
+  --workspace-files-bg: #fff8f2;
+  --workspace-status-bg: #fff3ea;
+  --workspace-divider: #ebcebe;
+  --workspace-panel-divider: #ebcebe;
+  --workspace-resize-divider: #ebcebe;
+  --app-shell-bg: linear-gradient(135deg, #fffdfb 0%, #fff6f0 54%, #fbe9dd 100%);
+  --page-bg: #fff6f0;
+  --settings-sidebar-bg: #fff5ee;
+  --settings-panel-bg: #fffaf6;
+  --terminal-bg: #fffaf6;
+  --surface-hover: rgba(200, 88, 43, 0.06);
+  --surface-selected: rgba(200, 88, 43, 0.14);
+  --divider: #ebcebe;
+  --surface-faint: rgba(200, 88, 43, 0.015);
+  --surface-subtle: rgba(200, 88, 43, 0.035);
+  --control-bg: rgba(200, 88, 43, 0.045);
+  --control-hover: rgba(200, 88, 43, 0.08);
+  --surface-strong: #f8dfd1;
+  --input-bg: #fffdfb;
+  --inset-bg: #fff4ed;
+  --notice-bg: #fffaf6;
+  --dialog-bg: #fffdfb;
+  --dialog-surface: #fffaf6;
+  --terminal-overlay: #fffaf6;
+  --focus-ring: rgba(200, 88, 43, 0.72);
+  --shadow-color: rgba(101, 55, 28, 0.18);
+  --resize-highlight: rgba(200, 88, 43, 0.48);
+  --resize-highlight-strong: rgba(200, 88, 43, 0.68);
+  --switch-bg: #f8dfd1;
+  --switch-knob: #ffffff;
+  --metric-track: #f8dfd1;
+  --metric-line: #c8582b;
+  --scrollbar-thumb: rgba(194, 129, 92, 0.42);
+  --palette-hover: #b84920;
+  --palette-rgb: 200, 88, 43;
+  --palette-ssh: #d1773a;
+  --palette-button-bg: linear-gradient(180deg, #c8582b 0%, #b84920 100%);
+  --palette-overlay: rgba(101, 55, 28, 0.30);
+}
+
+:root[data-palette="mint"] {
+  color: var(--text);
+  background: var(--bg);
+  --bg: #f3fbf7;
+  --panel: #fafffc;
+  --panel-2: #edf8f2;
+  --panel-3: #fcfffd;
+  --text: #16352f;
+  --text-strong: #103d30;
+  --text-secondary: #365e51;
+  --text-subtle: #6a857b;
+  --muted: #6a857b;
+  --accent: #199b70;
+  --accent-soft: rgba(25, 155, 112, 0.10);
+  --success: #268448;
+  --danger: #c43f4e;
+  --warning: #946000;
+  --border: #c7e5d7;
+  --border-strong: #a4d3be;
+  --titlebar-bg: #edfaf3;
+  --workspace-surface: #fafffc;
+  --workspace-tabs-bg: #eaf8f0;
+  --workspace-sidebar-bg: #f0faf5;
+  --workspace-files-bg: #f6fcf8;
+  --workspace-status-bg: #eff9f3;
+  --workspace-divider: #c7e5d7;
+  --workspace-panel-divider: #c7e5d7;
+  --workspace-resize-divider: #c7e5d7;
+  --app-shell-bg: linear-gradient(135deg, #fcfffd 0%, #f3fbf7 54%, #e4f6ec 100%);
+  --page-bg: #f3fbf7;
+  --settings-sidebar-bg: #f0faf5;
+  --settings-panel-bg: #fafffc;
+  --terminal-bg: #f8fdfb;
+  --surface-hover: rgba(25, 155, 112, 0.06);
+  --surface-selected: rgba(25, 155, 112, 0.14);
+  --divider: #c7e5d7;
+  --surface-faint: rgba(25, 155, 112, 0.015);
+  --surface-subtle: rgba(25, 155, 112, 0.035);
+  --control-bg: rgba(25, 155, 112, 0.045);
+  --control-hover: rgba(25, 155, 112, 0.08);
+  --surface-strong: #d9f4e7;
+  --input-bg: #fcfffd;
+  --inset-bg: #edf8f2;
+  --notice-bg: #fafffc;
+  --dialog-bg: #fcfffd;
+  --dialog-surface: #fafffc;
+  --terminal-overlay: #f8fdfb;
+  --focus-ring: rgba(25, 155, 112, 0.72);
+  --shadow-color: rgba(32, 104, 75, 0.18);
+  --resize-highlight: rgba(25, 155, 112, 0.48);
+  --resize-highlight-strong: rgba(25, 155, 112, 0.68);
+  --switch-bg: #d9f4e7;
+  --switch-knob: #ffffff;
+  --metric-track: #d9f4e7;
+  --metric-line: #199b70;
+  --scrollbar-thumb: rgba(91, 169, 137, 0.42);
+  --palette-hover: #12835c;
+  --palette-rgb: 25, 155, 112;
+  --palette-ssh: #12b98a;
+  --palette-button-bg: linear-gradient(180deg, #199b70 0%, #12835c 100%);
+  --palette-overlay: rgba(32, 104, 75, 0.30);
+}
+
+:root[data-palette="lavender"] {
+  color: var(--text);
+  background: var(--bg);
+  --bg: #faf6ff;
+  --panel: #fdfbff;
+  --panel-2: #f5effd;
+  --panel-3: #ffffff;
+  --text: #2c2144;
+  --text-strong: #2d164b;
+  --text-secondary: #594275;
+  --text-subtle: #8a7a9e;
+  --muted: #8a7a9e;
+  --accent: #8650d9;
+  --accent-soft: rgba(134, 80, 217, 0.10);
+  --success: #268448;
+  --danger: #c43f4e;
+  --warning: #946000;
+  --border: #ddcef1;
+  --border-strong: #c6a9eb;
+  --titlebar-bg: #f3ebff;
+  --workspace-surface: #fdfbff;
+  --workspace-tabs-bg: #f1e8fd;
+  --workspace-sidebar-bg: #f8f3fe;
+  --workspace-files-bg: #fbf8ff;
+  --workspace-status-bg: #f7f0fe;
+  --workspace-divider: #ddcef1;
+  --workspace-panel-divider: #ddcef1;
+  --workspace-resize-divider: #ddcef1;
+  --app-shell-bg: linear-gradient(135deg, #ffffff 0%, #faf6ff 54%, #eee4fc 100%);
+  --page-bg: #faf6ff;
+  --settings-sidebar-bg: #f8f3fe;
+  --settings-panel-bg: #fdfbff;
+  --terminal-bg: #fcfaff;
+  --surface-hover: rgba(134, 80, 217, 0.06);
+  --surface-selected: rgba(134, 80, 217, 0.14);
+  --divider: #ddcef1;
+  --surface-faint: rgba(134, 80, 217, 0.015);
+  --surface-subtle: rgba(134, 80, 217, 0.035);
+  --control-bg: rgba(134, 80, 217, 0.045);
+  --control-hover: rgba(134, 80, 217, 0.08);
+  --surface-strong: #eaddfb;
+  --input-bg: #ffffff;
+  --inset-bg: #f5effd;
+  --notice-bg: #fdfbff;
+  --dialog-bg: #ffffff;
+  --dialog-surface: #fdfbff;
+  --terminal-overlay: #fcfaff;
+  --focus-ring: rgba(134, 80, 217, 0.72);
+  --shadow-color: rgba(78, 46, 121, 0.18);
+  --resize-highlight: rgba(134, 80, 217, 0.48);
+  --resize-highlight-strong: rgba(134, 80, 217, 0.68);
+  --switch-bg: #eaddfb;
+  --switch-knob: #ffffff;
+  --metric-track: #eaddfb;
+  --metric-line: #8650d9;
+  --scrollbar-thumb: rgba(160, 114, 218, 0.42);
+  --palette-hover: #723bc3;
+  --palette-rgb: 134, 80, 217;
+  --palette-ssh: #00b894;
+  --palette-button-bg: linear-gradient(180deg, #8650d9 0%, #723bc3 100%);
+  --palette-overlay: rgba(78, 46, 121, 0.30);
+}
+
+:root[data-palette] body { background: var(--bg); }
+:root[data-palette] .button-primary {
+  border-color: var(--accent);
+  background: var(--palette-button-bg);
+  box-shadow: 0 4px 14px rgba(var(--palette-rgb), 0.22);
+  color: #ffffff;
+}
+:root[data-palette] .button-primary:hover:not(:disabled) {
+  border-color: var(--palette-hover);
+  background: var(--palette-hover);
+  box-shadow: 0 5px 16px rgba(var(--palette-rgb), 0.26);
+}
+:root[data-palette] .button-primary:active:not(:disabled) {
+  background: var(--palette-hover);
+  box-shadow: 0 2px 8px rgba(var(--palette-rgb), 0.20);
+}
+:root[data-palette] .button-primary:focus-visible { outline-color: var(--focus-ring); }
+:root[data-palette] .settings-sidebar-item[aria-current="page"] {
+  border-color: var(--border);
+  background: var(--surface-selected);
+  color: var(--accent);
+}
+:root[data-palette] .settings-mcp-command-policy-open.active,
+:root[data-palette] .settings-mcp-command-policy-open.active:hover:not(:disabled),
+:root[data-palette] .settings-about-link:hover,
+:root[data-palette] .lightweight-control,
+:root[data-palette] .lightweight-control:hover,
+:root[data-palette] .lightweight-control:active,
+:root[data-palette] .lightweight-control:focus-visible,
+:root[data-palette] .panel-title-actions .icon-button,
+:root[data-palette] .device-row > svg,
+:root[data-palette] .breadcrumb button,
+:root[data-palette] .file-row > svg,
+:root[data-palette] .settings-command-policy-link,
+:root[data-palette] .settings-mcp-command-policy-link { color: var(--accent); }
+:root[data-palette] .settings-auto-update-toggle:hover:not(:disabled) { border-color: var(--accent); }
+:root[data-palette] .settings-auto-update-toggle:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+:root[data-palette] input { accent-color: var(--accent); }
+:root[data-palette] .metric-track > span { background: var(--palette-button-bg); }
+:root[data-palette] .session-type-icon-ssh { color: var(--palette-ssh); }
+:root[data-palette] .session-type-icon-cmd { color: var(--text-secondary); }
+:root[data-palette] .session-group-drop-before::before,
+:root[data-palette] .session-group-drop-after::after,
+:root[data-palette] .session-item-drop-before::before,
+:root[data-palette] .session-item-drop-after::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--palette-rgb), 0.28), 0 0 10px rgba(var(--palette-rgb), 0.9);
+}
+:root[data-palette] .session-group-drop-target {
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(var(--palette-rgb), 0.28);
+}
+:root[data-palette] .file-drop-overlay,
+:root[data-palette] .breadcrumb button.breadcrumb-drop-target,
+:root[data-palette] .file-row-drop-target {
+  background: var(--surface-selected);
+  color: var(--accent);
+  border-color: var(--accent);
+  outline-color: var(--accent);
+}
+:root[data-palette] .file-drop-overlay { background: var(--panel); }
+:root[data-palette] .file-row:focus-visible { outline-color: var(--focus-ring); }
+:root[data-palette] .file-inline-rename,
+:root[data-palette] .settings-shortcut-input:focus-visible { box-shadow: 0 0 0 2px rgba(var(--palette-rgb), 0.18); }
+:root[data-palette] .transfer-bar > button { color: var(--danger); }
+:root[data-palette] .loading-banner {
+  border-color: var(--border-strong);
+  background: var(--surface-selected);
+  color: var(--accent);
+}
+:root[data-palette] .file-management-backdrop { background: var(--palette-overlay); }
+
+:root[data-palette] .dialog-backdrop { background: var(--palette-overlay); }
+:root[data-palette] .file-management-backdrop .primary-button { background: var(--palette-button-bg); color: #ffffff; }
+
+:root[data-palette] {
+  --palette-info-text: var(--accent);
+  --palette-info-border: var(--border-strong);
+  --palette-info-bg: var(--accent-soft);
+  --palette-warning-text: var(--warning);
+  --palette-success-text: var(--success);
+  --palette-danger-text: var(--danger);
+}

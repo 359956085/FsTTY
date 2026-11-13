@@ -1,6 +1,6 @@
 [package]
 name = "fstty"
-version = "2.1.0-beta.2"
+version = "2.1.0-beta.3"
 description = "FsTTY"
 authors = ["fengshi"]
 edition = "2021"
@@ -25,7 +25,7 @@ fstty-network = { path = "network" }
 reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 log = "0.4"
 jsonc-parser = { version = "0.33", features = ["cst", "serde"] }
-russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
+russh = { version = "0.65.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.3"
 rmcp = { version = "=3.9.0", features = ["transport-io", "transport-streamable-http-server"] }
 rusqlite = { version = "0.41.1", features = ["bundled"] }

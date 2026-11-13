@@ -31,7 +31,7 @@ describe("终端主题", () => {
   ] as const)(
     "预设只改变 ANSI 配色，保留明暗背景、普通文字和选区：%s",
     (colorScheme, red, brightBlue) => {
-      for (const theme of ["light", "dark"] as const) {
+      for (const theme of ["light", "dark", "terracotta", "mint", "lavender"] as const) {
         const base = getTerminalTheme(theme);
         const selected = getTerminalTheme(theme, colorScheme);
         expect(selected.red).not.toBe(base.red);
@@ -52,5 +52,14 @@ describe("终端主题", () => {
     selected.red = "#000000";
     expect(getTerminalTheme("dark", "default")).toEqual(original);
     expect(getTerminalTheme("dark", "dracula").red).toBe("#ff5555");
+  });
+  it.each(["terracotta", "mint", "lavender"] as const)("新主题 %s 仅改变终端表面，默认 ANSI 与浅色相同", (theme) => {
+    const light = getTerminalTheme("light");
+    const selected = getTerminalTheme(theme);
+    expect(selected.background).not.toBe(light.background);
+    expect(selected.cursorAccent).toBe(selected.background);
+    for (const key of ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const) {
+      expect(selected[key]).toBe(light[key]);
+    }
   });
 });

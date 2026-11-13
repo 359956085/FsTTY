@@ -3,6 +3,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ThemePreference } from "./api/types";
 import { useAppTheme } from "./useAppTheme";
 
 function installMatchMedia(initialMatches: boolean) {
@@ -66,5 +67,21 @@ describe("主题运行时", () => {
     const { result } = renderHook(() => useAppTheme("light"));
     expect(result.current).toBe("light");
     expect(media.addEventListener).not.toHaveBeenCalled();
+  });
+  it("固定浅色配色之间切换仍更新身份，忽略系统变化且可回到跟随系统", () => {
+    const media = installMatchMedia(true);
+    const { result, rerender } = renderHook(({ preference }) => useAppTheme(preference), { initialProps: { preference: "terracotta" as ThemePreference } });
+    for (const preference of ["terracotta", "mint", "lavender"] as const) {
+      rerender({ preference });
+      act(() => media.setMatches(false));
+      expect(result.current).toBe(preference);
+      expect(document.documentElement.dataset.palette).toBe(preference);
+      expect(document.documentElement.style.colorScheme).toBe("light");
+    }
+    expect(media.addEventListener).not.toHaveBeenCalled();
+    rerender({ preference: "system" });
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+    act(() => media.setMatches(true));
+    expect(result.current).toBe("dark");
   });
 });

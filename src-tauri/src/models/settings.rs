@@ -82,6 +82,9 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+    Terracotta,
+    Mint,
+    Lavender,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -414,6 +417,26 @@ mod tests {
         .expect("应读取旧黑名单");
         assert!(exclude.allow_rules.is_empty());
         assert_eq!(exclude.exclude_rules.len(), 1);
+    }
+
+    #[test]
+    fn 新旧主题枚举兼容且拒绝未知值() {
+        for (value, theme) in [
+            ("system", ThemePreference::System),
+            ("light", ThemePreference::Light),
+            ("dark", ThemePreference::Dark),
+            ("terracotta", ThemePreference::Terracotta),
+            ("mint", ThemePreference::Mint),
+            ("lavender", ThemePreference::Lavender),
+        ] {
+            let encoded = serde_json::to_value(theme).unwrap();
+            assert_eq!(encoded, value);
+            assert_eq!(
+                serde_json::from_value::<ThemePreference>(encoded).unwrap(),
+                theme
+            );
+        }
+        assert!(serde_json::from_value::<ThemePreference>(serde_json::json!("unknown")).is_err());
     }
 
     #[test]

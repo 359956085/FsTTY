@@ -1,6 +1,6 @@
 [advisories]
-# 复查日期：2026-11-10。仅暂时豁免 RUSTSEC-2023-0071。
-# 当前 russh 0.62.2 / ssh-key 0.7.0-rc.11 精确依赖 rsa 0.10.0-rc.18；
+# 复查日期：2026-11-13。仅暂时豁免 RUSTSEC-2023-0071。
+# 当前 russh 0.65.1 / ssh-key 0.7.0-rc.11 精确依赖 rsa 0.10.0-rc.18；
 # 已有 rsa >=0.10.0 修复，但核查的最新 russh 0.65.1 仍精确锁定同一 RC。
 # 经确认保留此上游阻塞项，不扩大豁免；依赖链可用正式 RSA 后移除此项。
 # https://rustsec.org/advisories/RUSTSEC-2023-0071.html

@@ -12,7 +12,10 @@ pub fn set_approval_theme(theme: crate::models::ThemePreference) {
     APPROVAL_THEME.store(
         match theme {
             ThemePreference::System => 0,
-            ThemePreference::Light => 1,
+            ThemePreference::Light
+            | ThemePreference::Terracotta
+            | ThemePreference::Mint
+            | ThemePreference::Lavender => 1,
             ThemePreference::Dark => 2,
         },
         std::sync::atomic::Ordering::Relaxed,

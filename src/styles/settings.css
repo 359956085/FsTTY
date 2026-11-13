@@ -417,7 +417,7 @@
 }
 
 .settings-about-link:hover {
-  color: #8fc5ff;
+  color: var(--palette-info-text, #8fc5ff);
   text-decoration: underline;
 }
 
@@ -583,7 +583,7 @@
 
 .settings-mcp-permission-info:hover {
   color: var(--accent);
-  background: rgba(72, 159, 247, 0.12);
+  background: var(--palette-info-bg, rgba(72, 159, 247, 0.12));
 }
 
 .settings-mcp-permission-info:focus-visible {
@@ -644,12 +644,12 @@
 .settings-mcp-command-policy-open.active {
   border-color: transparent;
   background: transparent;
-  color: #489ff7;
+  color: var(--palette-info-text, #489ff7);
 }
 
 .settings-mcp-command-policy-open.active:hover:not(:disabled) {
   background: var(--control-hover);
-  color: #489ff7;
+  color: var(--palette-info-text, #489ff7);
 }
 
 .settings-mcp-permissions-header {
@@ -783,9 +783,9 @@
 .settings-mcp-command-policy-warning {
   margin-bottom: 12px;
   padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, #d7ad78 45%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--palette-warning-text, #d7ad78) 45%, var(--border));
   border-radius: 6px;
-  color: #d7ad78;
+  color: var(--palette-warning-text, #d7ad78);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -909,7 +909,7 @@
 }
 
 .settings-mcp-config-secret-hint {
-  color: #d7ad78;
+  color: var(--palette-warning-text, #d7ad78);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1012,7 +1012,7 @@
 }
 
 .settings-local-agent-message {
-  color: #d7ad78 !important;
+  color: var(--palette-warning-text, #d7ad78) !important;
 }
 
 .settings-local-agent-result {
@@ -1024,11 +1024,11 @@
 }
 
 .settings-local-agent-result.succeeded {
-  color: #8fd3a5;
+  color: var(--palette-success-text, #8fd3a5);
 }
 
 .settings-local-agent-result.failed {
-  color: #ffaaaa;
+  color: var(--palette-danger-text, #ffaaaa);
 }
 
 .settings-local-agent-error {
@@ -1157,10 +1157,10 @@
 
 .update-version-summary .update-version-badge {
   padding: 3px 10px;
-  border: 1px solid rgba(49, 145, 255, 0.34);
+  border: 1px solid var(--palette-info-border, rgba(49, 145, 255, 0.34));
   border-radius: 999px;
-  background: rgba(29, 116, 220, 0.25);
-  color: #8fc5ff;
+  background: var(--palette-info-bg, rgba(29, 116, 220, 0.25));
+  color: var(--palette-info-text, #8fc5ff);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1243,7 +1243,7 @@
 .update-release-markdown blockquote {
   margin: 10px 0;
   padding: 2px 12px;
-  border-left: 3px solid rgba(61, 158, 255, 0.55);
+  border-left: 3px solid var(--palette-info-border, rgba(61, 158, 255, 0.55));
   color: var(--muted);
 }
 
@@ -1353,7 +1353,7 @@
 }
 
 .form-success {
-  color: #8fd3a5;
+  color: var(--palette-success-text, #8fd3a5);
   font-size: 13px;
 }
 
@@ -1889,7 +1889,7 @@
 .security-dialog > p {
   margin: 0;
   padding: 0 16px 16px;
-  color: #e7c27a;
+  color: var(--palette-warning-text, #e7c27a);
 }
 
 .credential-input {
@@ -1909,7 +1909,7 @@
   border: 1px solid rgba(255, 107, 107, 0.3);
   border-radius: 5px;
   background: rgba(255, 107, 107, 0.13);
-  color: #ffaaaa;
+  color: var(--palette-danger-text, #ffaaaa);
 }
 
 .form-error {

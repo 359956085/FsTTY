@@ -1,12 +1,17 @@
 import type { ThemePreference } from "./api/types";
 
-export type ResolvedTheme = "light" | "dark";
+export type CustomTheme = "terracotta" | "mint" | "lavender";
+export type ResolvedTheme = "light" | "dark" | CustomTheme;
+
+export function isCustomTheme(theme: ResolvedTheme): theme is CustomTheme {
+  return theme !== "light" && theme !== "dark";
+}
 
 export const THEME_STORAGE_KEY = "fstty.theme";
 export const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 export function isThemePreference(value: unknown): value is ThemePreference {
-  return value === "system" || value === "light" || value === "dark";
+  return ["system", "light", "dark", "terracotta", "mint", "lavender"].includes(value as string);
 }
 
 export function readCachedThemePreference(): ThemePreference {
@@ -30,8 +35,11 @@ export function applyTheme(
   systemDark: boolean,
 ): ResolvedTheme {
   const resolved = resolveTheme(preference, systemDark);
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
+  const appearance = resolved === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = appearance;
+  if (isCustomTheme(resolved)) document.documentElement.dataset.palette = resolved;
+  else delete document.documentElement.dataset.palette;
+  document.documentElement.style.colorScheme = appearance;
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, preference);
   } catch {

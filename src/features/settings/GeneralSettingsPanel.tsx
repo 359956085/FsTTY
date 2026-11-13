@@ -120,6 +120,9 @@ export function GeneralSettingsPanel({
               { value: "system", label: t("settings.themeSystem") },
               { value: "light", label: t("settings.themeLight") },
               { value: "dark", label: t("settings.themeDark") },
+              { value: "terracotta", label: t("settings.themeTerracotta") },
+              { value: "mint", label: t("settings.themeMint") },
+              { value: "lavender", label: t("settings.themeLavender") },
             ]}
             value={settings.theme}
           />

@@ -78,14 +78,24 @@ impl server::Handler for TestServer {
     async fn auth_publickey(
         &mut self,
         _: &str,
-        key: &russh::keys::PublicKey,
+        key: server::VerifiedPublicKey<'_>,
     ) -> Result<server::Auth, Self::Error> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        Ok(if self.accepted_key.as_ref() == Some(key) {
-            server::Auth::Accept
-        } else {
-            server::Auth::reject()
-        })
+        if key.public_key.algorithm().is_rsa() {
+            assert!(matches!(
+                key.algorithm,
+                russh::keys::Algorithm::Rsa { hash: Some(_) }
+            ));
+        }
+        Ok(
+            if self.accepted_key.as_ref().map(|value| value.key_data())
+                == Some(key.public_key.key_data())
+            {
+                server::Auth::Accept
+            } else {
+                server::Auth::reject()
+            },
+        )
     }
     async fn auth_password(
         &mut self,
@@ -306,8 +316,14 @@ async fn 服务代理传输大于窗口的文件并在取消后关闭连接() {
 struct LocalClient;
 impl client::Handler for LocalClient {
     type Error = russh::Error;
-    async fn check_server_key(&mut self, _: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
-        Ok(true)
+    async fn check_server_key(
+        &mut self,
+        key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        Ok(matches!(
+            key,
+            russh::keys::PublicKeyOrCertificate::PublicKey { .. }
+        ))
     }
 }
 async fn remote() -> (
@@ -448,4 +464,33 @@ async fn 通道代理支持终端与命令并传递退出码() {
         client.disconnect(russh::Disconnect::ByApplication,"","en").await.unwrap();
         timeout(Duration::from_secs(3),proxy).await.unwrap().unwrap().unwrap();server.abort();
     }).await.expect("通道代理不能互锁");
+}
+
+#[tokio::test]
+async fn 升级后仍可使用rsa私钥并协商sha2签名() {
+    use russh::keys::ssh_key::{private::RsaKeypair, LineEnding, PrivateKey};
+    let key = PrivateKey::new(
+        RsaKeypair::random(&mut rand::rng(), 2048).unwrap().into(),
+        "fixture",
+    )
+    .unwrap();
+    let (mut profile, _, attempts, server) = remote_with_key(Some(key.public_key().clone())).await;
+    profile.target.private_key = true;
+    let secrets = Secrets {
+        private_key: Zeroizing::new(key.to_openssh(LineEnding::LF).unwrap().to_string()),
+        ..Default::default()
+    };
+    let remote = timeout(
+        Duration::from_secs(15),
+        proxy::authenticate(&profile, secrets, &Default::default()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    remote
+        .disconnect(russh::Disconnect::ByApplication, "", "")
+        .await
+        .unwrap();
+    server.abort();
 }

@@ -1,7 +1,8 @@
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon as XTermSerializeAddon } from "@xterm/addon-serialize";
 import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
-import type { ResolvedTheme } from "../../shared/theme";
+import { isCustomTheme, type ResolvedTheme } from "../../shared/theme";
+import { CUSTOM_TERMINAL_SURFACES } from "../../shared/themePalettes";
 import type { TerminalColorScheme } from "../../shared/api/types";
 import { TERMINAL_ANSI_PALETTES } from "../../shared/terminalColors";
 import { StrictClipboardBase64, TauriClipboardProvider } from "./terminalClipboard";
@@ -33,7 +34,7 @@ export interface InstalledTerminalRuntime {
 
 export const TERMINAL_SCROLLBAR_SIZE = 8;
 
-const TERMINAL_THEMES: Record<ResolvedTheme, ITheme> = {
+const TERMINAL_THEMES: Record<"light" | "dark", ITheme> = {
   dark: {
     background: "#080d11",
     foreground: "#d5d9dd",
@@ -76,7 +77,12 @@ export function getTerminalTheme(
   theme: ResolvedTheme,
   colorScheme: TerminalColorScheme = "default",
 ): ITheme {
-  return { ...TERMINAL_THEMES[theme], ...TERMINAL_ANSI_PALETTES[colorScheme] };
+  const base = theme === "dark" ? "dark" : "light";
+  return {
+    ...TERMINAL_THEMES[base],
+    ...(isCustomTheme(theme) ? CUSTOM_TERMINAL_SURFACES[theme] : {}),
+    ...TERMINAL_ANSI_PALETTES[colorScheme],
+  };
 }
 
 export async function installTerminalRuntime({

@@ -13,6 +13,7 @@ describe("应用主题", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-palette");
     document.documentElement.style.colorScheme = "";
   });
 
@@ -34,4 +35,17 @@ describe("应用主题", () => {
     expect(document.documentElement.style.colorScheme).toBe("light");
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
   });
+  it.each(["terracotta", "mint", "lavender"] as const)("保存与恢复固定浅色配色 %s，切回旧主题清理配色", (theme) => {
+    expect(isThemePreference(theme)).toBe(true);
+    expect(resolveTheme(theme, true)).toBe(theme);
+    expect(applyTheme(theme, true)).toBe(theme);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.palette).toBe(theme);
+    expect(document.documentElement.style.colorScheme).toBe("light");
+    expect(readCachedThemePreference()).toBe(theme);
+    applyTheme("dark", false);
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
 });

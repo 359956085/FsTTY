@@ -64,9 +64,12 @@ mod acceptance {
         type Error = russh::Error;
         async fn check_server_key(
             &mut self,
-            _: &russh::keys::PublicKey,
+            key: &russh::keys::PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
-            Ok(true)
+            Ok(matches!(
+                key,
+                russh::keys::PublicKeyOrCertificate::PublicKey { .. }
+            ))
         }
     }
 

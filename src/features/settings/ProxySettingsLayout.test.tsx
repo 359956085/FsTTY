@@ -125,3 +125,18 @@ describe("全局代理及应用更新布局", () => {
     expect(onProxyEnabledChange).toHaveBeenCalledWith(true);
   });
 });
+
+
+describe("新增浅色配色选项", () => {
+  it.each(["zh-CN", "en-US"])("使用现有主题控件选择三套配色：%s", (language) => {
+    locale.language = language;
+    const t = i18n.getFixedT(language);
+    const onThemeChange = vi.fn();
+    general({ onThemeChange });
+    for (const [value, key] of [["terracotta", "themeTerracotta"], ["mint", "themeMint"], ["lavender", "themeLavender"]]) {
+      fireEvent.click(screen.getByRole("combobox", { name: t("settings.theme") }));
+      fireEvent.click(screen.getByRole("option", { name: t("settings." + key) }));
+      expect(onThemeChange).toHaveBeenLastCalledWith(value);
+    }
+  });
+});
