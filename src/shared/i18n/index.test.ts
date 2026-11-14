@@ -30,6 +30,13 @@ describe("i18n 资源", () => {
   it("中英文资源键完全一致", () => {
     expect([...english.keys()].sort()).toEqual([...chinese.keys()].sort());
   });
+  it("主题使用浅色及两套玻璃主题名称", () => {
+    expect(chinese.get("settings.themeLight")).toBe("浅色");
+    expect(chinese.get("settings.themeIridescentGlass")).toBe("彩虹玻璃");
+    expect(chinese.get("settings.themeIceGlass")).toBe("冰透玻璃");
+    expect(english.get("settings.themeIridescentGlass")).toBe("Rainbow Glass");
+    expect(english.get("settings.themeIceGlass")).toBe("Ice Glass");
+  });
 
   it("英文资源除语言名称外不含中文", () => {
     const chineseTextEntries = [...english.entries()].filter(

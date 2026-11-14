@@ -85,6 +85,8 @@ pub enum ThemePreference {
     Terracotta,
     Mint,
     Lavender,
+    IridescentGlass,
+    IceGlass,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -428,6 +430,8 @@ mod tests {
             ("terracotta", ThemePreference::Terracotta),
             ("mint", ThemePreference::Mint),
             ("lavender", ThemePreference::Lavender),
+            ("iridescentGlass", ThemePreference::IridescentGlass),
+            ("iceGlass", ThemePreference::IceGlass),
         ] {
             let encoded = serde_json::to_value(theme).unwrap();
             assert_eq!(encoded, value);

@@ -5,7 +5,7 @@ import { applyTheme, readCachedThemePreference, THEME_STORAGE_KEY } from '../src
 
 const script = readFileSync('index.html', 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
 afterEach(() => vi.unstubAllGlobals());
-it.each([null, 'invalid', 'system', 'light', 'dark', 'terracotta', 'mint', 'lavender'])(
+it.each([null, 'invalid', 'system', 'light', 'dark', 'terracotta', 'mint', 'lavender', 'iridescentGlass', 'iceGlass'])(
   'first-paint cache %s agrees with runtime, for either system appearance', (cached) => {
     for (const systemDark of [false, true]) {
       const data = new Map(cached === null ? [] : [[THEME_STORAGE_KEY, cached]]);

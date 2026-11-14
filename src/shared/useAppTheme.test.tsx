@@ -71,7 +71,7 @@ describe("主题运行时", () => {
   it("固定浅色配色之间切换仍更新身份，忽略系统变化且可回到跟随系统", () => {
     const media = installMatchMedia(true);
     const { result, rerender } = renderHook(({ preference }) => useAppTheme(preference), { initialProps: { preference: "terracotta" as ThemePreference } });
-    for (const preference of ["terracotta", "mint", "lavender"] as const) {
+    for (const preference of ["terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"] as const) {
       rerender({ preference });
       act(() => media.setMatches(false));
       expect(result.current).toBe(preference);

@@ -31,7 +31,7 @@ describe("终端主题", () => {
   ] as const)(
     "预设只改变 ANSI 配色，保留明暗背景、普通文字和选区：%s",
     (colorScheme, red, brightBlue) => {
-      for (const theme of ["light", "dark", "terracotta", "mint", "lavender"] as const) {
+      for (const theme of ["light", "dark", "terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"] as const) {
         const base = getTerminalTheme(theme);
         const selected = getTerminalTheme(theme, colorScheme);
         expect(selected.red).not.toBe(base.red);
@@ -53,13 +53,24 @@ describe("终端主题", () => {
     expect(getTerminalTheme("dark", "default")).toEqual(original);
     expect(getTerminalTheme("dark", "dracula").red).toBe("#ff5555");
   });
-  it.each(["terracotta", "mint", "lavender"] as const)("新主题 %s 仅改变终端表面，默认 ANSI 与浅色相同", (theme) => {
+  it.each(["terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"] as const)("新主题 %s 仅改变终端表面，默认 ANSI 与浅色相同", (theme) => {
     const light = getTerminalTheme("light");
     const selected = getTerminalTheme(theme);
     expect(selected.background).not.toBe(light.background);
-    expect(selected.cursorAccent).toBe(selected.background);
+    if (theme === "iridescentGlass" || theme === "iceGlass") {
+      expect(selected.cursorAccent).toMatch(/^#[0-9a-f]{6}$/);
+    } else {
+      expect(selected.cursorAccent).toBe(selected.background);
+    }
     for (const key of ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const) {
       expect(selected[key]).toBe(light[key]);
     }
+  });
+  it.each([["iridescentGlass", "#ecedf900"], ["iceGlass", "#28658b00"]] as const)("玻璃 %s 完全透明且保留参考 RGB 与不透明光标文字，切回旧主题清理选区前景", (theme, background) => {
+    const glass = getTerminalTheme(theme);
+    expect(glass.background).toBe(background);
+    expect(glass.cursorAccent).toMatch(/^#[0-9a-f]{6}$/);
+    expect(glass.selectionForeground).toBeDefined();
+    expect(getTerminalTheme("light").selectionForeground).toBeUndefined();
   });
 });

@@ -1,0 +1,194 @@
+/* Application-local glass: no native window transparency or external assets.
+   Opaque tokens are the fallback; blur never wraps a workspace/positioned menu. */
+:root[data-palette="iridescentGlass"] {
+  color: var(--text);
+  background: var(--bg);
+  --bg: #e8eafa;
+  --panel: #f0f1fc;
+  --panel-2: #edf0fb;
+  --panel-3: #f8f8ff;
+  --text: #20263f;
+  --text-strong: #151d36;
+  --text-secondary: #394764;
+  --text-subtle: #56617d;
+  --muted: #56617d;
+  --accent: #3268cf;
+  --accent-soft: #568be822;
+  --success: #168143;
+  --danger: #b92f50;
+  --warning: #875800;
+  --border: #b7c4e1;
+  --border-strong: #8eacd6;
+  --titlebar-bg: #e7e9fb;
+  --workspace-surface: transparent;
+  --workspace-tabs-bg: #e0e6fa;
+  --workspace-sidebar-bg: #e9e8f8;
+  --workspace-files-bg: #edf0fb;
+  --workspace-status-bg: #e7ebfa;
+  --workspace-divider: #bac8e4;
+  --workspace-panel-divider: var(--workspace-divider);
+  --workspace-resize-divider: var(--workspace-divider);
+  --app-shell-bg: radial-gradient(ellipse at 6% 12%, #f8d9ef 0%, transparent 46%), radial-gradient(ellipse at 88% 24%, #c3edfa 0%, transparent 48%), radial-gradient(ellipse at 64% 85%, #eed3f4 0%, transparent 45%), linear-gradient(135deg, #e8eafa, #d6dffc 50%, #d9f4f5);
+  --page-bg: transparent;
+  --settings-sidebar-bg: #e9e8f8;
+  --settings-panel-bg: #f0f1fc;
+  --terminal-bg: #ecedf9;
+  --surface-hover: #4c7bcb16;
+  --surface-selected: #67a5ed30;
+  --divider: #bac8e4;
+  --surface-faint: #ffffff12;
+  --surface-subtle: #ffffff35;
+  --control-bg: #ffffff40;
+  --control-hover: #ffffff80;
+  --surface-strong: #b0bde366;
+  --input-bg: #f9f9ff;
+  --inset-bg: #e7eafa;
+  --notice-bg: #edf0fb;
+  --dialog-bg: #f1f0fcf5;
+  --dialog-surface: #f1f0fcf5;
+  --terminal-overlay: #ecedf9f5;
+  --focus-ring: #3268cf;
+  --shadow-color: #4b528a30;
+  --resize-highlight: #658bc988;
+  --resize-highlight-strong: #3268cfbb;
+  --switch-bg: #a8b6d766;
+  --switch-knob: #ffffff;
+  --metric-track: #93a5cd44;
+  --metric-line: #3268cf;
+  --scrollbar-thumb: #7d8cce66;
+  --palette-hover: #2755b3;
+  --palette-rgb: 50, 104, 207;
+  --palette-ssh: #179e88;
+  --palette-button-bg: linear-gradient(180deg, #4a89e4, #3268cf);
+  --palette-overlay: #51578735;
+  --glass-sheen: #ffffff9e;
+}
+
+:root[data-palette="iceGlass"] {
+  color: var(--text);
+  background: var(--bg);
+  --bg: #28658b;
+  --panel: #28658b;
+  --panel-2: #245a7e;
+  --panel-3: #214e70;
+  --text: #f5fbff;
+  --text-strong: #ffffff;
+  --text-secondary: #edf8ff;
+  --text-subtle: #d7ecfa;
+  --muted: #d7ecfa;
+  --accent: #a4f3ff;
+  --accent-soft: #86e9ff25;
+  --success: #a5f4c0;
+  --danger: #ffd0d9;
+  --warning: #ffe4a3;
+  --border: #a8eaff66;
+  --border-strong: #bcefffbb;
+  --titlebar-bg: #306f94;
+  --workspace-surface: transparent;
+  --workspace-tabs-bg: #2b6489;
+  --workspace-sidebar-bg: #316c90;
+  --workspace-files-bg: #28658b;
+  --workspace-status-bg: #2c688d;
+  --workspace-divider: #bcefff55;
+  --workspace-panel-divider: var(--workspace-divider);
+  --workspace-resize-divider: var(--workspace-divider);
+  --app-shell-bg: radial-gradient(ellipse at 2% 5%, #65b4cc 0%, transparent 52%), radial-gradient(ellipse at 98% 92%, #258eae 0%, transparent 50%), linear-gradient(125deg, #326b91, #24547d 54%, #2b779d);
+  --page-bg: transparent;
+  --settings-sidebar-bg: #316c90;
+  --settings-panel-bg: #28658b;
+  --terminal-bg: #28658b;
+  --surface-hover: #b2efff22;
+  --surface-selected: #70e5ff44;
+  --divider: #bcefff66;
+  --surface-faint: #d9f8ff0a;
+  --surface-subtle: #d9f8ff13;
+  --control-bg: #d9f8ff18;
+  --control-hover: #d9f8ff33;
+  --surface-strong: #d9f8ff33;
+  --input-bg: #32759b;
+  --inset-bg: #245a7e;
+  --notice-bg: #28658b;
+  --dialog-bg: #28658bf7;
+  --dialog-surface: #28658bf7;
+  --terminal-overlay: #28658bf5;
+  --focus-ring: #b6f4ff;
+  --shadow-color: #092a4c55;
+  --resize-highlight: #bcefff88;
+  --resize-highlight-strong: #d8f8ffdd;
+  --switch-bg: #d9f8ff33;
+  --switch-knob: #ffffff;
+  --metric-track: #d9f8ff44;
+  --metric-line: #a4f3ff;
+  --scrollbar-thumb: #b0eaff88;
+  --palette-hover: #064568;
+  --palette-rgb: 164, 243, 255;
+  --palette-ssh: #119b9f;
+  --palette-button-bg: linear-gradient(180deg, #0d6d94, #07547a);
+  --palette-overlay: #102e5555;
+  --glass-sheen: #c8f7ff70;
+}
+
+/* These icon tiles contain white strokes, so their backing stays dark. */
+:root[data-palette="iceGlass"] .session-type-icon-cmd { color: #254e6c; }
+
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.settings-panel, .settings-about-card, .transfer-bar, .dialog) {
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 8px 24px var(--shadow-color);
+}
+
+/* Strong backing keeps overlaid text legible without changing popup geometry. */
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.form-select-menu, .context-menu, .command-history-popover, .button-tooltip) {
+  background: var(--panel-3);
+}
+
+/* Both glass palettes use the light appearance, including ice's white text.
+   Replace remaining fixed light-mode status colors with semantic tokens. */
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.file-move-error, .context-menu .context-menu-danger) {
+  color: var(--danger);
+}
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.file-move-success, .file-row.file-row-move-success) {
+  background: var(--accent-soft) !important;
+  color: var(--success);
+}
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.settings-warning, .security-dialog > p) {
+  color: var(--warning) !important;
+}
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.form-success, .settings-local-agent-result.succeeded) {
+  color: var(--success);
+}
+:root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.form-error, .error-banner, .settings-local-agent-result.failed) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+@supports (backdrop-filter: blur(12px)) {
+  :root[data-palette="iridescentGlass"] {
+    --border: #ffffff99;
+    --titlebar-bg: #ffffff35;
+    --workspace-tabs-bg: #ffffff25;
+    --workspace-sidebar-bg: #ffffff20;
+    --workspace-files-bg: #ffffff20;
+    --workspace-status-bg: #ffffff30;
+    --settings-sidebar-bg: #ffffff20;
+    --settings-panel-bg: #ffffff48;
+    --terminal-bg: transparent;
+    --input-bg: #ffffff80;
+    --notice-bg: #eff2fcbb;
+  }
+  :root[data-palette="iceGlass"] {
+    --titlebar-bg: #c8f7ff20;
+    --workspace-tabs-bg: #d9f8ff0d;
+    --workspace-sidebar-bg: #c8f7ff16;
+    --workspace-files-bg: #c8f7ff12;
+    --workspace-status-bg: #c8f7ff1a;
+    --settings-sidebar-bg: #c8f7ff16;
+    --settings-panel-bg: #20547b80;
+    --terminal-bg: transparent;
+    --input-bg: #d9f8ff22;
+    --notice-bg: #28658bdd;
+  }
+  /* Only leaf controls and existing viewport-sized modal backdrops get blur.
+     No workspace ancestor gains a containing block for fixed menus/tooltips. */
+  :root:is([data-palette="iridescentGlass"], [data-palette="iceGlass"]) :is(.text-input, .status-panel, .dialog-backdrop, .file-management-backdrop) {
+    backdrop-filter: blur(12px);
+  }
+}

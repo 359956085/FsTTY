@@ -1125,3 +1125,51 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 本轮新增源码文件为 src-tauri/broker/tests/ssh_protocol_security.rs。上一轮尚未提交的 scripts/theme-startup.test.mjs、src/shared/themePalettes.ts、src/styles/theme-palettes.css 一并保留，提交时需包含这四个新增文件。公共 IPC、配置及数据库无新增变化，Beta 发布／更新隔离规则保持原样。没有构建安装包、创建标签、提交、推送或发布；真实 Windows 安装、UAC、远端 SSH 及远程 Actions 仍待验收。
 
 - 最终 npm run verify:all 完整重跑退出 0：110 个前端／脚本文件、887 项通过；Rust 475 项通过（应用 401、Broker 57、SSH 边界 6、新线级回归 1、Network 10），9 项原有环境测试保持忽略。类型、严格 ESLint、Rust 格式、严格 Clippy 及生产前端构建通过，既有 NSIS 夹具显式启用；保留原有 Canvas 环境提示及构建体积警告。Debug 校验程序 ProductVersion／FileVersion 均为 2.1.0-beta.3，既有 PE 测试通过。完整日志为 artifacts/security-review-20261113/verify-all-final.log；原生／远程待验收范围不因本地通过而变更。
+
+
+## 2026-11-14 · 审计缓存迁出项目
+
+- 用户反馈 IDE 的 main 日志混入 RustSec 上游公告提交。核实为 artifacts/security-review-20261113/advisory-db 的独立 Git 仓库被 IDE 自动发现；FsTTY 的 main 与 origin/main 均仍为 efce02e，该漏洞库的 main／领先 20 状态不属于 FsTTY。
+- 将该漏洞库、独立 cargo-home 索引缓存及配套锁文件整体迁至 C:/Users/fengshi/AppData/Local/FsTTY-dev-cache/rust-audit。迁移前核对源／目标绝对路径、目标不存在和源非重解析点，没有删除历史报告或覆盖缓存；漏洞库 HEAD 保持 4ef2df8e806a65e2f1ecc14f56f51249062b23d6，无工作区修改。项目 artifacts 继续保留审计 JSON、构建与验证日志。
+- docs/windows-release-ci.md 记录固定外部位置及进程级 CARGO_HOME／--db 用法，后续不再在项目 artifacts 下克隆漏洞库。不修改全局 Cargo 配置、环境变量、IDE 显式映射、产品源码或版本，不创建提交、推送或发布。
+- 迁移后使用外部数据库与外部 Cargo 索引重新审计，退出 0、零未豁免漏洞，既有 RSA 单项豁免和 5 条非阻断提示保持；结果见 artifacts/security-review-20261113/audit-after-cache-relocation.json。全仓 artifacts 扫描已无嵌套 .git/HEAD，FsTTY main 与 origin/main 差异仍为 0／0；git diff --check 通过。仅文档修改，无需重复产品构建和测试。
+
+
+## 2026-11-14 · 彩虹玻璃与冰透玻璃主题
+
+- 新增 iridescentGlass／iceGlass，显示为「彩虹玻璃 / Rainbow Glass」「冰透玻璃 / Ice Glass」。原中文「亮色」改为「浅色」，配置值 light 和英文 Light 不变。前后端枚举、原子保存、启动缓存与首屏脚本均接受八个选项；两套玻璃主题固定为浅色模式但保留配色身份，Broker 原生确认映射既有浅色样式，不改变 UAC、窗口透明标志或数据库。
+- 使用本地静态 CSS 渐变、半透明表面、局部 backdrop-filter 和高光阴影。背景模糊仅作用于输入控件、无浮层子项的设备状态区及既有全视口弹窗背景，不给工作区祖先增加滤镜或透明度；不新增装饰点击层，保留所有布局尺寸和功能。菜单、历史和提示使用实色 backing，模糊不支持时使用实色表面。冰透主题的 CMD／SSH 图标底色单独保持足够深，以显示其既有白色图案。
+- 所有 xterm 在 open 前启用 allowTransparency，旧主题背景仍为不透明色。玻璃终端使用有色 RGB＋透明度背景，光标反色文字使用不透明色，选区前景显式指定；切回旧主题清理这些覆盖。彩色文字遵循原 terminalColorScheme，默认 ANSI 与浅色逐项一致，十套手动预设优先，minimumContrastRatio 仍为默认 1／预设 4.5。没有因设计图更换 ANSI 或装饰高亮规则。
+- 冰透主题默认继承的深色 ANSI 文字在蓝色背景上对比度有限，按用户要求保留配置，未擅自提高默认对比度或切换暗色 ANSI。已在 doc/terminal-colors.md 说明：可选独立配色预设沿用 4.5 策略；xterm 只能按给定 RGB 估算，不能精确感知任意位置的 CSS 渐变合成背景。
+- 专项 8 个文件、115 项通过，涵盖八个选项的保存成功／失败／重复提交、旧配置、固定主题及系统变化、缓存首屏一致、语言名称、鼠标／键盘选择与焦点、ANSI 优先级、后台主题更新及终端不重装。Rust 序列化／未知值拒绝和八个主题持久化覆盖一并扩展，没有新增 CSS 源码字符串断言。
+- 最终 npm run verify:all 退出 0：110 个前端／脚本文件、900 项通过；Rust 475 项通过（应用 401、Broker 57、SSH 边界 6、线级安全 1、Network 10），9 项既有环境测试忽略。版本、类型、严格 ESLint、生产前端构建、Rust 格式及严格 Clippy 均通过。日志：artifacts/glass-validation/verify-all-final-bounded.log。保留既有 jsdom Canvas 提示和构建体积警告。
+- 首轮并发全量出现既有更新历史懒加载测试超时，单独重跑该文件 20 项通过；另一次 Rust 使用深层临时目录触发 Windows 路径长度 206。最终仅将本次进程 TEMP／TMP 指向工作区短路径 .t，并设置 VITEST_MAX_WORKERS=4，全量通过；未改产品或测试超时断言、全局环境和系统权限。短路径临时目录在验证结束后清理。
+- 页面验收使用 Edge headless、实际设置／终端列表／文件管理／设备状态／SSH 和 PowerShell 表单／历史组件，以及生产 installTerminalRuntime 创建的真实 xterm；API 替身仅保留在忽略的隔离预览中，不访问用户凭据、配置或服务器。七种解析后主题切换时，同一终端引用、初始化次数 1、完整输出、选区及 viewportY 均保持；两套玻璃切换 Dracula 及恢复默认通过。两套主题的设置选择器均含八个选项，中文鼠标切换后焦点保留。
+- 同一 1440×920 页面下，旧浅色、暗色及五套自定义主题的侧栏 260×882、标签 170×39、终端 778×842、文件区 400×616、设备区 400×226 全部一致，传输卡片尺寸也逐项一致。两套主题的文件右键菜单、历史弹层、SSH／本地表单、警告／错误／禁用状态已检查；菜单在底层滚动后位置保持。英文 1180×720 窄窗口无页面横向溢出，英文名称与主题菜单可见。
+- 实色回退验收通过隔离页面移除玻璃样式中的 @supports 分支模拟；终端 backing 分别为 rgb(236,237,249)／rgb(40,101,139)，可读且非透明黑。此项不冒充旧 WebView2 的原生兼容验收。
+- 原浅色／暗色 xterm 的透明渲染开关对比：内容区域截图像素一致，排除滚动条短时动画。5000 行 ANSI／普通文字的隔离写入加两帧样本为关闭透明 24.4／18.1ms，开启透明 19.7／14.6ms；仅作为本机 headless 冒烟，不代表真实 GPU、多标签长期负载或原生性能已验收。实测数据：artifacts/glass-validation/opaque-comparison.json；布局与保留状态：browser-report.json。
+- 截图全部保存在项目外：C:/Users/fengshi/.codex/visualizations/2026/09/29/01a0ec7d-bb9b-7842-91ff-f96b41b6fb8a/glass-themes-20261114。包含两套工作区、设置及菜单、SSH／本地表单、历史、状态示例、Dracula、实色回退、英文窄窗口和原浅暗内容对比。验收预览和脚本仅在忽略的 artifacts/glass-validation，服务完成后停止。
+- 待人工验收：Windows 实际 WebView2、DPI／系统缩放、真实 SSH／本地进程及轻量恢复端到端、原生安全确认窗口、真实多标签 GPU／长时间滚动负载。本地 mock 生命周期／原子保存测试和隔离浏览器检查不能替代上述原生流程。
+- 本轮新增受版本管理文件仅 src/styles/glass-themes.css；其他为既有主题、终端设置、测试和说明的扩展。保留先前审计缓存迁出项目的文档改动，缓存继续使用项目外目录。版本保持 2.1.0-beta.3，没有升级依赖、构建产品安装包、创建标签、提交、推送或发布。
+
+
+## 2026-11-14 · 玻璃主题沙盒测试包
+
+- 按用户本轮请求重新构建 Debug x64 NSIS，沿用 validation.conf.json 关闭更新产物；Broker 为静态 CRT Release。npm run check:release 和完整打包退出 0，包包含当前玻璃主题工作区改动。仅生成测试安装器，没有在宿主执行安装、创建标签、提交、推送或发布。
+- 新目录 artifacts/acceptance-2.1.0-beta.3-glass-20261114，入口 FsTTY-2.1.0-beta.3-glass-acceptance.wsb，安装器 FsTTY_2.1.0-beta.3_x64-acceptance-glass.exe。实测 16,284,157 字节；SHA-256：2e61f0b8e7599cf6acadac4dcc64a7a9a612b18ac0287446c6c075d32cb46693。桌面／Broker／安装器 ProductVersion 均为 2.1.0-beta.3，无签名、无 latest.json。
+- 已解包逐项核对 Broker 与刚构建的 broker-package 完全相同，桌面与本地 Debug exe 除 __TAURI_BUNDLE_TYPE_VAR_UNK → NSS 标记外逐字节相同；安装器副本与 bundle/nsis 产物哈希相同。包附 payload-verification.json、版本、构建前源输入／前端资源哈希、package-info.json、说明和 SHA256SUMS.txt，全部 14 项哈希复核通过。昨日原 Beta.3 和 r2 安装器分别核对既有哈希，未修改。
+- 沿用 r2 本地可写 Temp、安装器本地复制／校验和沙盒用户拦截；更换本包专用 WSB、安装器名和本地诊断子目录，启动时进一步核对已安装桌面哈希，避免把旧的同版本 Beta.3 当成本包启动。PowerShell 5.1 解析、隔离 NSIS 本地临时目录／副本、哈希不匹配拒绝、非法根目录拒绝和宿主拦截测试退出 0。夹具没有安装产品。
+- 当前产品验证沿用本轮完整 verify:all：900 项前端／脚本、475 项 Rust 通过、9 项既有忽略；未因仅打包重复全量。真实 Sandbox 安装、UAC 首次焦点、WebView2、DPI 和终端端到端仍待用户使用此包原生验收，不把构建及夹具通过记为安装成功。
+
+
+## 2026-11-14 · 玻璃终端完全透明，消除文字区色块
+
+- 根据用户沙盒截图修复独立文字区底色：彩虹玻璃 #ecedf980 → #ecedf900，冰透玻璃 #28658b80 → #28658b00。默认背景 alpha 从约 50% 降为 0，保留 RGB 给对比度、反色和选区计算；不改终端普通文字、ANSI、光标、选区、对比度策略或高亮。其余主题、配置、IPC、数据库及依赖不变。
+- 核对容器链：支持模糊时外层 terminal-panel 已透明，terminal-wrap／terminal-body 没有独立底色，viewport 仍透明；不支持模糊时由外层提供既有实色回退。无需修改 CSS、布局、留白或历史按钮位置，更没有对所有字符强制清空背景。连接／重建逻辑不变。
+- 专项 4 个文件 98 项通过，包含 TerminalPane 保留实例及本地高亮回归；终端主题测试严格断言两套 8 位 RGBA 值，保留原三套主题光标反色等值断言。没有新增 CSS 源码字符串断言。完整 npm run verify:all 退出 0：110 文件 900 项前端／脚本、475 项 Rust 通过、9 项既有忽略；类型、严格 ESLint、构建、Rust 格式和严格 Clippy 均通过，日志 artifacts/glass-seam-validation/verify-all.log。本次继续用进程级短 TEMP／TMP 和 VITEST_MAX_WORKERS=4，不修改全局设置。
+- 真实 xterm 透明画面与隐藏 xterm 后的同一应用背景做截图像素对照，覆盖两套主题 ×（1440×920／13px／右栏开，1180×720／20px／右栏开，1180×720／8px／右栏关）共六组，最终最大通道差 0。允许上限为 1 色阶以容纳 GPU 合成取整；初次一组出现 32 像素、每通道最多 1 的取整差，未将 PNG 文件不相等误判为背景色块。测量避开文字、光标和滚动条，包含文字区域与周围留白。
+- 同一真实终端显示并检查 ANSI 蓝底白字、显式 RGB(42,66,90) 背景和反色文字，均保留；反色前景分别为 RGB(236,237,249)／RGB(40,101,139)，证明 alpha=0 没有丢失参考 RGB。光标及选区截图检查完成。本轮原浏览器矩阵重跑通过，覆盖七种解析后主题、输出／选区／viewportY／实例不变、Dracula 优先、原浅暗显示、实色回退、八个主题设置选项、中英文窄窗口、菜单及表单。
+- 对照截图均在项目外 C:/Users/fengshi/.codex/visualizations/2026/09/29/01a0ec7d-bb9b-7842-91ff-f96b41b6fb8a/glass-transparent-20261114。iridescentGlass-before／after 与 iceGlass-before／after 使用同一当前组件、相同位置和输出，仅在 before 临时恢复旧 alpha=80 以对照；并非两次真实安装截图。另附空白背景对照、字符背景和选区。报告为 seam-report.json／browser-report.json，隔离页面 API 仅替身、不访问服务器或用户设置。
+- 浏览器验证不代替 Windows 原生 WebView2、DPI 和真实进程／轻量恢复验收；修复后独立沙盒安装包另附后续校验记录。版本保持 2.1.0-beta.3，保留现有未提交改动，不替换宿主安装、不提交、推送或发布。
+
+- 本修复独立沙盒包：artifacts/acceptance-2.1.0-beta.3-glass-r2-20261114，入口 FsTTY-2.1.0-beta.3-glass-r2-acceptance.wsb，安装器 FsTTY_2.1.0-beta.3_x64-acceptance-glass-r2.exe。check:release 与 Debug NSIS 构建退出 0；实测 16,294,310 字节，SHA-256：0962e019da57170ba78996f223e6a477a1e619fc49aa835f7e2a6d140c8e9a8e。三个 PE 版本均为 2.1.0-beta.3。解包确认 Broker 与构建产物完全相同，桌面除 NSIS bundle 标记外逐字节相同，安装器副本与构建输出一致；14 项清单哈希复核通过。新入口的 PowerShell 5.1／隔离 NSIS 本地 Temp、复制和拒绝分支测试通过，旧三份 Beta.3 安装器哈希均保持。未签名、不生成更新清单；真实安装／UAC／DPI 待用此 r2 包验收，没有替换宿主安装。

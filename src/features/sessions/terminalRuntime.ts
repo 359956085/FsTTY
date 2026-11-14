@@ -110,6 +110,9 @@ export async function installTerminalRuntime({
   }
 
   const terminal = new Terminal({
+    // Must be enabled before open(), including terminals first opened in an
+    // opaque theme, so glass can be applied without recreating the runtime.
+    allowTransparency: true,
     allowProposedApi: localHighlight,
     convertEol: false,
     cursorBlink: true,

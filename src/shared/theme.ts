@@ -1,6 +1,6 @@
 import type { ThemePreference } from "./api/types";
 
-export type CustomTheme = "terracotta" | "mint" | "lavender";
+export type CustomTheme = "terracotta" | "mint" | "lavender" | "iridescentGlass" | "iceGlass";
 export type ResolvedTheme = "light" | "dark" | CustomTheme;
 
 export function isCustomTheme(theme: ResolvedTheme): theme is CustomTheme {
@@ -11,7 +11,7 @@ export const THEME_STORAGE_KEY = "fstty.theme";
 export const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 export function isThemePreference(value: unknown): value is ThemePreference {
-  return ["system", "light", "dark", "terracotta", "mint", "lavender"].includes(value as string);
+  return ["system", "light", "dark", "terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"].includes(value as string);
 }
 
 export function readCachedThemePreference(): ThemePreference {

@@ -11,7 +11,7 @@
         } catch {
           // 本地缓存不可用时仍按系统主题启动。
         }
-        const preference = ["system", "light", "dark", "terracotta", "mint", "lavender"].includes(cached)
+        const preference = ["system", "light", "dark", "terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"].includes(cached)
           ? cached
           : "system";
         const resolved =
@@ -23,7 +23,7 @@
             : preference;
         const appearance = resolved === "dark" ? "dark" : "light";
         document.documentElement.dataset.theme = appearance;
-        if (["terracotta", "mint", "lavender"].includes(resolved)) {
+        if (["terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"].includes(resolved)) {
           document.documentElement.dataset.palette = resolved;
         } else {
           delete document.documentElement.dataset.palette;

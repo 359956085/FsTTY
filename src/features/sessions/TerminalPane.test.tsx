@@ -429,7 +429,7 @@ describe("终端面板连接", () => {
     await waitFor(() => expect(runtimeMocks.install).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: "dark", colorScheme: "default" }));
 
-    for (const palette of ["terracotta", "mint", "lavender"] as const) {
+    for (const palette of ["terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"] as const) {
       rerender(<TerminalPane {...commonProps} active={false} theme={palette} />);
       await waitFor(() => expect(runtimeMocks.options.theme).toEqual({ name: palette, colorScheme: "default" }));
       rerender(<TerminalPane {...commonProps} theme={palette} />);

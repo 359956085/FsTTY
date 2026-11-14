@@ -35,7 +35,7 @@ describe("应用主题", () => {
     expect(document.documentElement.style.colorScheme).toBe("light");
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
   });
-  it.each(["terracotta", "mint", "lavender"] as const)("保存与恢复固定浅色配色 %s，切回旧主题清理配色", (theme) => {
+  it.each(["terracotta", "mint", "lavender", "iridescentGlass", "iceGlass"] as const)("保存与恢复固定浅色配色 %s，切回旧主题清理配色", (theme) => {
     expect(isThemePreference(theme)).toBe(true);
     expect(resolveTheme(theme, true)).toBe(theme);
     expect(applyTheme(theme, true)).toBe(theme);

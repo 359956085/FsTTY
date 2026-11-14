@@ -1189,6 +1189,8 @@ mod tests {
             ThemePreference::Terracotta,
             ThemePreference::Mint,
             ThemePreference::Lavender,
+            ThemePreference::IridescentGlass,
+            ThemePreference::IceGlass,
         ] {
             service.set_theme(theme).expect("保存主题失败");
             assert_eq!(SettingsService::load(&directory).get().theme, theme);

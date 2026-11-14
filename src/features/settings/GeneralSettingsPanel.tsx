@@ -123,6 +123,8 @@ export function GeneralSettingsPanel({
               { value: "terracotta", label: t("settings.themeTerracotta") },
               { value: "mint", label: t("settings.themeMint") },
               { value: "lavender", label: t("settings.themeLavender") },
+              { value: "iridescentGlass", label: t("settings.themeIridescentGlass") },
+              { value: "iceGlass", label: t("settings.themeIceGlass") },
             ]}
             value={settings.theme}
           />

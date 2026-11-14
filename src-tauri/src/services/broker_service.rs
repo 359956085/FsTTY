@@ -15,7 +15,9 @@ pub fn set_approval_theme(theme: crate::models::ThemePreference) {
             ThemePreference::Light
             | ThemePreference::Terracotta
             | ThemePreference::Mint
-            | ThemePreference::Lavender => 1,
+            | ThemePreference::Lavender
+            | ThemePreference::IridescentGlass
+            | ThemePreference::IceGlass => 1,
             ThemePreference::Dark => 2,
         },
         std::sync::atomic::Ordering::Relaxed,

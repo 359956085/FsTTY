@@ -16,4 +16,16 @@ export const CUSTOM_TERMINAL_SURFACES: Record<CustomTheme, ITheme> = {
     background: "#fcfaff", foreground: "#2c2144", cursor: "#8650d9",
     cursorAccent: "#fcfaff", selectionBackground: "#9660e433",
   },
+  // The RGB channels describe the glass backing, even when the surface is
+  // fully transparent: xterm uses them for contrast, inverse text and selection.
+  iridescentGlass: {
+    background: "#ecedf900", foreground: "#20263f", cursor: "#3268cf",
+    cursorAccent: "#f1f2fc", selectionBackground: "#568be852",
+    selectionForeground: "#17233d",
+  },
+  iceGlass: {
+    background: "#28658b00", foreground: "#f5fbff", cursor: "#a4f3ff",
+    cursorAccent: "#173e59", selectionBackground: "#86e9ff66",
+    selectionForeground: "#ffffff",
+  },
 };

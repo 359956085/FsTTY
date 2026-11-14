@@ -16,6 +16,8 @@
 
 本地升级后分别运行 `npm audit`、`npm audit --omit=dev` 及 `cargo audit --file src-tauri/Cargo.lock`，再运行完整回归。`verify:all` 本身不包含联网审计；CI 仍由既有 Rust audit action 单独执行 Rust 审计。2026-11-13 复核：`.cargo/audit.toml` 只暂时豁免 RUSTSEC-2023-0071；RSA 已有正式修复，当前 russh 0.65.1 仍精确依赖 rsa 0.10.0-rc.18。保留 RSA 连接兼容，不维护私有 SSH 分叉；上游允许正式 RSA 后升级并移除豁免。其他漏洞继续阻断，维护状态和平台相关提示继续显示。[RSA 公告](https://rustsec.org/advisories/RUSTSEC-2023-0071.html) · [russh 0.65.1 发布来源中的依赖](https://github.com/warp-tech/russh/blob/b33092aad1e51c66258a12e8b83fc473a68d9d34/russh/Cargo.toml)
 
+本机审计缓存统一放在 `%LOCALAPPDATA%\FsTTY-dev-cache\rust-audit`：漏洞库使用 `advisory-db`，独立 Cargo 索引使用 `cargo-home`。默认 Cargo 目录不可写时，仅为当前审计进程指定该 `CARGO_HOME`，并通过 `--db` 指向外部漏洞库；不修改系统或用户环境变量。项目 `artifacts` 只保留审计 JSON 和日志，不放置漏洞库 Git 克隆，以免 IDE 将其识别为额外项目仓库。
+
 本轮定向将应用及 Broker 的 russh 升至 0.65.1，修复 RUSTSEC-2026-0492／0495；rustix 更新至 1.1.6，修复 RUSTSEC-2026-0486。清除锁文件中已撤回的 async-executor 1.14.0 和 clipboard-win 5.4.1，分别改用 1.14.1／5.4.3；其余升级仅限 russh 必需的传递依赖。新版主机密钥回调显式拒绝证书，不将证书中的裸公钥与现有指纹记录混用；未增加主机 CA 信任或 Agent 转发。
 
 测试只扫描 `src`、`scripts`，不扫描验收副本、构建材料和缓存。日志弹窗、延迟加载焦点与提取测试使用独立双语夹具，测试语言、渲染、排序、版本边界和关闭行为，不固定当前版本、历史正文或条目数。移除 CSS 字符串、固定颜色/尺寸/间距及专用解析器测试，视觉效果继续记录界面验收；焦点、键盘、缩放、终端实例和调色板映射仍由行为测试覆盖。

@@ -40,6 +40,7 @@ const settings: AppSettings = {
 describe("常规设置分组顺序", () => {
   it("凭据管理仅出现一次，位于历史命令下方、日志上方", () => {
     const changeFont = vi.fn();
+    const changeTheme = vi.fn();
     render(<GeneralSettingsPanel
       activeTooltipKey={null}
       logDirectoryError={null}
@@ -53,7 +54,7 @@ describe("常规设置分组顺序", () => {
       savingProxy={false}
       onHideTooltip={vi.fn()}
       onLanguageChange={vi.fn()}
-      onThemeChange={vi.fn()}
+      onThemeChange={changeTheme}
       onTerminalColorSchemeChange={vi.fn()}
       onOpenLogDirectory={vi.fn()}
       onRecordMcpToolInputsChange={vi.fn()}
@@ -94,5 +95,17 @@ describe("常规设置分组顺序", () => {
     expect(basic?.nextElementSibling).toBe(group);
     expect(screen.queryByRole("heading", { name: "installation.title" })).toBeNull();
     expect(screen.getAllByRole("textbox", { name: "settings.proxyAddress" })).toHaveLength(1);
+    const theme = screen.getByRole("combobox", { name: "settings.theme" });
+    theme.focus();
+    fireEvent.click(theme);
+    expect(screen.getAllByRole("option")).toHaveLength(8);
+    fireEvent.click(screen.getByRole("option", { name: "settings.themeIridescentGlass" }));
+    expect(changeTheme).toHaveBeenLastCalledWith("iridescentGlass");
+    expect(document.activeElement).toBe(theme);
+    fireEvent.click(theme);
+    for (let index = 0; index < 7; index++) fireEvent.keyDown(theme, { key: "ArrowDown" });
+    fireEvent.keyDown(theme, { key: "Enter" });
+    expect(changeTheme).toHaveBeenLastCalledWith("iceGlass");
+    expect(document.activeElement).toBe(theme);
   });
 });

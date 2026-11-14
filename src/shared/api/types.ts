@@ -1,5 +1,5 @@
 export type Language = "zh-CN" | "en-US";
-export type ThemePreference = "system" | "light" | "dark" | "terracotta" | "mint" | "lavender";
+export type ThemePreference = "system" | "light" | "dark" | "terracotta" | "mint" | "lavender" | "iridescentGlass" | "iceGlass";
 export type TerminalColorScheme =
   | "default"
   | "ayuMirage"
