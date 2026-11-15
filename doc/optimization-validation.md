@@ -1173,3 +1173,13 @@ host 按进程随机 UUID、单调序号、UTF-8/Base64 大小上限增量解析
 - 浏览器验证不代替 Windows 原生 WebView2、DPI 和真实进程／轻量恢复验收；修复后独立沙盒安装包另附后续校验记录。版本保持 2.1.0-beta.3，保留现有未提交改动，不替换宿主安装、不提交、推送或发布。
 
 - 本修复独立沙盒包：artifacts/acceptance-2.1.0-beta.3-glass-r2-20261114，入口 FsTTY-2.1.0-beta.3-glass-r2-acceptance.wsb，安装器 FsTTY_2.1.0-beta.3_x64-acceptance-glass-r2.exe。check:release 与 Debug NSIS 构建退出 0；实测 16,294,310 字节，SHA-256：0962e019da57170ba78996f223e6a477a1e619fc49aa835f7e2a6d140c8e9a8e。三个 PE 版本均为 2.1.0-beta.3。解包确认 Broker 与构建产物完全相同，桌面除 NSIS bundle 标记外逐字节相同，安装器副本与构建输出一致；14 项清单哈希复核通过。新入口的 PowerShell 5.1／隔离 NSIS 本地 Temp、复制和拒绝分支测试通过，旧三份 Beta.3 安装器哈希均保持。未签名、不生成更新清单；真实安装／UAC／DPI 待用此 r2 包验收，没有替换宿主安装。
+
+
+## 2026-11-15 · 2.1.0 正式版源码准备
+
+- 将 npm、Tauri、Rust 应用、Broker、Network、对应锁文件和中英文 README 版本徽章统一为 2.1.0。仅修改项目自身版本，逐项与 HEAD 比较确认 npm／Rust 第三方依赖锁定数据未变，没有依赖升级或新豁免。开始时 main 干净，HEAD 为 141d886，已有 v2.1.0-beta.3 标签；本轮不修改该标签。
+- CHANGELOG 新增 2026-11-15 双语 2.1.0 条目，汇总自 2.0.2 以来的终端双击启动、全局字体与字号快捷键、文件夹传输及权限、五套新主题／完全透明玻璃终端、传输与界面间距、安装向导首次激活及安全依赖改进。原 Beta.3 及更早历史正文保持，未将原生待验收流程描述为已通过。
+- npm run check:release 退出 0，全部版本、双语徽章和正式版更新说明一致；releaseChannel(2.1.0) 返回 stable。沿用现有 v2.1.0 标签发布规则：后续由 Windows 流水线生成签名安装包／更新清单并发布为正式版；本轮未执行流水线。
+- 为避免既有 PE 产品版本测试读到旧 Beta.3 Debug 文件，先执行前端构建及 cargo build --workspace --bins --locked，未运行生成的程序。桌面／Broker 的 ProductVersion 和 FileVersion 均实测为 2.1.0；未构建产品安装包、替换宿主安装或改动旧沙盒包。
+- npm run verify:all 退出 0：110 个前端／脚本文件 900 项通过；Rust 475 项通过、9 项既有环境测试忽略。版本、类型、严格 ESLint、生产前端构建、Rust 格式、严格 Clippy 和全部启用测试通过。沿用进程级短 TEMP／TMP 和 VITEST_MAX_WORKERS=4，临时目录结束后清理；保留原有 jsdom Canvas 提示及构建体积警告。日志在 artifacts/release-2.1.0-20261115，包含 check-release.log、debug-version-build.log、verify-all.log。
+- 远程 Actions、签名安装包、在线更新清单和真实 Windows 安装／UAC／DPI／WebView2 等原生待验收项仍待后续执行；本次本地通过不代替发布或原生验收。没有新增源码文件、创建标签、提交、推送或发布。
