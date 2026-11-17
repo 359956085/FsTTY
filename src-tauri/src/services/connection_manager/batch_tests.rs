@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    models::{StartTransferJobRequest, TransferJobState},
-    services::TransferJobService,
-};
+use crate::models::{StartTransferJobRequest, TransferJobState};
 use russh::{server, ChannelId};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
 use tokio::sync::Semaphore;
@@ -186,7 +183,7 @@ async fn 真实本机_sftp_批量下载同时传输五个文件并排队后续�
                 browser_sftp: None,
             }),
         );
-        let service = TransferJobService::default();
+        let service = manager.transfer_jobs();
         let remote_paths = (0..7)
             .map(|index| format!("/{index}.txt"))
             .collect::<Vec<_>>();

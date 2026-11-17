@@ -121,6 +121,7 @@ pub struct OneTimeLogin {
 }
 
 struct ConnectionManagerInner {
+    jobs: super::TransferJobService,
     settings_service: Arc<StdMutex<super::SettingsService>>,
     known_hosts_path: PathBuf,
     known_hosts_lock: Arc<StdMutex<()>>,
@@ -133,6 +134,7 @@ struct ConnectionManagerInner {
 
 #[derive(Default)]
 struct ConnectionRegistry {
+    closing: HashSet<String>,
     connections: HashMap<String, Arc<ConnectionEntry>>,
     session_connections: HashMap<String, HashSet<String>>,
 }
@@ -381,6 +383,7 @@ impl ConnectionManager {
     ) -> Self {
         Self {
             inner: Arc::new(ConnectionManagerInner {
+                jobs: Default::default(),
                 settings_service,
                 known_hosts_path: app_data_dir.join("known_hosts"),
                 known_hosts_lock: Arc::new(StdMutex::new(())),
@@ -996,8 +999,30 @@ impl ConnectionManager {
             .ok_or_else(|| AppError::NotFound("SSH 连接不存在或已断开".to_owned()))
     }
 
+    pub fn transfer_jobs(&self) -> &super::TransferJobService {
+        &self.inner.jobs
+    }
+
+    pub(super) async fn accepts_jobs(&self, id: &str) -> bool {
+        let registry = self.inner.registry.read().await;
+        registry.connections.contains_key(id) && !registry.closing.contains(id)
+    }
+
+    async fn drain_connections(&self, ids: &HashSet<String>) {
+        {
+            let mut registry = self.inner.registry.write().await;
+            for id in ids {
+                if registry.connections.contains_key(id) {
+                    registry.closing.insert(id.clone());
+                }
+            }
+        }
+        self.transfer_jobs().drain_connections(ids).await;
+    }
+
     async fn take_connection(&self, connection_id: &str) -> Option<Arc<ConnectionEntry>> {
         let mut registry = self.inner.registry.write().await;
+        registry.closing.remove(connection_id);
         let entry = registry.connections.remove(connection_id);
         if let Some(entry) = &entry {
             if let Some(metrics) = &entry.device_metrics {
@@ -1014,6 +1039,8 @@ impl ConnectionManager {
     }
 
     async fn finish_connection(&self, connection_id: &str) {
+        self.drain_connections(&HashSet::from([connection_id.to_owned()]))
+            .await;
         if let Some(entry) = self.take_connection(connection_id).await {
             self.cancel_connection_transfers(connection_id).await;
             let handle = entry.handle.lock().await;
@@ -1710,7 +1737,11 @@ mod tests {
                 &connection.home_path,
                 false,
                 TransferReporter::channel(Channel::<TransferEvent>::new(|_| Ok(()))),
-                Arc::new(AtomicBool::new(true)),
+                {
+                    let token = tokio_util::sync::CancellationToken::new();
+                    token.cancel();
+                    token
+                },
             )
             .await
             .expect("取消上传失败");

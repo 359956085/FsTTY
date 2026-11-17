@@ -18,6 +18,19 @@ pub fn prepare_app_paths() -> Result<AppPaths, String> {
     prepare_in(&platform_config_root()?)
 }
 
+/// Resolve the existing store without moving files while the GUI may be saving them.
+pub(crate) fn stdio_data_directory() -> Result<PathBuf, String> {
+    let root = platform_config_root()?;
+    let current = root.join(APP_DIRECTORY_NAME);
+    let legacy = root.join(LEGACY_APP_DIRECTORY_NAME);
+    if !current.try_exists().map_err(|e| e.to_string())?
+        && legacy.try_exists().map_err(|e| e.to_string())?
+    {
+        return Ok(legacy);
+    }
+    Ok(current)
+}
+
 fn platform_config_root() -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     {

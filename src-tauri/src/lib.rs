@@ -128,18 +128,18 @@ pub fn run_mcp_stdio() -> Result<(), String> {
             return Err("MCP 运行副本已过期，请启动当前 FsTTY 并重启 Agent".into());
         }
     }
-    let paths = app_paths::prepare_app_paths()?;
-    logging::prepare_log_directory(&paths.app_data_dir, &paths.log_dir)?;
-    logging::init_stdio(paths.log_dir)?;
-    for warning in paths.migration_warnings {
-        log::warn!("{warning}");
-    }
+    let directory = app_paths::stdio_data_directory()?;
+    let settings =
+        services::SettingsService::load_for_stdio(&directory).map_err(|error| error.to_string())?;
+    let logs = directory.join("logs");
+    logging::prepare_log_directory(&directory, &logs)?;
+    logging::init_stdio(logs)?;
     log::info!("FsTTY MCP stdio 服务启动");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    runtime.block_on(mcp::run_stdio(paths.app_data_dir))
+    runtime.block_on(mcp::run_stdio(directory, settings))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -397,10 +397,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 state.local_terminal_service.shutdown();
                 state.connection_manager.shutdown_device_metrics().await;
-                state
-                    .transfer_job_service
-                    .shutdown(&state.connection_manager)
-                    .await;
+                state.connection_manager.shutdown().await;
                 state.local_terminal_service.drain_command_history().await;
                 shutdown_lifecycle.finish_shutdown();
                 app.exit(code.unwrap_or(0));

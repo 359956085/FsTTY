@@ -30,6 +30,8 @@ struct TransferJob {
     decision_notify: Notify,
     cancelled: Arc<AtomicBool>,
     cancellation: CancellationToken,
+    worker_done: CancellationToken,
+    drain_deadline: std::sync::OnceLock<tokio::time::Instant>,
     batch_transfers: Mutex<HashMap<String, usize>>,
     batch_progress: Mutex<HashMap<usize, (u64, u64)>>,
     batch_conflict: Mutex<()>,
@@ -45,6 +47,8 @@ impl TransferJob {
             decision_notify: Notify::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancellation: CancellationToken::new(),
+            worker_done: CancellationToken::new(),
+            drain_deadline: Default::default(),
             batch_transfers: Mutex::new(HashMap::new()),
             batch_progress: Mutex::new(HashMap::new()),
             batch_conflict: Mutex::new(()),
@@ -136,6 +140,7 @@ impl TransferJob {
 pub struct TransferJobService {
     jobs: Arc<Mutex<HashMap<String, Arc<TransferJob>>>>,
     download_slots: Arc<Semaphore>,
+    stopping: Arc<AtomicBool>,
 }
 
 impl Default for TransferJobService {
@@ -143,6 +148,7 @@ impl Default for TransferJobService {
         Self {
             jobs: Arc::new(Mutex::new(HashMap::new())),
             download_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
+            stopping: Default::default(),
         }
     }
 }
@@ -184,6 +190,13 @@ impl TransferJobService {
         let job = Arc::new(TransferJob::new(summary.clone()));
         {
             let mut jobs = self.jobs.lock().await;
+            if self.stopping.load(Ordering::Acquire)
+                || !connection_manager
+                    .accepts_jobs(&summary.connection_id)
+                    .await
+            {
+                return Err(AppError::Busy("连接正在关闭".into()));
+            }
             if jobs.len() >= MAX_JOBS {
                 return Err(AppError::Busy("后台传输任务过多".to_owned()));
             }
@@ -200,7 +213,9 @@ impl TransferJobService {
         }
 
         let download_slots = self.download_slots.clone();
+        let done = job.worker_done.clone().drop_guard();
         tauri::async_runtime::spawn(async move {
+            let _done = done;
             match request {
                 StartTransferJobRequest::Permissions {
                     connection_id,
@@ -323,6 +338,7 @@ impl TransferJobService {
         if !job.snapshot().await.state.is_terminal() {
             return Err(AppError::Busy("后台传输任务尚未结束".to_owned()));
         }
+        job.worker_done.cancelled().await;
         self.jobs.lock().await.remove(job_id);
         Ok(())
     }
@@ -358,37 +374,40 @@ impl TransferJobService {
         false
     }
 
-    pub async fn cancel_connection(
-        &self,
-        connection_manager: &ConnectionManager,
-        connection_id: &str,
-    ) {
-        let jobs = self.jobs.lock().await.values().cloned().collect::<Vec<_>>();
-        for job in jobs {
-            let summary = job.snapshot().await;
-            if summary.connection_id == connection_id {
-                let job_id = summary.job_id;
-                let _ = self.cancel(connection_manager, &job_id).await;
-                self.jobs.lock().await.remove(&job_id);
+    async fn drain(&self, matches: impl Fn(&TransferJobSummary) -> bool) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut selected = Vec::new();
+        {
+            let jobs = self.jobs.lock().await;
+            for (id, job) in jobs.iter() {
+                if matches(&*job.summary.lock().await) {
+                    let deadline = *job.drain_deadline.get_or_init(|| deadline);
+                    job.cancelled.store(true, Ordering::Release);
+                    job.cancellation.cancel();
+                    job.decision_notify.notify_one();
+                    selected.push((id.clone(), job.clone(), deadline));
+                }
             }
+        }
+        for (id, job, deadline) in selected {
+            if tokio::time::timeout_at(deadline, job.worker_done.cancelled())
+                .await
+                .is_err()
+            {
+                log::warn!("等待文件任务 {id} 清理超时");
+            }
+            self.jobs.lock().await.remove(&id);
         }
     }
 
-    pub async fn cleanup_orphans(
-        &self,
-        connection_manager: &ConnectionManager,
-        valid_runtime_ids: &[String],
-    ) {
-        let valid = valid_runtime_ids.iter().cloned().collect::<HashSet<_>>();
-        let jobs = self.jobs.lock().await.values().cloned().collect::<Vec<_>>();
-        for job in jobs {
-            let summary = job.snapshot().await;
-            if valid.contains(&summary.runtime_id) {
-                continue;
-            }
-            let _ = self.cancel(connection_manager, &summary.job_id).await;
-            self.jobs.lock().await.remove(&summary.job_id);
-        }
+    pub(super) async fn drain_connections(&self, ids: &HashSet<String>) {
+        self.drain(|summary| ids.contains(&summary.connection_id))
+            .await;
+    }
+
+    pub async fn cleanup_orphans(&self, valid_runtime_ids: &[String]) {
+        self.drain(|summary| !valid_runtime_ids.contains(&summary.runtime_id))
+            .await;
     }
 
     pub async fn summaries(&self) -> Vec<TransferJobSummary> {
@@ -401,32 +420,9 @@ impl TransferJobService {
         summaries
     }
 
-    pub async fn shutdown(&self, connection_manager: &ConnectionManager) {
-        let jobs = self.jobs.lock().await.values().cloned().collect::<Vec<_>>();
-        for job in &jobs {
-            let summary = job.snapshot().await;
-            let _ = self.cancel(connection_manager, &summary.job_id).await;
-        }
-
-        // 给 SFTP 循环留出清理临时文件的时间；超时后仍必须允许进程退出。
-        let cleaned = tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                let mut all_terminal = true;
-                for job in &jobs {
-                    all_terminal &= job.snapshot().await.state.is_terminal();
-                }
-                if all_terminal {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-        })
-        .await
-        .is_ok();
-        if !cleaned {
-            log::warn!("退出前等待后台传输清理超时");
-        }
-        self.jobs.lock().await.clear();
+    pub async fn shutdown(&self) {
+        self.stopping.store(true, Ordering::Release);
+        self.drain(|_| true).await;
     }
 }
 
@@ -627,7 +623,7 @@ fn job_reporter(
     transfer_id: String,
 ) -> (TransferReporter, tauri::async_runtime::JoinHandle<()>) {
     // 进度只保留最新值，单一消费者按序更新；任务结束前等待最终进度入账。
-    let cancellation = job.cancelled.clone();
+    let cancellation = job.cancellation.clone();
     let (sender, mut receiver) = watch::channel(None);
     let task = tauri::async_runtime::spawn(async move {
         while receiver.changed().await.is_ok() {
@@ -771,14 +767,40 @@ mod tests {
         assert_eq!(remote_file_name("/home/private/data.bin"), "data.bin");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn simultaneous_closes_share_one_batch_deadline_even_after_terminal_summary() {
+        let service = TransferJobService::default();
+        for id in ["first", "second"] {
+            let mut state = summary(TransferJobState::Cancelled);
+            state.job_id = id.into();
+            service
+                .jobs
+                .lock()
+                .await
+                .insert(id.into(), Arc::new(TransferJob::new(state)));
+        }
+        let start = tokio::time::Instant::now();
+        let first = service.clone();
+        let close = tokio::spawn(async move { first.shutdown().await });
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(!close.is_finished());
+        service.cleanup_orphans(&[]).await;
+        close.await.unwrap();
+        assert_eq!(start.elapsed(), Duration::from_secs(3));
+        assert!(service.summaries().await.is_empty());
+    }
+
     #[tokio::test]
     async fn 完成任务确认前保留且确认后删除() {
         let service = TransferJobService::default();
         let summary = summary(TransferJobState::Completed);
-        service.jobs.lock().await.insert(
-            summary.job_id.clone(),
-            Arc::new(TransferJob::new(summary.clone())),
-        );
+        let job = Arc::new(TransferJob::new(summary.clone()));
+        job.worker_done.cancel();
+        service
+            .jobs
+            .lock()
+            .await
+            .insert(summary.job_id.clone(), job);
 
         assert_eq!(service.summaries().await.len(), 1);
         service
@@ -830,9 +852,8 @@ mod tests {
             .lock()
             .await
             .insert(summary.job_id.clone(), job.clone());
-        let manager = ConnectionManager::new(&std::env::temp_dir());
-
-        service.cleanup_orphans(&manager, &[]).await;
+        job.worker_done.cancel();
+        service.cleanup_orphans(&[]).await;
 
         assert!(job.cancelled.load(Ordering::Acquire));
         assert!(service.summaries().await.is_empty());

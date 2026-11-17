@@ -133,15 +133,21 @@ pub(super) async fn authorized_session_context(
             AccessIssue::ServiceDisabled,
         )));
     }
-    let session = state
-        .session_service
-        .lock()
-        .await
-        .find(session_id)
-        .map_err(|error| match error {
-            AppError::NotFound(message) => McpAccessError::NotFound(message),
-            error => McpAccessError::Internal(error.to_string()),
-        })?;
+    let mut store = state.session_service.lock().await;
+    let session = match transport {
+        McpTransport::Stdio => store.current_sessions().and_then(|sessions| {
+            sessions
+                .into_iter()
+                .find(|session| session.id == session_id)
+                .ok_or_else(|| AppError::NotFound("未找到指定会话".into()))
+        }),
+        McpTransport::Http => store.find(session_id),
+    }
+    .map_err(|error| match error {
+        AppError::NotFound(message) => McpAccessError::NotFound(message),
+        error => McpAccessError::Internal(error.to_string()),
+    })?;
+    drop(store);
     let access = state
         .mcp_command_policy_service
         .lock()

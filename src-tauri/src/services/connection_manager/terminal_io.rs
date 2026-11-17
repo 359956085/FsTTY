@@ -36,7 +36,9 @@ impl ConnectionManager {
     pub async fn disconnect(&self, connection_id: &str) -> Result<(), AppError> {
         // IPC 仍接收原有字符串参数；当调用方传入会话 ID 时，同时取消该会话所有连接尝试。
         self.disconnect_session(connection_id).await;
-        self.disconnect_connection(connection_id).await
+        self.close_connections(HashSet::from([connection_id.to_owned()]))
+            .await;
+        Ok(())
     }
 
     async fn disconnect_connection(&self, connection_id: &str) -> Result<(), AppError> {
@@ -55,23 +57,49 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect_session(&self, session_id: &str) {
+        self.disconnect_sessions(std::slice::from_ref(&session_id))
+            .await;
+    }
+
+    pub(crate) async fn disconnect_sessions(&self, session_ids: &[&str]) {
         let connection_ids = {
-            // 连接登记与取消共用同一顺序，避免快到的连接绕过本次断开。
             let connecting = self.inner.connecting_sessions.lock().await;
-            if let Some(cancellations) = connecting.get(session_id) {
-                for cancellation in cancellations {
-                    cancellation.cancel();
+            let registry = self.inner.registry.read().await;
+            let mut ids = HashSet::new();
+            for &session_id in session_ids {
+                if let Some(attempts) = connecting.get(session_id) {
+                    for cancellation in attempts {
+                        cancellation.cancel();
+                    }
+                }
+                if let Some(connections) = registry.session_connections.get(session_id) {
+                    ids.extend(connections.iter().cloned());
                 }
             }
-            self.inner
-                .registry
-                .read()
-                .await
-                .session_connections
-                .get(session_id)
-                .cloned()
-                .unwrap_or_default()
+            ids
         };
+        self.close_connections(connection_ids).await;
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.transfer_jobs().shutdown().await;
+        let ids = self
+            .inner
+            .registry
+            .read()
+            .await
+            .connections
+            .keys()
+            .cloned()
+            .collect();
+        self.close_connections(ids).await;
+    }
+
+    pub(crate) async fn close_connections(&self, connection_ids: HashSet<String>) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        self.drain_connections(&connection_ids).await;
         for connection_id in connection_ids {
             let _ = self.disconnect_connection(&connection_id).await;
         }

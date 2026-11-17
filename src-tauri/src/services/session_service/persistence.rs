@@ -90,11 +90,11 @@ pub(super) fn persist_store(
 }
 
 pub(super) fn read_store(path: &Path) -> Result<Option<SessionStore>, AppError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let metadata =
-        fs::metadata(path).map_err(|_| AppError::Persistence("无法读取会话存储信息".to_owned()))?;
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(AppError::Persistence("无法读取会话存储信息".into())),
+    };
     if !metadata.is_file() || metadata.len() > MAX_STORE_BYTES {
         return Err(AppError::Persistence("会话存储文件无效".to_owned()));
     }

@@ -298,7 +298,7 @@ fn batch_reporter(
     job: Arc<TransferJob>,
     transfer_id: String,
 ) -> (TransferReporter, tauri::async_runtime::JoinHandle<()>) {
-    let cancellation = job.cancelled.clone();
+    let cancellation = job.cancellation.clone();
     let (sender, mut receiver) = watch::channel(None);
     let task = tauri::async_runtime::spawn(async move {
         while receiver.changed().await.is_ok() {

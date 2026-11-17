@@ -236,9 +236,22 @@ fn open_database(path: &Path) -> Result<Connection, AppError> {
             "FsTTY MCP 代理版本错配：当前代理仅支持策略数据库 schema v{DATABASE_VERSION}，数据库为 schema v{version}。请关闭并重新打开 Agent；若仍失败，请在 FsTTY 设置中重新执行 MCP 一键配置。"
         )));
     }
-    connection
-        .pragma_update(None, "journal_mode", "WAL")
-        .map_err(db_error)?;
+    // Concurrent first opens can get SQLITE_BUSY upgrading to WAL even with a busy handler.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match connection.pragma_update(None, "journal_mode", "WAL") {
+            Err(error)
+                if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy)
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            result => {
+                result.map_err(db_error)?;
+                break;
+            }
+        }
+    }
     connection
         .pragma_update(None, "synchronous", "NORMAL")
         .map_err(db_error)?;

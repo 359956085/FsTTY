@@ -14,7 +14,7 @@ pub async fn get_lightweight_mode_state(
     state: State<'_, AppState>,
 ) -> Result<LightweightModeState, AppError> {
     let mut result = state.lightweight_mode_service.state().await;
-    result.transfer_jobs = state.transfer_job_service.summaries().await;
+    result.transfer_jobs = state.connection_manager.transfer_jobs().summaries().await;
     Ok(result)
 }
 
@@ -137,14 +137,9 @@ pub async fn finish_lightweight_restore(
         .finish_restore(
             &state.connection_manager,
             &state.local_terminal_service,
-            valid_runtime_ids.clone(),
+            valid_runtime_ids,
         )
-        .await?;
-    state
-        .transfer_job_service
-        .cleanup_orphans(&state.connection_manager, &valid_runtime_ids)
-        .await;
-    Ok(())
+        .await
 }
 
 #[tauri::command]
@@ -153,7 +148,8 @@ pub async fn start_transfer_job(
     request: StartTransferJobRequest,
 ) -> Result<TransferJobSummary, AppError> {
     state
-        .transfer_job_service
+        .connection_manager
+        .transfer_jobs()
         .start(state.connection_manager.clone(), request)
         .await
 }
@@ -164,7 +160,11 @@ pub async fn attach_transfer_job(
     job_id: String,
     on_event: Channel<TransferJobEvent>,
 ) -> Result<TransferJobSummary, AppError> {
-    state.transfer_job_service.attach(&job_id, on_event).await
+    state
+        .connection_manager
+        .transfer_jobs()
+        .attach(&job_id, on_event)
+        .await
 }
 
 #[tauri::command]
@@ -174,7 +174,8 @@ pub async fn resolve_transfer_job_conflict(
     decision: TransferConflictDecision,
 ) -> Result<(), AppError> {
     state
-        .transfer_job_service
+        .connection_manager
+        .transfer_jobs()
         .resolve_conflict(&job_id, decision)
         .await
 }
@@ -184,5 +185,9 @@ pub async fn acknowledge_transfer_job(
     state: State<'_, AppState>,
     job_id: String,
 ) -> Result<(), AppError> {
-    state.transfer_job_service.acknowledge(&job_id).await
+    state
+        .connection_manager
+        .transfer_jobs()
+        .acknowledge(&job_id)
+        .await
 }

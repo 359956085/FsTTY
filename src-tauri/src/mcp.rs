@@ -48,6 +48,8 @@ mod rate_limit;
 mod result;
 mod roots;
 mod search;
+#[cfg(test)]
+mod stdio_regression_tests;
 
 use access::{
     authorized_command_session, authorized_session_context, command_policy_response,
@@ -83,18 +85,12 @@ use search::{
     RemoteFileSearchInput, SearchRemoteFileArgs,
 };
 
-pub async fn run_stdio(app_data_dir: std::path::PathBuf) -> Result<(), String> {
+pub(crate) async fn run_stdio(
+    directory: std::path::PathBuf,
+    settings: crate::services::SettingsService,
+) -> Result<(), String> {
+    let state = AppState::for_stdio(directory, settings);
     use rmcp::{transport::stdio, ServiceExt};
-    let state = AppState::new(app_data_dir);
-    if !state
-        .settings_service
-        .lock()
-        .map_err(|_| "设置服务锁定失败")?
-        .get()
-        .mcp_enabled
-    {
-        return Err("MCP 服务未启用".to_owned());
-    }
     let service = McpService::new(state, McpTransport::Stdio)
         .serve(stdio())
         .await
@@ -412,14 +408,23 @@ impl McpService {
         if !self.transport.is_enabled(&settings) {
             return Ok(tool_error("MCP 服务未启用"));
         }
-        let groups = self
-            .state
-            .session_service
-            .lock()
-            .await
-            .list_groups(&self.state.credential_service)
-            .await
-            .map_err(mcp_error)?;
+        let mut store = self.state.session_service.lock().await;
+        let sessions: Vec<crate::models::SessionProfile> = match self.transport {
+            McpTransport::Stdio => store
+                .current_sessions()
+                .map_err(mcp_error)?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            McpTransport::Http => store
+                .list_groups(&self.state.credential_service)
+                .await
+                .map_err(mcp_error)?
+                .into_iter()
+                .flat_map(|group| group.sessions)
+                .collect(),
+        };
+        drop(store);
         let permissions = self
             .state
             .mcp_command_policy_service
@@ -427,25 +432,23 @@ impl McpService {
             .map_err(|_| McpError::internal_error("MCP 策略服务锁定失败", None))?
             .list_permissions()
             .map_err(mcp_error)?;
-        let sessions = groups
+        let sessions: Vec<_> = sessions
             .into_iter()
-            .filter(|group| permission(&permissions, &group.name).is_some())
-            .flat_map(|group| {
-                group.sessions.into_iter().map(move |session| SafeSession {
-                    id: session.id,
-                    name: session.name,
-                    host: session.host,
-                    port: session.port,
-                    username: session.username,
-                    group: group.name.clone(),
-                    tags: session.tags,
-                    auth_kind: match session.auth {
-                        crate::models::SessionAuth::Password => "password",
-                        crate::models::SessionAuth::PrivateKey { .. } => "privateKey",
-                    },
-                })
+            .filter(|session| permission(&permissions, &session.group).is_some())
+            .map(|session| SafeSession {
+                id: session.id,
+                name: session.name,
+                host: session.host,
+                port: session.port,
+                username: session.username,
+                group: session.group,
+                tags: session.tags,
+                auth_kind: match session.auth {
+                    crate::models::SessionAuth::Password => "password",
+                    crate::models::SessionAuth::PrivateKey { .. } => "privateKey",
+                },
             })
-            .collect::<Vec<_>>();
+            .collect();
         audit.succeed();
         Ok(json_result(&sessions))
     }
@@ -1092,8 +1095,10 @@ impl McpService {
         session: StoredSession,
     ) -> Result<ConnectionLease, McpError> {
         let session_gate = self.connections.session_gate(session_id).await;
-        let _session_guard = session_gate.lock().await;
-        match self.connections.lookup(session_id, CONNECTION_IDLE) {
+        let mut gate = session_gate.lock().await;
+        // Old leases can finish; changing back to a previous target starts a fresh generation.
+        let cache_key = gate.key_for(&session).to_owned();
+        match self.connections.lookup(&cache_key, CONNECTION_IDLE) {
             CacheLookup::Reusable(connection_id) => {
                 let valid = matches!(
                     self.state
@@ -1107,14 +1112,13 @@ impl McpService {
                 }
                 // 界面断开连接后，MCP 缓存可能暂时保留旧 ID；只删除仍匹配的条目。
                 self.connections
-                    .remove_if_matches(session_id, &connection_id);
+                    .remove_if_matches(&cache_key, &connection_id);
             }
             CacheLookup::Expired(connection_id) => {
                 // 先从缓存移除，再在锁外断开，避免慢网络阻塞其他会话。
-                let _ = self
-                    .state
+                self.state
                     .connection_manager
-                    .disconnect(&connection_id)
+                    .close_connections([connection_id].into_iter().collect())
                     .await;
             }
             CacheLookup::Missing => {}
@@ -1125,14 +1129,14 @@ impl McpService {
             .connect_headless(session, &self.state.credential_service)
             .await
             .map_err(mcp_error)?;
-        let lease = self
-            .connections
-            .insert(session_id.to_owned(), connection.connection_id);
+        let lease = self.connections.insert(cache_key, connection.connection_id);
         let expiry = self.connections.idle_expiry(&lease, CONNECTION_IDLE);
         let connection_manager = self.state.connection_manager.clone();
         tokio::spawn(async move {
             if let Some(expired) = expiry.await {
-                let _ = connection_manager.disconnect(&expired).await;
+                connection_manager
+                    .close_connections([expired].into_iter().collect())
+                    .await;
             }
         });
         Ok(lease)
@@ -1484,7 +1488,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
     }
 
-    fn mcp_permission(command_execute: bool) -> McpGroupPermission {
+    pub(super) fn mcp_permission(command_execute: bool) -> McpGroupPermission {
         McpGroupPermission {
             group_name: "生产".to_owned(),
             enabled: true,
@@ -1498,7 +1502,7 @@ mod tests {
         }
     }
 
-    fn write_test_session(directory: &std::path::Path, session_id: &str) {
+    pub(super) fn write_test_session(directory: &std::path::Path, session_id: &str) {
         let store = json!({
             "version": 1,
             "sessions": [{

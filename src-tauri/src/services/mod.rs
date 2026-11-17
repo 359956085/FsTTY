@@ -49,7 +49,6 @@ pub struct AppState {
     pub device_service: DeviceService,
     pub lightweight_mode_service: LightweightModeService,
     pub settings_service: Arc<StdMutex<SettingsService>>,
-    pub transfer_job_service: TransferJobService,
     pub mcp_command_policy_service: Arc<StdMutex<McpCommandPolicyService>>,
     pub mcp_http_runtime: crate::mcp::McpHttpRuntime,
     // 覆盖设置、令牌及本地配置的完整事务，避免客户端写入过期端口或凭据。
@@ -60,19 +59,37 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app_data_dir: PathBuf) -> Self {
+        let settings = SettingsService::load(&app_data_dir);
+        Self::initialize(app_data_dir, settings, false)
+    }
+
+    pub(crate) fn for_stdio(app_data_dir: PathBuf, settings: SettingsService) -> Self {
+        Self::initialize(app_data_dir, settings, true)
+    }
+
+    fn initialize(
+        app_data_dir: PathBuf,
+        mut settings_service: SettingsService,
+        stdio: bool,
+    ) -> Self {
         let log_directory = app_data_dir.join("logs");
-        let mut settings_service = SettingsService::load(&app_data_dir);
         let legacy_permissions = settings_service.get().mcp_group_permissions;
         let policy_service = McpCommandPolicyService::load(&app_data_dir, legacy_permissions);
         if let Ok(permissions) = policy_service.list_permissions() {
-            if let Err(error) = settings_service.externalize_mcp_permissions(permissions) {
+            if stdio {
+                settings_service.set_mcp_permissions_in_memory(permissions);
+            } else if let Err(error) = settings_service.externalize_mcp_permissions(permissions) {
                 log::error!("无法从设置文件移除已迁移的 MCP 权限：{error}");
             }
         }
         let settings_service = Arc::new(StdMutex::new(settings_service));
         let command_history_service =
             Arc::new(StdMutex::new(CommandHistoryService::load(&app_data_dir)));
-        let session_service = SessionService::load(&app_data_dir);
+        let session_service = if stdio {
+            SessionService::readonly(&app_data_dir)
+        } else {
+            SessionService::load(&app_data_dir)
+        };
         #[cfg(all(windows, not(test)))]
         let session_service = session_service.with_settings(settings_service.clone());
         Self {
@@ -93,7 +110,6 @@ impl AppState {
             ),
             lightweight_mode_service: LightweightModeService::load(&app_data_dir),
             settings_service,
-            transfer_job_service: TransferJobService::default(),
             mcp_command_policy_service: Arc::new(StdMutex::new(policy_service)),
             mcp_http_runtime: crate::mcp::McpHttpRuntime::default(),
             mcp_configuration_lock: Arc::new(Mutex::new(())),

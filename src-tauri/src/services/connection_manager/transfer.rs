@@ -10,10 +10,7 @@ use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use std::{
     io::SeekFrom,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tauri::ipc::Channel;
@@ -22,18 +19,19 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt},
     time,
 };
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(super) struct ActiveTransfer {
     pub(super) connection_id: String,
     direction: TransferJobDirection,
-    pub(super) cancelled: Arc<AtomicBool>,
+    pub(super) cancelled: CancellationToken,
 }
 
 #[derive(Clone)]
 pub(crate) struct TransferReporter {
     send: Arc<dyn Fn(TransferEvent) + Send + Sync>,
-    cancellation: Arc<AtomicBool>,
+    cancellation: CancellationToken,
 }
 
 impl TransferReporter {
@@ -46,11 +44,11 @@ impl TransferReporter {
     pub(crate) fn new(send: impl Fn(TransferEvent) + Send + Sync + 'static) -> Self {
         Self {
             send: Arc::new(send),
-            cancellation: Arc::new(AtomicBool::new(false)),
+            cancellation: CancellationToken::new(),
         }
     }
 
-    pub(crate) fn with_cancellation(mut self, cancellation: Arc<AtomicBool>) -> Self {
+    pub(crate) fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
         self.cancellation = cancellation;
         self
     }
@@ -406,7 +404,7 @@ impl ConnectionManager {
         remote_directory: &str,
         overwrite: bool,
         progress: TransferReporter,
-        cancelled: Arc<AtomicBool>,
+        cancelled: CancellationToken,
     ) -> Result<(), AppError> {
         let local_path = validate_upload_source(local_path).await?;
         let file_name = local_path
@@ -456,7 +454,7 @@ impl ConnectionManager {
         send_progress(&progress, transfer_id, transferred, total);
 
         loop {
-            if cancelled.load(Ordering::Relaxed) {
+            if cancelled.is_cancelled() {
                 let _ = destination.shutdown().await;
                 let _ = sftp.remove_file(temp).await;
                 progress.emit(TransferEvent::Cancelled {
@@ -491,6 +489,15 @@ impl ConnectionManager {
         if destination.shutdown().await.is_err() {
             let _ = sftp.remove_file(temp).await;
             return Err(AppError::Sftp("提交远程临时文件失败".to_owned()));
+        }
+        if cancelled.is_cancelled() {
+            let _ = sftp.remove_file(temp).await;
+            progress.emit(TransferEvent::Cancelled {
+                transfer_id: transfer_id.to_owned(),
+                transferred_bytes: transferred,
+                total_bytes: total,
+            });
+            return Ok(());
         }
         finalize_remote_file(&sftp, &temp, &target, &backup, target_exists).await?;
         progress.emit(TransferEvent::Completed {
@@ -563,7 +570,7 @@ impl ConnectionManager {
         local_path: &str,
         overwrite: bool,
         progress: TransferReporter,
-        cancelled: Arc<AtomicBool>,
+        cancelled: CancellationToken,
     ) -> Result<(), AppError> {
         let remote_path = normalize_remote_path(remote_path)?;
         let local_path = validate_download_target(local_path, overwrite).await?;
@@ -609,17 +616,12 @@ impl ConnectionManager {
         send_progress(&progress, transfer_id, transferred, total);
 
         loop {
-            if cancelled.load(Ordering::Relaxed) {
-                drop(destination);
-                let _ = tokio::fs::remove_file(&temp).await;
-                progress.emit(TransferEvent::Cancelled {
-                    transfer_id: transfer_id.to_owned(),
-                    transferred_bytes: transferred,
-                    total_bytes: total,
-                });
-                return Ok(());
-            }
-            let read = match source.read(&mut buffer).await {
+            let read = tokio::select! {
+                biased;
+                _ = cancelled.cancelled() => break,
+                result = source.read(&mut buffer) => result,
+            };
+            let read = match read {
                 Ok(read) => read,
                 Err(_) => {
                     drop(destination);
@@ -641,12 +643,23 @@ impl ConnectionManager {
                 last_progress = Instant::now();
             }
         }
-        if destination.flush().await.is_err() || destination.sync_all().await.is_err() {
+        if !cancelled.is_cancelled()
+            && (destination.flush().await.is_err() || destination.sync_all().await.is_err())
+        {
             drop(destination);
             let _ = tokio::fs::remove_file(&temp).await;
             return Err(AppError::Internal("同步本地临时文件失败".to_owned()));
         }
         drop(destination);
+        if cancelled.is_cancelled() {
+            let _ = tokio::fs::remove_file(&temp).await;
+            progress.emit(TransferEvent::Cancelled {
+                transfer_id: transfer_id.to_owned(),
+                transferred_bytes: transferred,
+                total_bytes: total,
+            });
+            return Ok(());
+        }
         finalize_local_file(&temp, &local_path, &backup, overwrite).await?;
         progress.emit(TransferEvent::Completed {
             transfer_id: transfer_id.to_owned(),
@@ -659,7 +672,7 @@ impl ConnectionManager {
     pub async fn cancel_transfer(&self, transfer_id: &str) -> bool {
         let transfers = self.inner.transfers.lock().await;
         if let Some(transfer) = transfers.get(transfer_id) {
-            transfer.cancelled.store(true, Ordering::Relaxed);
+            transfer.cancelled.cancel();
             true
         } else {
             false
@@ -670,9 +683,9 @@ impl ConnectionManager {
         &self,
         connection_id: &str,
         transfer_id: &str,
-        cancelled: Arc<AtomicBool>,
+        cancelled: CancellationToken,
         direction: TransferJobDirection,
-    ) -> Result<Arc<AtomicBool>, AppError> {
+    ) -> Result<CancellationToken, AppError> {
         Uuid::parse_str(transfer_id)
             .map_err(|_| AppError::Validation("传输 ID 无效".to_owned()))?;
         self.entry(connection_id).await?;
@@ -711,7 +724,7 @@ impl ConnectionManager {
     pub(super) async fn cancel_connection_transfers(&self, connection_id: &str) {
         for transfer in self.inner.transfers.lock().await.values() {
             if transfer.connection_id == connection_id {
-                transfer.cancelled.store(true, Ordering::Relaxed);
+                transfer.cancelled.cancel();
             }
         }
     }

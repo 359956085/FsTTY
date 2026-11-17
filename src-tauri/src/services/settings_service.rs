@@ -61,6 +61,16 @@ impl SettingsService {
         #[cfg(all(windows, not(test)))]
         super::broker_service::set_approval_theme(store.settings.theme);
 
+        Self::from_store(store, store_path, backup_path, temp_path, primary_trusted)
+    }
+
+    fn from_store(
+        store: SettingsStore,
+        store_path: PathBuf,
+        backup_path: PathBuf,
+        temp_path: PathBuf,
+        primary_trusted: bool,
+    ) -> Self {
         Self {
             settings: store.settings,
             store_path,
@@ -69,6 +79,20 @@ impl SettingsService {
             primary_trusted,
             mcp_permissions_externalized: false,
         }
+    }
+
+    pub(crate) fn load_for_stdio(directory: &Path) -> Result<Self, AppError> {
+        let path = directory.join(STORE_FILE);
+        let store = read_store(&path)?
+            .filter(|store| store.settings.mcp_enabled)
+            .ok_or_else(|| AppError::Validation("MCP 服务未启用".into()))?;
+        Ok(Self::from_store(
+            store,
+            path,
+            directory.join(STORE_BACKUP_FILE),
+            directory.join(STORE_TEMP_FILE),
+            true,
+        ))
     }
 
     pub fn get(&self) -> AppSettings {
@@ -109,9 +133,21 @@ impl SettingsService {
         permissions: Vec<McpGroupPermission>,
     ) -> Result<(), AppError> {
         let permissions = validate_mcp_permissions(permissions)?;
+        // Only the GUI writes this file. Re-read after the SQLite migration.
+        let current = read_store(&self.store_path)?;
+        let needs_cleanup = current
+            .as_ref()
+            .is_some_and(|store| !store.settings.mcp_group_permissions.is_empty());
+        if let Some(current) = current {
+            self.settings = current.settings;
+            self.primary_trusted = true;
+        }
         self.settings.mcp_group_permissions = permissions;
         self.mcp_permissions_externalized = true;
-        self.persist()
+        if needs_cleanup {
+            self.persist()?;
+        }
+        Ok(())
     }
 
     pub fn set_mcp_permissions_in_memory(&mut self, permissions: Vec<McpGroupPermission>) {

@@ -39,6 +39,7 @@ const MAX_INLINE_PRIVATE_KEY_BYTES: usize = 16 * 1024;
 pub struct SessionService {
     #[cfg(all(windows, not(test)))]
     settings_service: Option<std::sync::Arc<std::sync::Mutex<super::SettingsService>>>,
+    current_format_seen: bool,
     store: SessionStore,
     store_path: PathBuf,
     backup_path: PathBuf,
@@ -48,6 +49,48 @@ pub struct SessionService {
 }
 
 impl SessionService {
+    pub(super) fn readonly(app_data_dir: &Path) -> Self {
+        Self {
+            store: SessionStore::default(),
+            store_path: app_data_dir.join(STORE_FILE),
+            backup_path: app_data_dir.join(STORE_BACKUP_FILE),
+            temp_path: app_data_dir.join(STORE_TEMP_FILE),
+            primary_trusted: false,
+            current_format_seen: false,
+            blocked_error: None,
+            #[cfg(all(windows, not(test)))]
+            settings_service: None,
+        }
+    }
+
+    /// STDIO must authorize against committed metadata, never a recovery copy.
+    pub(crate) fn current_sessions(&mut self) -> Result<Vec<StoredSession>, AppError> {
+        if !self.current_format_seen {
+            // A v2 writer may commit while we are reading v1. Check both sides of that read.
+            if !self.v2_present()? {
+                let legacy = read_store(&self.store_path.with_file_name("sessions.v1.json"));
+                if !self.v2_present()? {
+                    return Ok(legacy?.unwrap_or_default().sessions);
+                }
+            }
+            self.current_format_seen = true;
+        }
+        read_store(&self.store_path)?
+            .map(|store| store.sessions)
+            .ok_or_else(|| AppError::Persistence("当前会话存储不可用".into()))
+    }
+
+    fn v2_present(&self) -> Result<bool, AppError> {
+        for path in [&self.store_path, &self.backup_path, &self.temp_path] {
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(AppError::Persistence(e.to_string())),
+            }
+        }
+        Ok(false)
+    }
+
     pub fn load(app_data_dir: &Path) -> Self {
         let store_path = app_data_dir.join(STORE_FILE);
         let backup_path = app_data_dir.join(STORE_BACKUP_FILE);
@@ -99,6 +142,7 @@ impl SessionService {
         };
 
         let mut service = Self {
+            current_format_seen: !migrate,
             store,
             store_path,
             backup_path,

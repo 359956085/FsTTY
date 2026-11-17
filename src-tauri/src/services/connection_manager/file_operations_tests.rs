@@ -19,6 +19,14 @@ struct MemoryFs {
     entries: BTreeMap<String, Node>,
     changes: Vec<String>,
     permission_delay_ms: u64,
+    read_gate: Option<(
+        tokio_util::sync::CancellationToken,
+        tokio_util::sync::CancellationToken,
+    )>,
+    write_gate: Option<(
+        tokio_util::sync::CancellationToken,
+        tokio_util::sync::CancellationToken,
+    )>,
 }
 type SharedFs = Arc<StdMutex<MemoryFs>>;
 struct FixtureServer {
@@ -131,6 +139,11 @@ impl russh_sftp::server::Handler for FixtureSftp {
         offset: u64,
         len: u32,
     ) -> Result<Data, Self::Error> {
+        let gate = self.fs.lock().unwrap().read_gate.clone();
+        if let Some((started, release)) = gate {
+            started.cancel();
+            release.cancelled().await;
+        }
         let fs = self.fs.lock().unwrap();
         let bytes = &fs.entries.get(&handle).ok_or(StatusCode::NoSuchFile)?.bytes;
         let start = offset as usize;
@@ -149,6 +162,11 @@ impl russh_sftp::server::Handler for FixtureSftp {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
+        let gate = self.fs.lock().unwrap().write_gate.clone();
+        if let Some((started, release)) = gate {
+            started.cancel();
+            release.cancelled().await;
+        }
         let mut fs = self.fs.lock().unwrap();
         let bytes = &mut fs
             .entries
@@ -343,9 +361,9 @@ impl Fixture {
             .connections
             .insert(connection.clone(), Arc::new(entry));
         Self {
+            service: manager.transfer_jobs().clone(),
             manager,
             connection,
-            service: TransferJobService::default(),
             fs,
             directory,
             server,
@@ -527,6 +545,135 @@ async fn sftp_folder_upload_merges_and_keeps_existing_content_then_handles_file_
     }
     f.close().await;
 }
+#[tokio::test]
+async fn sftp_disconnect_drains_partial_upload_before_releasing_transport() {
+    use tokio_util::sync::CancellationToken;
+    let f = Fixture::new().await;
+    let started = CancellationToken::new();
+    let release = CancellationToken::new();
+    f.fs.lock().unwrap().write_gate = Some((started.clone(), release.clone()));
+    let names = ["queued.txt", "one.txt"];
+    for name in names {
+        tokio::fs::write(f.directory.join(name), vec![42; 256 * 1024])
+            .await
+            .unwrap();
+    }
+    let request = || StartTransferJobRequest::UploadBatch {
+        runtime_id: Uuid::new_v4().to_string(),
+        connection_id: f.connection.clone(),
+        local_paths: names
+            .iter()
+            .map(|name| f.directory.join(name).to_string_lossy().into_owned())
+            .collect(),
+        remote_directory: "/tree".into(),
+    };
+    let initial =
+        f.fs.lock()
+            .unwrap()
+            .entries
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+    let job = f.service.start(f.manager.clone(), request()).await.unwrap();
+    time::timeout(Duration::from_secs(10), async {
+        while f.service.summaries().await[0].state != TransferJobState::WaitingForConflict {
+            tokio::task::yield_now().await;
+        }
+        f.service
+            .resolve_conflict(&job.job_id, TransferConflictDecision::Overwrite)
+            .await
+            .unwrap();
+        started.cancelled().await;
+    })
+    .await
+    .unwrap();
+    assert_eq!(f.fs.lock().unwrap().entries.len(), initial.len() + 1);
+    let manager = f.manager.clone();
+    let connection = f.connection.clone();
+    let close = tokio::spawn(async move { manager.disconnect(&connection).await.unwrap() });
+    time::timeout(Duration::from_secs(1), async {
+        while f.manager.accepts_jobs(&f.connection).await {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!close.is_finished());
+    assert!(f.service.start(f.manager.clone(), request()).await.is_err());
+    release.cancel();
+    close.await.unwrap();
+    {
+        let fs = f.fs.lock().unwrap();
+        assert_eq!(fs.entries.keys().cloned().collect::<Vec<_>>(), initial);
+        assert_eq!(fs.entries["/tree/one.txt"].bytes, b"one\0\xff");
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn sftp_disconnect_during_conflict_or_network_loss_preserves_download_target() {
+    use tokio_util::sync::CancellationToken;
+    for interrupt_network in [false, true] {
+        let f = Fixture::new().await;
+        let target = f.directory.join("download.bin");
+        tokio::fs::write(&target, b"original").await.unwrap();
+        let reading = CancellationToken::new();
+        let release = CancellationToken::new();
+        f.fs.lock().unwrap().read_gate = Some((reading.clone(), release.clone()));
+        let job = f
+            .service
+            .start(
+                f.manager.clone(),
+                StartTransferJobRequest::Download {
+                    runtime_id: Uuid::new_v4().to_string(),
+                    connection_id: f.connection.clone(),
+                    remote_path: "/tree/one.txt".into(),
+                    local_path: target.to_string_lossy().into_owned(),
+                },
+            )
+            .await
+            .unwrap();
+        time::timeout(Duration::from_secs(5), async {
+            while f.service.summaries().await[0].state != TransferJobState::WaitingForConflict {
+                tokio::task::yield_now().await;
+            }
+            if interrupt_network {
+                f.service
+                    .resolve_conflict(&job.job_id, TransferConflictDecision::Overwrite)
+                    .await
+                    .unwrap();
+                reading.cancelled().await;
+                let entry = f.manager.entry(&f.connection).await.unwrap();
+                entry
+                    .handle
+                    .lock()
+                    .await
+                    .disconnect(Disconnect::ConnectionLost, "", "")
+                    .await
+                    .unwrap();
+                while !f.server.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+                release.cancel();
+            }
+        })
+        .await
+        .unwrap();
+        time::timeout(Duration::from_secs(2), f.manager.disconnect(&f.connection))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(f.service.summaries().await.is_empty());
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"original");
+        assert!(!std::fs::read_dir(&f.directory).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".part")));
+        f.close().await;
+    }
+}
+
 #[tokio::test]
 async fn sftp_folder_download_rejects_type_conflicts_without_replacing_existing_files() {
     let f = Fixture::new().await;

@@ -18,7 +18,7 @@ pub(super) struct ConnectionCache {
 struct ConnectionCacheInner {
     // 计数和到期移除共用短同步锁，Drop 无需异步任务，也不会跨网络 await 持锁。
     entries: StdMutex<HashMap<String, CachedConnection>>,
-    session_gates: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    session_gates: Mutex<HashMap<String, Arc<Mutex<SessionGate>>>>,
     shutdown: CancellationToken,
 }
 
@@ -33,6 +33,28 @@ impl ConnectionCacheInner {
 impl Drop for ConnectionCacheInner {
     fn drop(&mut self) {
         self.shutdown.cancel();
+    }
+}
+
+#[derive(Default)]
+pub(super) struct SessionGate {
+    identity: Option<(String, u16, String, crate::models::SessionAuth)>,
+    cache_key: String,
+}
+
+impl SessionGate {
+    pub(super) fn key_for(&mut self, session: &crate::models::StoredSession) -> &str {
+        let identity = (
+            session.host.clone(),
+            session.port,
+            session.username.clone(),
+            session.auth.clone(),
+        );
+        if self.identity.as_ref() != Some(&identity) {
+            self.identity = Some(identity);
+            self.cache_key = uuid::Uuid::new_v4().to_string();
+        }
+        &self.cache_key
     }
 }
 
@@ -82,12 +104,9 @@ pub(super) enum CacheLookup {
 }
 
 impl ConnectionCache {
-    pub(super) async fn session_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
+    pub(super) async fn session_gate(&self, session_id: &str) -> Arc<Mutex<SessionGate>> {
         let mut gates = self.inner.session_gates.lock().await;
-        gates
-            .entry(session_id.to_owned())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        gates.entry(session_id.to_owned()).or_default().clone()
     }
 
     pub(super) fn lookup(&self, session_id: &str, idle: Duration) -> CacheLookup {

@@ -147,12 +147,10 @@ pub async fn delete_session_group(
         .lock()
         .map_err(|_| AppError::Internal("MCP 策略服务锁定失败".to_owned()))?
         .delete_group(&group_name)?;
-    for session_id in &session_ids {
-        state
-            .connection_manager
-            .disconnect_session(session_id)
-            .await;
-    }
+    state
+        .connection_manager
+        .disconnect_sessions(&session_ids.iter().map(String::as_str).collect::<Vec<_>>())
+        .await;
     let result = state
         .session_service
         .lock()
@@ -310,10 +308,6 @@ pub async fn disconnect_session(
         state.local_terminal_service.stop(&connection_id);
         return Ok(());
     }
-    state
-        .transfer_job_service
-        .cancel_connection(&state.connection_manager, &connection_id)
-        .await;
     state.connection_manager.disconnect(&connection_id).await
 }
 
@@ -434,7 +428,8 @@ pub async fn cancel_transfer(
     transfer_id: String,
 ) -> Result<bool, AppError> {
     if state
-        .transfer_job_service
+        .connection_manager
+        .transfer_jobs()
         .cancel(&state.connection_manager, &transfer_id)
         .await
     {

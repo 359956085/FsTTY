@@ -1229,7 +1229,7 @@ impl LightweightModeService {
             .suppress_confirmation;
         self.set_config(false, suppress_confirmation)?;
 
-        let valid = valid_runtime_ids.into_iter().collect::<HashSet<_>>();
+        let valid = valid_runtime_ids.iter().collect::<HashSet<_>>();
         let orphan_connections = {
             let orphan_ids = runtime
                 .terminals
@@ -1244,13 +1244,20 @@ impl LightweightModeService {
                 .collect::<Vec<_>>()
         };
         drop(runtime);
+        let mut ssh = HashSet::new();
         for connection_id in orphan_connections {
             if local_terminals.contains(&connection_id) {
                 local_terminals.stop(&connection_id);
             } else {
-                let _ = connection_manager.disconnect(&connection_id).await;
+                ssh.insert(connection_id);
             }
         }
+        tokio::join!(
+            connection_manager.close_connections(ssh),
+            connection_manager
+                .transfer_jobs()
+                .cleanup_orphans(&valid_runtime_ids)
+        );
         Ok(())
     }
 
